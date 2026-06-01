@@ -1,0 +1,204 @@
+{
+    "name": "File Transcription Workflow",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "file-transcription",
+                "responseMode": "responseNode"
+            },
+            "id": "webhook-trigger",
+            "name": "1. Webhook: File Transcription",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                250,
+                300
+            ],
+            "webhookId": "file-transcription-webhook",
+            "notes": "Receives POST with: fileId, filePath, mimeType, requestId"
+        },
+        {
+            "parameters": {
+                "jsCode": "const input = $input.first().json.body;\nreturn {\n  json: {\n    fileId: input.fileId,\n    filePath: input.filePath,\n    mimeType: input.mimeType || 'audio/mpeg',\n    requestId: input.requestId || null,\n    companyName: input.companyName || 'Unknown'\n  }\n};"
+            },
+            "id": "prepare-input",
+            "name": "2. Prepare Input",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                470,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "UPDATE received_data SET status = 'processing', processing_stage = 'transcribe', processing_progress = 20 WHERE id = '{{ $json.fileId }}'::uuid"
+            },
+            "id": "update-status-start",
+            "name": "3. Update Status: Processing",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                690,
+                300
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=Transcribe this audio file into a clean, readable format.\n\nInstructions:\n1. Identify different speakers if present (Speaker 1, Speaker 2, etc.)\n2. Add timestamps at the start of each speaker turn [MM:SS]\n3. Use clear paragraph breaks for readability\n4. Mark unclear sections as [inaudible]\n5. Include important non-speech sounds in brackets\n\nProvide output as clean markdown with:\n- A brief summary at the top (3-5 sentences)\n- Speaker labels in bold\n- Timestamps in brackets\n- Clear paragraph structure",
+                "options": {
+                    "systemMessage": "You are a professional transcription service. Transcribe audio with high accuracy, identifying speakers, adding timestamps, and formatting as clean markdown."
+                }
+            },
+            "id": "gemini-transcribe",
+            "name": "4. AI: Transcription",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                910,
+                300
+            ],
+            "notes": "Uses Gemini 3.0 Flash for transcription with speaker detection"
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                }
+            },
+            "id": "gemini-model",
+            "name": "Gemini 3.0 Flash",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                800,
+                500
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "UPDATE received_data SET status = 'completed', processing_stage = 'completed', processing_progress = 100, transcript = '{{ $json.output.replace(/'/g, \"''\") }}', markdown_content = '{{ $json.output.replace(/'/g, \"''\") }}', processing_completed_at = NOW() WHERE id = '{{ $('2. Prepare Input').first().json.fileId }}'::uuid"
+            },
+            "id": "save-transcript",
+            "name": "5. Save Transcript to DB",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                1130,
+                300
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ { success: true, fileId: $('2. Prepare Input').first().json.fileId, transcript: $json.output.substring(0, 500) + '...' } }}"
+            },
+            "id": "respond",
+            "name": "6. Respond",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1350,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "1. Webhook: File Transcription": {
+            "main": [
+                [
+                    {
+                        "node": "2. Prepare Input",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Prepare Input": {
+            "main": [
+                [
+                    {
+                        "node": "3. Update Status: Processing",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3. Update Status: Processing": {
+            "main": [
+                [
+                    {
+                        "node": "4. AI: Transcription",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. AI: Transcription": {
+            "main": [
+                [
+                    {
+                        "node": "5. Save Transcript to DB",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. Save Transcript to DB": {
+            "main": [
+                [
+                    {
+                        "node": "6. Respond",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini 3.0 Flash": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "4. AI: Transcription",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "meta": {
+        "description": "Transcribes audio/video files using Gemini 3.0 Flash. Saves transcripts with speaker detection and timestamps to PostgreSQL."
+    }
+}

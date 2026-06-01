@@ -1,0 +1,264 @@
+{
+    "name": "Privacy Policy Scanner (UK GDPR)",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "policy-scan",
+                "responseMode": "responseNode"
+            },
+            "id": "webhook-trigger",
+            "name": "1. Webhook: Policy Scan",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                250,
+                300
+            ],
+            "webhookId": "policy-scan-webhook",
+            "notes": "Receives POST with: url (website URL to scan) and requestId"
+        },
+        {
+            "parameters": {
+                "jsCode": "const input = $input.first().json.body;\nlet url = input.url || '';\n\n// Clean and normalize URL\nif (url && !url.startsWith('http')) {\n  url = 'https://' + url;\n}\n\n// Extract domain for policy search\nlet domain = '';\ntry {\n  domain = new URL(url).hostname;\n} catch (e) {\n  domain = url.replace(/^https?:\\/\\//, '').split('/')[0];\n}\n\nreturn {\n  json: {\n    originalUrl: input.url,\n    cleanUrl: url,\n    domain: domain,\n    requestId: input.requestId || null\n  }\n};"
+            },
+            "id": "prepare-input",
+            "name": "2. Prepare URL",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                470,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=Find the privacy policy URL for the website: {{ $json.domain }}\n\nCommon patterns:\n- /privacy-policy\n- /privacy\n- /legal/privacy\n- /policies/privacy\n\nReturn ONLY the full URL to the privacy policy page. If you cannot find it, return 'NOT_FOUND'.",
+                "options": {}
+            },
+            "id": "find-policy",
+            "name": "3. AI: Find Policy URL",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                690,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                }
+            },
+            "id": "gemini-find",
+            "name": "Gemini (Find)",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                580,
+                500
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "name": "SerpAPI",
+                "description": "Search the web for privacy policy URLs"
+            },
+            "id": "serp-tool",
+            "name": "SerpAPI Search",
+            "type": "@n8n/n8n-nodes-langchain.toolSerpApi",
+            "typeVersion": 1,
+            "position": [
+                690,
+                500
+            ],
+            "credentials": {
+                "serpApi": {
+                    "id": "SERP_CREDENTIAL_ID",
+                    "name": "SerpAPI"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.output }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "fullResponse": true
+                        }
+                    }
+                }
+            },
+            "id": "fetch-policy",
+            "name": "4. Fetch Policy Content",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                910,
+                300
+            ],
+            "continueOnFail": true
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=Analyze this privacy policy for UK GDPR compliance.\n\nPolicy Content:\n{{ $json.body ? $json.body.substring(0, 50000) : 'Policy content could not be fetched' }}\n\n## Analysis Required:\n\n1. **GDPR Compliance Score** (0-100)\n   - Data collection transparency\n   - Legal basis for processing\n   - Data subject rights\n   - Data retention policies\n   - International transfers\n\n2. **Key Findings** (bullet points)\n   - What personal data is collected\n   - How data is used\n   - Third parties data is shared with\n   - Data retention periods\n   - User rights mentioned\n\n3. **Red Flags** (potential violations)\n   - Missing required disclosures\n   - Vague language concerns\n   - Possible unlawful processing\n\n4. **Recommendations**\n   - Actions user should take\n   - Questions to ask in access request\n\nOutput as structured markdown.",
+                "options": {
+                    "systemMessage": "You are a UK GDPR compliance expert. Analyze privacy policies for compliance with UK GDPR regulations. Reference specific GDPR articles where relevant (Art. 13, 14, 15, 17, 20, 21, etc.). Be thorough but concise."
+                }
+            },
+            "id": "analyze-policy",
+            "name": "5. AI: UK GDPR Analysis",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                1130,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-pro-preview"
+                }
+            },
+            "id": "gemini-analyze",
+            "name": "Gemini 3.0 Pro (Analysis)",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                1020,
+                500
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ { success: true, domain: $('2. Prepare URL').first().json.domain, policyUrl: $('3. AI: Find Policy URL').first().json.output, analysis: $json.output, requestId: $('2. Prepare URL').first().json.requestId } }}"
+            },
+            "id": "respond",
+            "name": "6. Respond",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1350,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "1. Webhook: Policy Scan": {
+            "main": [
+                [
+                    {
+                        "node": "2. Prepare URL",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Prepare URL": {
+            "main": [
+                [
+                    {
+                        "node": "3. AI: Find Policy URL",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3. AI: Find Policy URL": {
+            "main": [
+                [
+                    {
+                        "node": "4. Fetch Policy Content",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. Fetch Policy Content": {
+            "main": [
+                [
+                    {
+                        "node": "5. AI: UK GDPR Analysis",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. AI: UK GDPR Analysis": {
+            "main": [
+                [
+                    {
+                        "node": "6. Respond",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini (Find)": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "3. AI: Find Policy URL",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "SerpAPI Search": {
+            "ai_tool": [
+                [
+                    {
+                        "node": "3. AI: Find Policy URL",
+                        "type": "ai_tool",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini 3.0 Pro (Analysis)": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "5. AI: UK GDPR Analysis",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "meta": {
+        "description": "Scans privacy policies for UK GDPR compliance. Finds policy URL, fetches content, and provides detailed analysis with compliance score and recommendations."
+    }
+}

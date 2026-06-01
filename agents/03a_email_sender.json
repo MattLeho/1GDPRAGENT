@@ -1,0 +1,358 @@
+ore {
+    "name": "GDPR Email Sender Agent",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "send-request",
+                "responseMode": "responseNode",
+                "options": {}
+            },
+            "id": "webhook-trigger",
+            "name": "1. Webhook: Send Request",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                100,
+                300
+            ],
+            "webhookId": "send-request-webhook"
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "SELECT r.*, pa.dpo_email, pa.summary as policy_summary\nFROM requests r\nLEFT JOIN policy_analyses pa ON pa.domain = r.company_url OR pa.url LIKE '%' || r.company_url || '%'\nWHERE r.id = '{{ $json.body.requestId }}'::uuid;",
+                "options": {}
+            },
+            "id": "postgres-fetch",
+            "name": "2. Fetch Request & Policy",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                320,
+                300
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            },
+            "notes": "Credentials: Host=postgres, Database=gdpr_local, User=admin, Password=securepassword, Port=5432"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "check-request-exists",
+                            "leftValue": "={{ $json.id }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "string",
+                                "operation": "notEmpty"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "if-request-exists",
+            "name": "3. Request Exists?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                540,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO messages (request_id, sender, content, timestamp)\nVALUES (\n  '{{ $('1. Webhook: Send Request').first().json.body.requestId }}'::uuid,\n  'agent',\n  'Preparing to send GDPR request email to {{ $('1. Webhook: Send Request').first().json.body.to }}',\n  NOW()\n)\nRETURNING id;",
+                "options": {}
+            },
+            "id": "log-sending",
+            "name": "4. Log: Sending Started",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                760,
+                200
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            },
+            "continueOnFail": true
+        },
+        {
+            "parameters": {
+                "sendTo": "={{ $('1. Webhook: Send Request').first().json.body.to }}",
+                "subject": "={{ $('1. Webhook: Send Request').first().json.body.subject }}",
+                "emailType": "text",
+                "message": "={{ $('1. Webhook: Send Request').first().json.body.body }}",
+                "options": {}
+            },
+            "id": "gmail-send",
+            "name": "5. Send via Gmail",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [
+                980,
+                200
+            ],
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "GMAIL_CREDENTIAL_ID",
+                    "name": "Gmail OAuth2"
+                }
+            },
+            "notes": "Configure Gmail OAuth2 credentials in N8N"
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "UPDATE requests\nSET\n  status = 'sent',\n  updated_at = NOW(),\n  notes = COALESCE(notes, '') || E'\\n\\n[' || NOW() || '] Email sent to {{ $('1. Webhook: Send Request').first().json.body.to }} via Gmail. Thread ID: {{ $json.threadId || \"N/A\" }}'\nWHERE id = '{{ $('1. Webhook: Send Request').first().json.body.requestId }}'::uuid\nRETURNING id, status;",
+                "options": {}
+            },
+            "id": "postgres-update-sent",
+            "name": "6. Update Status: Sent",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                1200,
+                200
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO messages (request_id, sender, content, timestamp)\nVALUES (\n  '{{ $('1. Webhook: Send Request').first().json.body.requestId }}'::uuid,\n  'user',\n  'Subject: {{ $('1. Webhook: Send Request').first().json.body.subject.replace(/'/g, \"''\") }}\\n\\n{{ $('1. Webhook: Send Request').first().json.body.body.substring(0, 2000).replace(/'/g, \"''\") }}',\n  NOW()\n)\nRETURNING id;",
+                "options": {}
+            },
+            "id": "postgres-log-message",
+            "name": "7. Log Sent Email Content",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                1420,
+                200
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "// Get Gmail send result\nconst gmailResult = $('5. Send via Gmail').first().json;\nconst webhookData = $('1. Webhook: Send Request').first().json.body;\n\nreturn {\n  json: {\n    success: true,\n    requestId: webhookData.requestId,\n    sentTo: webhookData.to,\n    sentAt: new Date().toISOString(),\n    gmailMessageId: gmailResult.id || null,\n    gmailThreadId: gmailResult.threadId || null,\n    deadlineDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],\n    message: 'GDPR request email sent successfully via Gmail',\n    nextSteps: [\n      'Company has 30 days to respond (GDPR requirement)',\n      'Inbox Monitor will track responses automatically',\n      'You will be notified when they reply'\n    ]\n  }\n};"
+            },
+            "id": "success-response",
+            "name": "8. Prepare Success Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1640,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "return {\n  json: {\n    success: false,\n    error: 'Request not found in database',\n    requestId: $('1. Webhook: Send Request').first().json.body.requestId,\n    suggestion: 'Please create a draft first using the Request Drafter workflow'\n  }\n};"
+            },
+            "id": "error-response",
+            "name": "Error: Request Not Found",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                760,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "mode": "chooseBranch",
+                "output": "extra"
+            },
+            "id": "merge-responses",
+            "name": "9. Merge Responses",
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                1640,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ $json }}"
+            },
+            "id": "respond-webhook",
+            "name": "10. Respond to Webhook",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1860,
+                300
+            ]
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "1. Webhook: Send Request": {
+            "main": [
+                [
+                    {
+                        "node": "2. Fetch Request & Policy",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Fetch Request & Policy": {
+            "main": [
+                [
+                    {
+                        "node": "3. Request Exists?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3. Request Exists?": {
+            "main": [
+                [
+                    {
+                        "node": "4. Log: Sending Started",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Error: Request Not Found",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. Log: Sending Started": {
+            "main": [
+                [
+                    {
+                        "node": "5. Send via Gmail",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. Send via Gmail": {
+            "main": [
+                [
+                    {
+                        "node": "6. Update Status: Sent",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "6. Update Status: Sent": {
+            "main": [
+                [
+                    {
+                        "node": "7. Log Sent Email Content",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "7. Log Sent Email Content": {
+            "main": [
+                [
+                    {
+                        "node": "8. Prepare Success Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "8. Prepare Success Response": {
+            "main": [
+                [
+                    {
+                        "node": "9. Merge Responses",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Error: Request Not Found": {
+            "main": [
+                [
+                    {
+                        "node": "9. Merge Responses",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "9. Merge Responses": {
+            "main": [
+                [
+                    {
+                        "node": "10. Respond to Webhook",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "versionId": "email-sender-v2",
+    "meta": {
+        "templateCredsSetupCompleted": false,
+        "instanceId": "gdpr-automation-local"
+    },
+    "id": "gdpr-email-sender",
+    "tags": [
+        {
+            "name": "GDPR",
+            "id": "gdpr-tag"
+        },
+        {
+            "name": "Email",
+            "id": "email-tag"
+        }
+    ]
+}

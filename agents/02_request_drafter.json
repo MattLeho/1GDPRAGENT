@@ -1,0 +1,271 @@
+{
+    "name": "GDPR Request Drafter Agent",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "draft-request",
+                "responseMode": "responseNode"
+            },
+            "id": "webhook-trigger",
+            "name": "1. Webhook: Draft Request",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                100,
+                300
+            ],
+            "webhookId": "draft-request-webhook"
+        },
+        {
+            "parameters": {
+                "jsCode": "const input = items[0].json.body || items[0].json;\n\nconst isRevision = input.action === 'revise';\nconst requestId = input.requestId || 'req_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);\n\nreturn {\n  json: {\n    requestId: requestId,\n    isRevision: isRevision,\n    previousDraft: input.previousDraft || null,\n    userFeedback: input.feedback || null,\n    requestType: input.requestType || 'access',\n    companyName: input.companyName,\n    companyUrl: input.companyUrl,\n    dpoEmail: input.dpoEmail || input.policyAnalysis?.dpo_email,\n    identity: input.identity || { name: 'User', email: 'user@example.com' },\n    scope: input.scope || { allData: true },\n    policyResearch: input.policyAnalysis || {},\n    notes: input.notes || '',\n    requestedAt: new Date().toISOString()\n  }\n};"
+            },
+            "id": "prepare-data",
+            "name": "2. Prepare Request Data",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                320,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "={{ $json.isRevision ? \n'## REVISION REQUEST\\n\\n### Previous Draft:\\n' + $json.previousDraft + '\\n\\n### User Feedback to Incorporate:\\n' + $json.userFeedback + '\\n\\nRevise the email based on this feedback while maintaining strict GDPR compliance. Use the legal framework below.'\n:\n'## NEW GDPR REQUEST\\n\\n### Request Type: ' + $json.requestType.toUpperCase() + '\\n\\n### Company Information\\n- Company: ' + $json.companyName + '\\n- DPO Email: ' + ($json.dpoEmail || 'To be determined') + '\\n\\n### Policy Research (from Privacy Policy Analysis)\\n' + JSON.stringify($json.policyResearch, null, 2) + '\\n\\n### Requester Identity\\n- Name: ' + ($json.identity?.name || 'User Name') + '\\n- Email: ' + ($json.identity?.email || 'user@example.com') + ($json.identity?.phone ? '\\n- Phone: ' + $json.identity.phone : '') + '\\n\\n### Scope\\n' + ($json.scope?.allData ? 'ALL personal data held' : 'Specific categories: ' + JSON.stringify($json.scope?.specificCategories)) + '\\n\\n### Additional Notes\\n' + ($json.notes || 'None') + '\\n\\nDraft a maximally effective GDPR request using the legal framework below.'\n}}",
+                "options": {
+                    "systemMessage": "You are a GDPR LEGAL EXPERT drafting formal data protection request emails. You MUST use the following GDPR legislation EXPLICITLY in your drafts.\n\n# GDPR REGULATION EU 2016/679 - KEY ARTICLES\n\n## ARTICLE 15: RIGHT OF ACCESS\nThe data subject shall have the right to obtain from the controller confirmation as to whether or not personal data concerning him or her are being processed, and, where that is the case, access to the personal data and the following information:\n(a) the purposes of the processing;\n(b) the categories of personal data concerned;\n(c) the recipients or categories of recipient to whom the personal data have been or will be disclosed, in particular recipients in third countries or international organisations;\n(d) where possible, the envisaged period for which the personal data will be stored, or, if not possible, the criteria used to determine that period;\n(e) the existence of the right to request from the controller rectification or erasure of personal data or restriction of processing of personal data concerning the data subject or to object to such processing;\n(f) the right to lodge a complaint with the supervisory authority;\n(g) where the personal data are not collected from the data subject, any available information as to their source;\n(h) the existence of automated decision-making, including profiling.\n\nThe controller shall provide a copy of the personal data undergoing processing. Where the data subject makes the request by electronic means, the information shall be provided in a commonly used electronic form.\n\n## ARTICLE 17: RIGHT TO ERASURE ('RIGHT TO BE FORGOTTEN')\nThe data subject shall have the right to obtain from the controller the erasure of personal data concerning him or her without undue delay and the controller shall have the obligation to erase personal data without undue delay where one of the following grounds applies:\n(a) the personal data are no longer necessary in relation to the purposes for which they were collected;\n(b) the data subject withdraws consent on which the processing is based and where there is no other legal ground for the processing;\n(c) the data subject objects to the processing pursuant to Article 21(1);\n(d) the personal data have been unlawfully processed;\n(e) the personal data have to be erased for compliance with a legal obligation;\n(f) the personal data have been collected in relation to the offer of information society services.\n\nWhere the controller has made the personal data public, the controller shall take reasonable steps to inform controllers processing the data that the data subject has requested erasure.\n\n## ARTICLE 20: RIGHT TO DATA PORTABILITY\nThe data subject shall have the right to receive the personal data concerning him or her, which he or she has provided to a controller, in a structured, commonly used and machine-readable format and have the right to transmit those data to another controller without hindrance.\n\n## ARTICLE 12: TIME LIMITS\nThe controller shall provide information on action taken on a request within ONE MONTH of receipt. That period may be extended by two further months where necessary.\n\n---\n\n# YOUR DRAFTING INSTRUCTIONS\n\n1. CITE SPECIFIC ARTICLES - Always reference Article 15, 17, or 20 by number\n2. USE THE POLICY RESEARCH - Reference specific data categories from the policy analysis\n3. BE MAXIMALLY COMPREHENSIVE - Request ALL information allowed under the articles\n4. ASSERT THE DEADLINE - Remind them of the 30-day legal requirement\n5. REQUEST CONFIRMATION - Ask for written confirmation of receipt and action\n6. BE PROFESSIONAL BUT FIRM - This is a legal right, not a favor\n\n# OUTPUT FORMAT (JSON)\n{\n  \"subject\": \"GDPR Subject Access Request pursuant to Article 15 - [Date] - Ref: [ID]\",\n  \"body\": \"Full email text with Dear [DPO], formal paragraphs citing specific articles, and professional signature\",\n  \"to\": \"DPO email address\",\n  \"legalBasis\": \"Articles cited (e.g., 'Article 15 Right of Access, Article 20 Data Portability')\",\n  \"keyPoints\": [\"List of main requests made\"],\n  \"notes\": \"Any important notes for the user about this request\"\n}"
+                }
+            },
+            "id": "ai-agent-drafter",
+            "name": "3. AI: Draft Request Email",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                540,
+                300
+            ],
+            "notes": "SYSTEM PROMPT contains GDPR Articles 15, 17, 20 from UK GDPR law"
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                },
+                "options": {
+                    "temperature": 0.3,
+                    "maxOutputTokens": 4096
+                }
+            },
+            "id": "gemini-model",
+            "name": "Gemini: Request Drafter",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                540,
+                520
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "sessionIdType": "customKey",
+                "sessionKey": "=draft-{{ $json.requestId }}",
+                "contextWindowLength": 15
+            },
+            "id": "draft-memory",
+            "name": "Draft Memory (per request)",
+            "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+            "typeVersion": 1.3,
+            "position": [
+                660,
+                520
+            ],
+            "notes": "REQUEST-SPECIFIC: Memory is keyed by requestId so revision context is maintained"
+        },
+        {
+            "parameters": {
+                "jsCode": "const aiOutput = items[0].json.output || items[0].json.text || '';\nconst preparedData = $('2. Prepare Request Data').first().json;\n\nlet parsedDraft;\ntry {\n  const jsonMatch = aiOutput.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) { parsedDraft = JSON.parse(jsonMatch[0]); }\n  else { throw new Error('No JSON found'); }\n} catch (e) {\n  parsedDraft = {\n    subject: `GDPR ${preparedData.requestType} Request - ${new Date().toISOString().split('T')[0]}`,\n    body: aiOutput,\n    to: preparedData.dpoEmail,\n    legalBasis: 'Article 15/17',\n    keyPoints: ['See email body'],\n    notes: 'Parsing failed - review manually'\n  };\n}\n\nreturn {\n  json: {\n    success: true,\n    requestId: preparedData.requestId,\n    status: 'pending_user_review',\n    draft: parsedDraft,\n    metadata: {\n      companyName: preparedData.companyName,\n      requestType: preparedData.requestType,\n      isRevision: preparedData.isRevision,\n      policyResearchIncluded: Object.keys(preparedData.policyResearch || {}).length > 0\n    },\n    message: 'Draft created. Please review and provide feedback, or approve to send.',\n    actions: {\n      approve: { endpoint: '/webhook/send-email', method: 'POST' },\n      revise: { endpoint: '/webhook/draft-request', method: 'POST', body: { action: 'revise', requestId: preparedData.requestId } }\n    }\n  }\n};"
+            },
+            "id": "parse-response",
+            "name": "4. Parse & Structure Draft",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                760,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO requests (id, company_name, company_url, status, request_type, notes, created_at)\nVALUES (\n  '{{ $json.requestId }}'::uuid,\n  '{{ $json.metadata.companyName }}',\n  '',\n  'draft_pending_review',\n  '{{ $json.metadata.requestType }}',\n  'Draft pending user review',\n  NOW()\n)\nON CONFLICT (id) DO UPDATE SET\n  status = 'draft_pending_review',\n  updated_at = NOW()\nRETURNING id;"
+            },
+            "id": "postgres-save-request",
+            "name": "5. Save Request to DB",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                980,
+                300
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            },
+            "continueOnFail": true
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO messages (request_id, sender, content, timestamp)\nVALUES (\n  '{{ $json.requestId }}'::uuid,\n  'agent',\n  '📝 Draft ready for review. Key points: {{ ($json.draft?.keyPoints || []).slice(0, 3).join(\", \") }}. Legal basis: {{ $json.draft?.legalBasis || \"Articles 15, 17\" }}. Please review and provide feedback or approve.',\n  NOW()\n);"
+            },
+            "id": "log-draft-ready",
+            "name": "6. Log: Draft Ready for Review",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                1200,
+                300
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            },
+            "continueOnFail": true,
+            "notes": "PAUSE POINT: Logs that draft is ready. Frontend polls messages table to show this to user."
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ $json }}"
+            },
+            "id": "respond-webhook",
+            "name": "7. Respond (Await User Feedback)",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1420,
+                300
+            ],
+            "notes": "RETURNS TO FRONTEND: Draft + actions for user to approve or request revision"
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "1. Webhook: Draft Request": {
+            "main": [
+                [
+                    {
+                        "node": "2. Prepare Request Data",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Prepare Request Data": {
+            "main": [
+                [
+                    {
+                        "node": "3. AI: Draft Request Email",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini: Request Drafter": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "3. AI: Draft Request Email",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Draft Memory (per request)": {
+            "ai_memory": [
+                [
+                    {
+                        "node": "3. AI: Draft Request Email",
+                        "type": "ai_memory",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3. AI: Draft Request Email": {
+            "main": [
+                [
+                    {
+                        "node": "4. Parse & Structure Draft",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. Parse & Structure Draft": {
+            "main": [
+                [
+                    {
+                        "node": "5. Save Request to DB",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. Save Request to DB": {
+            "main": [
+                [
+                    {
+                        "node": "6. Log: Draft Ready for Review",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "6. Log: Draft Ready for Review": {
+            "main": [
+                [
+                    {
+                        "node": "7. Respond (Await User Feedback)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "versionId": "request-drafter-v2-gdpr-context",
+    "id": "gdpr-request-drafter",
+    "tags": [
+        {
+            "name": "GDPR"
+        },
+        {
+            "name": "AI Agent"
+        }
+    ]
+}

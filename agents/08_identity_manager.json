@@ -1,0 +1,529 @@
+{
+    "name": "GDPR Identity Manager Agent",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "ingest-identity",
+                "responseMode": "responseNode",
+                "options": {}
+            },
+            "id": "webhook-trigger",
+            "name": "1. Webhook: Ingest Identity",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                250,
+                300
+            ],
+            "webhookId": "gdpr-identity-ingest"
+        },
+        {
+            "parameters": {
+                "jsCode": "// Prepare identity data matching Identity_map.md schema\nconst input = $input.first().json.body;\n\nconst personaName = input.personaName || 'Default';\nconst personaType = input.personaType || 'general';\nconst emails = input.emails || [];\nconst phones = input.phones || [];\nconst names = input.names || [];\nconst usernames = input.usernames || [];\nconst accounts = input.accounts || [];\nconst notes = input.notes || '';\n\n// Build description for LLM\nlet description = `## Identity Data to Ingest\\n\\n`;\ndescription += `**Persona:** ${personaName} (type: ${personaType})\\n\\n`;\n\nif (names.length > 0) {\n  description += `**Names:** ${names.map(n => `${n.firstName || ''} ${n.lastName || ''}`.trim()).join(', ')}\\n`;\n}\nif (emails.length > 0) {\n  description += `**Emails:** ${emails.join(', ')}\\n`;\n}\nif (phones.length > 0) {\n  description += `**Phones:** ${phones.join(', ')}\\n`;\n}\nif (usernames.length > 0) {\n  description += `**Usernames:** ${usernames.join(', ')}\\n`;\n}\nif (accounts.length > 0) {\n  description += `**Accounts:**\\n${accounts.map(a => `  - ${a.platform}: ${a.username || a.id}`).join('\\n')}\\n`;\n}\nif (notes) {\n  description += `**Notes:** ${notes}\\n`;\n}\n\nreturn {\n  json: {\n    personaName,\n    personaType,\n    emails,\n    phones,\n    names,\n    usernames,\n    accounts,\n    notes,\n    description,\n    totalItems: emails.length + phones.length + names.length + usernames.length + accounts.length\n  }\n};"
+            },
+            "id": "prepare-input",
+            "name": "2. Prepare Input",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                470,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://neo4j:7474/db/neo4j/tx/commit",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpBasicAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"statements\": [\n    {\n      \"statement\": \"MATCH (p:Persona {label: '{{ $json.personaName }}'}) RETURN p LIMIT 1\"\n    },\n    {\n      \"statement\": \"MATCH (u:User {name: 'MainUser'}) RETURN u LIMIT 1\"\n    }\n  ]\n}",
+                "options": {}
+            },
+            "id": "check-existing",
+            "name": "3. Check Existing Persona (HTTP)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                690,
+                300
+            ],
+            "credentials": {
+                "httpBasicAuth": {
+                    "id": "NEO4J_HTTP_CREDENTIAL_ID",
+                    "name": "Neo4j HTTP Auth"
+                }
+            },
+            "continueOnFail": true
+        },
+        {
+            "parameters": {
+                "jsCode": "// Merge existing context\nconst inputData = $('2. Prepare Input').first().json;\nconst neo4jResponse = $input.first().json;\n\nlet existingPersona = null;\nlet existingUser = null;\n\ntry {\n  if (neo4jResponse.results && neo4jResponse.results[0] && neo4jResponse.results[0].data.length > 0) {\n    existingPersona = neo4jResponse.results[0].data[0].row[0];\n  }\n  if (neo4jResponse.results && neo4jResponse.results[1] && neo4jResponse.results[1].data.length > 0) {\n    existingUser = neo4jResponse.results[1].data[0].row[0];\n  }\n} catch (e) {}\n\nreturn {\n  json: {\n    ...inputData,\n    existingPersona,\n    existingUser,\n    isUpdate: existingPersona !== null\n  }\n};"
+            },
+            "id": "merge-context",
+            "name": "4. Merge Existing Context",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                910,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=Generate Neo4j Cypher statements to create/update the following identity in the Knowledge Graph.\n\n{{ $json.description }}\n\n## EXISTING CONTEXT\n- User node exists: {{ $json.existingUser ? 'Yes' : 'No' }}\n- Persona exists: {{ $json.existingPersona ? 'Yes (updating)' : 'No (creating new)' }}\n\n## REQUIREMENTS\n1. Ensure MainUser node exists (MERGE)\n2. Create/update Persona node with label and type\n3. Create HAS_PERSONA relationship from User to Persona\n4. For each email: MERGE Email node, create USES_EMAIL relationship\n5. For each phone: MERGE Phone node, create HAS_PHONE relationship\n6. For each name: MERGE Identity node, create USES_NAME relationship\n7. For each username: MERGE Identifier node, create HAS_IDENTIFIER relationship\n8. For each account: MERGE Account node with platform, create relationships\n\n## OUTPUT FORMAT\nReturn a JSON array of Cypher statements:\n```json\n[\n  {\n    \"description\": \"What this does\",\n    \"cypher\": \"MERGE (u:User {name: 'MainUser'}) ...\"\n  }\n]\n```",
+                "options": {
+                    "systemMessage": "You are an expert Neo4j Cypher generator for a GDPR identity management system. You create Cypher statements to build a personal identity Knowledge Graph.\n\n## GRAPH SCHEMA (from Identity_map.md)\n\n### Node Types:\n- `(:User {name: 'MainUser'})` - The root user node\n- `(:Persona {label, type})` - User personas (Professional, Gamer, Anonymous)\n- `(:Identity {value, type: 'name'})` - Variations of names\n- `(:Email {address})` - Email addresses (lowercase)\n- `(:Phone {number})` - Phone numbers\n- `(:Account {username, platform})` - Accounts at companies\n- `(:Identifier {value, type})` - Usernames, IDs, etc.\n- `(:DataPoint {value, type})` - Extracted data points\n\n### Relationships:\n- `(:User)-[:HAS_PERSONA]->(:Persona)`\n- `(:Persona)-[:USES_NAME]->(:Identity)`\n- `(:Persona)-[:USES_EMAIL]->(:Email)`\n- `(:Persona)-[:HAS_PHONE]->(:Phone)`\n- `(:Persona)-[:HAS_IDENTIFIER]->(:Identifier)`\n- `(:Account)-[:BELONGS_TO_PERSONA]->(:Persona)`\n- `(:Account)-[:REGISTERED_WITH]->(:Email)`\n\n## CYPHER RULES\n1. Always use MERGE to avoid duplicates\n2. Use lowercase for email addresses: toLower('email@example.com')\n3. Include timestamps: updated_at: datetime()\n4. Order matters: create User and Persona first, then relationships\n5. Each statement should be independently executable\n\n## EXAMPLE OUTPUT\n```json\n[\n  {\n    \"description\": \"Ensure MainUser exists\",\n    \"cypher\": \"MERGE (u:User {name: 'MainUser'}) SET u.updated_at = datetime()\"\n  },\n  {\n    \"description\": \"Create/update Gamer persona\",\n    \"cypher\": \"MERGE (p:Persona {label: 'Gamer'}) SET p.type = 'context', p.updated_at = datetime()\"\n  },\n  {\n    \"description\": \"Link User to Persona\",\n    \"cypher\": \"MATCH (u:User {name: 'MainUser'}) MATCH (p:Persona {label: 'Gamer'}) MERGE (u)-[:HAS_PERSONA]->(p)\"\n  }\n]\n```"
+                }
+            },
+            "id": "ai-generate-cypher",
+            "name": "5. AI: Generate Cypher",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                1130,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                },
+                "options": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 4096
+                }
+            },
+            "id": "gemini-model",
+            "name": "Gemini 2.5 Flash",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                1010,
+                520
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "contextWindowLength": 15
+            },
+            "id": "identity-memory",
+            "name": "Identity Memory",
+            "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+            "typeVersion": 1.3,
+            "position": [
+                1130,
+                520
+            ]
+        },
+        {
+            "parameters": {
+                "toolDescription": "Query the Knowledge Graph to check for existing identities or related data",
+                "method": "POST",
+                "url": "http://neo4j:7474/db/neo4j/tx/commit",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpBasicAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\"statements\": [{\"statement\": \"{{ $fromAI('cypher', 'Cypher query to check existing data') }}\"}]}"
+            },
+            "id": "tool-query-graph",
+            "name": "Tool: Query Graph",
+            "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+            "typeVersion": 1.1,
+            "position": [
+                1250,
+                520
+            ],
+            "credentials": {
+                "httpBasicAuth": {
+                    "id": "NEO4J_HTTP_CREDENTIAL_ID",
+                    "name": "Neo4j HTTP Auth"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "// Parse and validate the Cypher statements\nconst aiOutput = $input.first().json.output || $input.first().json.text || '';\nconst inputData = $('4. Merge Existing Context').first().json;\n\nlet statements = [];\nlet parseError = null;\n\ntry {\n  // Find JSON array in response\n  const jsonMatch = aiOutput.match(/\\[\\s*\\{[\\s\\S]*\\}\\s*\\]/);\n  if (jsonMatch) {\n    statements = JSON.parse(jsonMatch[0]);\n  } else {\n    parseError = 'No JSON array found in output';\n  }\n} catch (e) {\n  parseError = e.message;\n}\n\n// Filter to only valid statements with cypher property\nconst validStatements = (statements || []).filter(s => \n  s.cypher && \n  typeof s.cypher === 'string' &&\n  (s.cypher.toUpperCase().includes('MERGE') || \n   s.cypher.toUpperCase().includes('MATCH') ||\n   s.cypher.toUpperCase().includes('CREATE'))\n);\n\nreturn {\n  json: {\n    personaName: inputData.personaName,\n    totalItems: inputData.totalItems,\n    statements: validStatements,\n    statementCount: validStatements.length,\n    parseError: parseError,\n    isValid: validStatements.length > 0\n  }\n};"
+            },
+            "id": "parse-cypher",
+            "name": "6. Parse Cypher Statements",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1350,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "valid-check",
+                            "leftValue": "={{ $json.isValid }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                }
+            },
+            "id": "if-valid-cypher",
+            "name": "7. Valid Cypher?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                1570,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Prepare statements for Neo4j HTTP API\nconst inputData = $input.first().json;\nconst statements = inputData.statements || [];\n\n// Format for Neo4j transaction API\nconst neo4jPayload = {\n  statements: statements.map(s => ({ statement: s.cypher }))\n};\n\nreturn {\n  json: {\n    ...inputData,\n    neo4jPayload\n  }\n};"
+            },
+            "id": "prepare-neo4j",
+            "name": "8. Prepare Neo4j Request",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1790,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://neo4j:7474/db/neo4j/tx/commit",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpBasicAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify($json.neo4jPayload) }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "fullResponse": true
+                        }
+                    }
+                }
+            },
+            "id": "execute-neo4j",
+            "name": "9. Execute via Neo4j HTTP API",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2010,
+                200
+            ],
+            "credentials": {
+                "httpBasicAuth": {
+                    "id": "NEO4J_HTTP_CREDENTIAL_ID",
+                    "name": "Neo4j HTTP Auth"
+                }
+            },
+            "continueOnFail": true
+        },
+        {
+            "parameters": {
+                "jsCode": "// Process Neo4j response\nconst neo4jResponse = $input.first().json;\nconst inputData = $('8. Prepare Neo4j Request').first().json;\n\nlet successCount = 0;\nlet errorCount = 0;\nlet errors = [];\n\nif (neo4jResponse.body) {\n  const body = typeof neo4jResponse.body === 'string' ? JSON.parse(neo4jResponse.body) : neo4jResponse.body;\n  \n  if (body.results) {\n    successCount = body.results.length;\n  }\n  \n  if (body.errors && body.errors.length > 0) {\n    errorCount = body.errors.length;\n    errors = body.errors.map(e => e.message || e.code);\n  }\n} else if (neo4jResponse.statusCode >= 400) {\n  errorCount = inputData.statementCount;\n  errors.push(`HTTP ${neo4jResponse.statusCode}`);\n} else {\n  successCount = inputData.statementCount;\n}\n\nreturn {\n  json: {\n    success: errorCount === 0,\n    personaId: inputData.personaName.toLowerCase().replace(/\\s+/g, '_'),\n    personaName: inputData.personaName,\n    entitiesCreated: successCount,\n    errorsCount: errorCount,\n    errors: errors.slice(0, 5),\n    totalItems: inputData.totalItems,\n    method: 'llm-http'\n  }\n};"
+            },
+            "id": "format-success",
+            "name": "10. Format Success Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2230,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Error response for invalid Cypher\nconst inputData = $input.first().json;\n\nreturn {\n  json: {\n    success: false,\n    personaId: null,\n    personaName: inputData.personaName,\n    entitiesCreated: 0,\n    method: 'llm-http',\n    error: inputData.parseError || 'Generated Cypher was invalid or empty',\n    message: `Failed to create entities for persona ${inputData.personaName}`\n  }\n};"
+            },
+            "id": "format-error",
+            "name": "11. Format Error Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1790,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "mergeByFields": {
+                    "values": []
+                },
+                "options": {}
+            },
+            "id": "merge-responses",
+            "name": "12. Merge Responses",
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                2450,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO messages (request_id, sender, content, timestamp)\nSELECT \n  (SELECT id FROM requests ORDER BY created_at DESC LIMIT 1),\n  'agent',\n  '{{ $json.success ? \"🆔 Identity Manager: Successfully created/updated persona \" + $json.personaName + \" with \" + $json.entitiesCreated + \" entities\" : \"❌ Identity Manager: Failed to create persona \" + $json.personaName + \": \" + ($json.error || \"Unknown error\") }}',\n  NOW()\nWHERE EXISTS (SELECT 1 FROM requests LIMIT 1)\nRETURNING id;",
+                "options": {}
+            },
+            "id": "log-result",
+            "name": "13. Log Result",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                2670,
+                300
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            },
+            "continueOnFail": true
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ $json }}"
+            },
+            "id": "respond-webhook",
+            "name": "14. Respond to Webhook",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                2890,
+                300
+            ]
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "1. Webhook: Ingest Identity": {
+            "main": [
+                [
+                    {
+                        "node": "2. Prepare Input",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Prepare Input": {
+            "main": [
+                [
+                    {
+                        "node": "3. Check Existing Persona (HTTP)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3. Check Existing Persona (HTTP)": {
+            "main": [
+                [
+                    {
+                        "node": "4. Merge Existing Context",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. Merge Existing Context": {
+            "main": [
+                [
+                    {
+                        "node": "5. AI: Generate Cypher",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini 2.5 Flash": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "5. AI: Generate Cypher",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Identity Memory": {
+            "ai_memory": [
+                [
+                    {
+                        "node": "5. AI: Generate Cypher",
+                        "type": "ai_memory",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Tool: Query Graph": {
+            "ai_tool": [
+                [
+                    {
+                        "node": "5. AI: Generate Cypher",
+                        "type": "ai_tool",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. AI: Generate Cypher": {
+            "main": [
+                [
+                    {
+                        "node": "6. Parse Cypher Statements",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "6. Parse Cypher Statements": {
+            "main": [
+                [
+                    {
+                        "node": "7. Valid Cypher?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "7. Valid Cypher?": {
+            "main": [
+                [
+                    {
+                        "node": "8. Prepare Neo4j Request",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "11. Format Error Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "8. Prepare Neo4j Request": {
+            "main": [
+                [
+                    {
+                        "node": "9. Execute via Neo4j HTTP API",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "9. Execute via Neo4j HTTP API": {
+            "main": [
+                [
+                    {
+                        "node": "10. Format Success Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "10. Format Success Response": {
+            "main": [
+                [
+                    {
+                        "node": "12. Merge Responses",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "11. Format Error Response": {
+            "main": [
+                [
+                    {
+                        "node": "12. Merge Responses",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "12. Merge Responses": {
+            "main": [
+                [
+                    {
+                        "node": "13. Log Result",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "13. Log Result": {
+            "main": [
+                [
+                    {
+                        "node": "14. Respond to Webhook",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "versionId": "identity-manager-v2-http",
+    "meta": {
+        "templateCredsSetupCompleted": false,
+        "instanceId": "gdpr-app"
+    },
+    "tags": [
+        {
+            "name": "GDPR",
+            "createdAt": "2024-01-01T00:00:00.000Z",
+            "updatedAt": "2024-01-01T00:00:00.000Z"
+        }
+    ]
+}

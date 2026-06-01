@@ -1,0 +1,641 @@
+{
+    "name": "GDPR Integrity Council (MAKGED v2)",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "validate-triple",
+                "responseMode": "responseNode"
+            },
+            "id": "webhook-trigger",
+            "name": "1. Webhook: Validate Triple",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                250,
+                400
+            ],
+            "webhookId": "validate-triple-webhook",
+            "notes": "ENTRY: POST { triple: {head, relation, tail}, sourceText, requestId }"
+        },
+        {
+            "parameters": {
+                "jsCode": "const input = $input.first().json.body;\n\nconst triple = {\n  head: input.triple?.subject || input.triple?.head || 'Unknown',\n  relation: input.triple?.predicate || input.triple?.relation || 'UNKNOWN',\n  tail: input.triple?.object || input.triple?.tail || 'Unknown'\n};\n\nreturn {\n  json: {\n    triple: triple,\n    sourceText: input.sourceText || '',\n    requestId: input.requestId || null,\n    discussionRound: 1,\n    maxRounds: 3,\n    agentResponses: {},\n    started: new Date().toISOString()\n  }\n};"
+            },
+            "id": "prepare-input",
+            "name": "2. Prepare Input",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                470,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=## HEAD FORWARD AGENT - Round {{ $json.discussionRound }}\n\n**Triple:** ({{ $json.triple.head }}) --[{{ $json.triple.relation }}]--> ({{ $json.triple.tail }})\n**Source:** {{ $json.sourceText || 'No source provided' }}\n\nYou analyze OUTGOING relations FROM the head entity.\n\n1. First, use the Graph Query tool to check: What other relations does {{ $json.triple.head }} have as a source?\n2. Analyze if the proposed relation fits the pattern.\n3. If this is round 2+, consider previous agent arguments: {{ JSON.stringify($json.agentResponses) }}\n\nRespond JSON: { \"verdict\": \"CORRECT/INCORRECT\", \"confidence\": 0-10, \"evidence\": [], \"reasoning\": \"...\" }"
+            },
+            "id": "agent-head-forward",
+            "name": "3a. Head Forward Agent",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                690,
+                150
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=## HEAD BACKWARD AGENT - Round {{ $json.discussionRound }}\n\n**Triple:** ({{ $json.triple.head }}) --[{{ $json.triple.relation }}]--> ({{ $json.triple.tail }})\n**Source:** {{ $json.sourceText || 'No source provided' }}\n\nYou analyze INCOMING relations TO the head entity.\n\n1. Use the Graph Query tool: What points TO {{ $json.triple.head }}?\n2. Does the head entity's context support this new outgoing relation?\n3. Round 2+ considerations: {{ JSON.stringify($json.agentResponses) }}\n\nRespond JSON: { \"verdict\": \"CORRECT/INCORRECT\", \"confidence\": 0-10, \"evidence\": [], \"reasoning\": \"...\" }"
+            },
+            "id": "agent-head-backward",
+            "name": "3b. Head Backward Agent",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                690,
+                350
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=## TAIL FORWARD AGENT - Round {{ $json.discussionRound }}\n\n**Triple:** ({{ $json.triple.head }}) --[{{ $json.triple.relation }}]--> ({{ $json.triple.tail }})\n**Source:** {{ $json.sourceText || 'No source provided' }}\n\nYou analyze OUTGOING relations FROM the tail entity.\n\n1. Use the Graph Query tool: What does {{ $json.triple.tail }} point to?\n2. Is this the right type of entity to receive this relation?\n3. Round 2+ considerations: {{ JSON.stringify($json.agentResponses) }}\n\nRespond JSON: { \"verdict\": \"CORRECT/INCORRECT\", \"confidence\": 0-10, \"evidence\": [], \"reasoning\": \"...\" }"
+            },
+            "id": "agent-tail-forward",
+            "name": "3c. Tail Forward Agent",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                690,
+                550
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=## TAIL BACKWARD AGENT - Round {{ $json.discussionRound }}\n\n**Triple:** ({{ $json.triple.head }}) --[{{ $json.triple.relation }}]--> ({{ $json.triple.tail }})\n**Source:** {{ $json.sourceText || 'No source provided' }}\n\nYou analyze INCOMING relations TO the tail entity.\n\n1. Use the Graph Query tool: What else points TO {{ $json.triple.tail }}?\n2. Do other entities use similar relations to point here?\n3. Round 2+ considerations: {{ JSON.stringify($json.agentResponses) }}\n\nRespond JSON: { \"verdict\": \"CORRECT/INCORRECT\", \"confidence\": 0-10, \"evidence\": [], \"reasoning\": \"...\" }"
+            },
+            "id": "agent-tail-backward",
+            "name": "3d. Tail Backward Agent",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                690,
+                750
+            ]
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                }
+            },
+            "id": "gemini-hf",
+            "name": "Gemini (HF)",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                550,
+                150
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                }
+            },
+            "id": "gemini-hb",
+            "name": "Gemini (HB)",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                550,
+                350
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                }
+            },
+            "id": "gemini-tf",
+            "name": "Gemini (TF)",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                550,
+                550
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                }
+            },
+            "id": "gemini-tb",
+            "name": "Gemini (TB)",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                550,
+                750
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "toolDescription": "Query the Neo4j Knowledge Graph with Cypher. Use this to check existing relationships for entities in the triple.",
+                "method": "POST",
+                "url": "http://n8n:5678/webhook/neo4j-query",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\"query\": \"{{ $fromAI('cypher', 'Cypher query to find relationships') }}\", \"mode\": \"read\"}"
+            },
+            "id": "tool-graph-hf",
+            "name": "Tool: Query Graph (HF)",
+            "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+            "typeVersion": 1.1,
+            "position": [
+                830,
+                150
+            ],
+            "notes": "Calls workflow 09 to execute Cypher queries"
+        },
+        {
+            "parameters": {
+                "toolDescription": "Query the Neo4j Knowledge Graph with Cypher. Use this to check existing relationships for entities in the triple.",
+                "method": "POST",
+                "url": "http://n8n:5678/webhook/neo4j-query",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\"query\": \"{{ $fromAI('cypher', 'Cypher query to find relationships') }}\", \"mode\": \"read\"}"
+            },
+            "id": "tool-graph-hb",
+            "name": "Tool: Query Graph (HB)",
+            "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+            "typeVersion": 1.1,
+            "position": [
+                830,
+                350
+            ]
+        },
+        {
+            "parameters": {
+                "toolDescription": "Query the Neo4j Knowledge Graph with Cypher. Use this to check existing relationships for entities in the triple.",
+                "method": "POST",
+                "url": "http://n8n:5678/webhook/neo4j-query",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\"query\": \"{{ $fromAI('cypher', 'Cypher query to find relationships') }}\", \"mode\": \"read\"}"
+            },
+            "id": "tool-graph-tf",
+            "name": "Tool: Query Graph (TF)",
+            "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+            "typeVersion": 1.1,
+            "position": [
+                830,
+                550
+            ]
+        },
+        {
+            "parameters": {
+                "toolDescription": "Query the Neo4j Knowledge Graph with Cypher. Use this to check existing relationships for entities in the triple.",
+                "method": "POST",
+                "url": "http://n8n:5678/webhook/neo4j-query",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\"query\": \"{{ $fromAI('cypher', 'Cypher query to find relationships') }}\", \"mode\": \"read\"}"
+            },
+            "id": "tool-graph-tb",
+            "name": "Tool: Query Graph (TB)",
+            "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+            "typeVersion": 1.1,
+            "position": [
+                830,
+                750
+            ]
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "mergeByFields": {
+                    "values": []
+                }
+            },
+            "id": "merge-verdicts",
+            "name": "4. Merge Agent Verdicts",
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                1050,
+                450
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Parse all 4 agent outputs and count votes\nconst hf = $('3a. Head Forward Agent').first()?.json?.output || '';\nconst hb = $('3b. Head Backward Agent').first()?.json?.output || '';\nconst tf = $('3c. Tail Forward Agent').first()?.json?.output || '';\nconst tb = $('3d. Tail Backward Agent').first()?.json?.output || '';\nconst input = $('2. Prepare Input').first().json;\n\nfunction parse(out) {\n  try {\n    const m = out.match(/\\{[\\s\\S]*\\}/);\n    return m ? JSON.parse(m[0]) : { verdict: 'UNKNOWN', confidence: 5 };\n  } catch { return { verdict: 'UNKNOWN', confidence: 5 }; }\n}\n\nconst agents = {\n  headForward: parse(hf),\n  headBackward: parse(hb),\n  tailForward: parse(tf),\n  tailBackward: parse(tb)\n};\n\nlet correct = 0, incorrect = 0;\nfor (const v of Object.values(agents)) {\n  if (v.verdict?.toUpperCase() === 'CORRECT') correct++;\n  else if (v.verdict?.toUpperCase() === 'INCORRECT') incorrect++;\n}\n\nconst consensus = correct === 4 || incorrect === 4;\nconst majority = correct >= 3 || incorrect >= 3;\nconst tie = correct === 2 && incorrect === 2;\nconst shouldContinue = !consensus && !majority && input.discussionRound < input.maxRounds;\n\nreturn {\n  json: {\n    ...input,\n    agentResponses: agents,\n    votes: { correct, incorrect },\n    consensus,\n    majority,\n    tie,\n    shouldContinue,\n    decision: consensus || majority ? (correct > incorrect ? 'ACCEPT' : 'REJECT') : (tie ? 'TIE' : 'CONTINUE')\n  }\n};"
+            },
+            "id": "count-votes",
+            "name": "5. Count Votes",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1270,
+                450
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "boolean": [
+                        {
+                            "value1": "={{ $json.shouldContinue }}",
+                            "value2": true
+                        }
+                    ]
+                }
+            },
+            "id": "check-continue",
+            "name": "6. Continue Discussion?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                1490,
+                450
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Increment round and prepare for next iteration\nconst data = $input.first().json;\nreturn {\n  json: {\n    triple: data.triple,\n    sourceText: data.sourceText,\n    requestId: data.requestId,\n    discussionRound: data.discussionRound + 1,\n    maxRounds: data.maxRounds,\n    agentResponses: data.agentResponses\n  }\n};"
+            },
+            "id": "increment-round",
+            "name": "7a. Increment Round",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1710,
+                350
+            ],
+            "notes": "ITERATION: Prepares next discussion round with previous responses for agents to consider"
+        },
+        {
+            "parameters": {
+                "jsCode": "// Format final decision\nconst data = $input.first().json;\n\nlet cypherStatement = null;\nif (data.decision === 'ACCEPT' || (data.tie && data.votes.correct >= 2)) {\n  const rel = data.triple.relation.toUpperCase().replace(/[^A-Z_]/g, '_');\n  cypherStatement = `MERGE (h {value: '${data.triple.head}'}) MERGE (t {value: '${data.triple.tail}'}) MERGE (h)-[:${rel}]->(t)`;\n}\n\nreturn {\n  json: {\n    success: true,\n    triple: data.triple,\n    decision: data.decision === 'TIE' ? 'NEEDS_REVIEW' : data.decision,\n    votes: data.votes,\n    rounds: data.discussionRound,\n    cypherStatement,\n    agentResponses: data.agentResponses\n  }\n};"
+            },
+            "id": "format-decision",
+            "name": "7b. Format Final Decision",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1710,
+                550
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://n8n:5678/webhook/neo4j-query",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\"query\": \"{{ $json.cypherStatement }}\", \"mode\": \"write\"}"
+            },
+            "id": "apply-to-graph",
+            "name": "8. Apply to Graph (if ACCEPT)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1930,
+                450
+            ],
+            "continueOnFail": true,
+            "notes": "Uses workflow 09 to write accepted triple"
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ $json }}"
+            },
+            "id": "respond",
+            "name": "9. Respond",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                2150,
+                450
+            ]
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "1. Webhook: Validate Triple": {
+            "main": [
+                [
+                    {
+                        "node": "2. Prepare Input",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Prepare Input": {
+            "main": [
+                [
+                    {
+                        "node": "3a. Head Forward Agent",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "3b. Head Backward Agent",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "3c. Tail Forward Agent",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "3d. Tail Backward Agent",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini (HF)": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "3a. Head Forward Agent",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini (HB)": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "3b. Head Backward Agent",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini (TF)": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "3c. Tail Forward Agent",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini (TB)": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "3d. Tail Backward Agent",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Tool: Query Graph (HF)": {
+            "ai_tool": [
+                [
+                    {
+                        "node": "3a. Head Forward Agent",
+                        "type": "ai_tool",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Tool: Query Graph (HB)": {
+            "ai_tool": [
+                [
+                    {
+                        "node": "3b. Head Backward Agent",
+                        "type": "ai_tool",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Tool: Query Graph (TF)": {
+            "ai_tool": [
+                [
+                    {
+                        "node": "3c. Tail Forward Agent",
+                        "type": "ai_tool",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Tool: Query Graph (TB)": {
+            "ai_tool": [
+                [
+                    {
+                        "node": "3d. Tail Backward Agent",
+                        "type": "ai_tool",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3a. Head Forward Agent": {
+            "main": [
+                [
+                    {
+                        "node": "4. Merge Agent Verdicts",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3b. Head Backward Agent": {
+            "main": [
+                [
+                    {
+                        "node": "4. Merge Agent Verdicts",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "3c. Tail Forward Agent": {
+            "main": [
+                [
+                    {
+                        "node": "4. Merge Agent Verdicts",
+                        "type": "main",
+                        "index": 2
+                    }
+                ]
+            ]
+        },
+        "3d. Tail Backward Agent": {
+            "main": [
+                [
+                    {
+                        "node": "4. Merge Agent Verdicts",
+                        "type": "main",
+                        "index": 3
+                    }
+                ]
+            ]
+        },
+        "4. Merge Agent Verdicts": {
+            "main": [
+                [
+                    {
+                        "node": "5. Count Votes",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. Count Votes": {
+            "main": [
+                [
+                    {
+                        "node": "6. Continue Discussion?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "6. Continue Discussion?": {
+            "main": [
+                [
+                    {
+                        "node": "7a. Increment Round",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "7b. Format Final Decision",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "7a. Increment Round": {
+            "main": [
+                [
+                    {
+                        "node": "3a. Head Forward Agent",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "3b. Head Backward Agent",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "3c. Tail Forward Agent",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "3d. Tail Backward Agent",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "7b. Format Final Decision": {
+            "main": [
+                [
+                    {
+                        "node": "8. Apply to Graph (if ACCEPT)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "8. Apply to Graph (if ACCEPT)": {
+            "main": [
+                [
+                    {
+                        "node": "9. Respond",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "versionId": "makged-v2-iterative",
+    "id": "gdpr-integrity-council",
+    "tags": [
+        {
+            "name": "GDPR",
+            "id": "gdpr-tag"
+        },
+        {
+            "name": "MAKGED",
+            "id": "makged-tag"
+        }
+    ]
+}

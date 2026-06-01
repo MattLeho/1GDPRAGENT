@@ -1,0 +1,170 @@
+{
+    "name": "GDPR Neo4j MCP Query Tool",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "neo4j-query",
+                "responseMode": "responseNode"
+            },
+            "id": "webhook-trigger",
+            "name": "1. Webhook: Query Graph",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                250,
+                300
+            ],
+            "webhookId": "neo4j-query-webhook",
+            "notes": "ENTRY POINT: Receives Cypher queries from other agents. POST body: { query: 'MATCH ...', mode: 'read|write' }"
+        },
+        {
+            "parameters": {
+                "jsCode": "// Prepare the Cypher query for execution\nconst input = $input.first().json.body;\n\nconst query = input.query || input.cypher || '';\nconst mode = input.mode || 'read';\nconst returnFormat = input.format || 'json';\n\n// Validate query safety\nconst isWriteQuery = /\\b(CREATE|MERGE|DELETE|SET|REMOVE|DETACH)\\b/i.test(query);\nconst isSafeRead = /^\\s*(MATCH|OPTIONAL MATCH|CALL|RETURN|WITH)/i.test(query);\n\nif (mode === 'read' && isWriteQuery) {\n  throw new Error('Write operations not allowed in read mode');\n}\n\nreturn {\n  json: {\n    query: query.trim(),\n    mode: mode,\n    isWriteQuery: isWriteQuery,\n    returnFormat: returnFormat,\n    timestamp: new Date().toISOString()\n  }\n};"
+            },
+            "id": "prepare-query",
+            "name": "2. Validate & Prepare Query",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                470,
+                300
+            ],
+            "notes": "SECURITY: Validates that read-mode queries don't contain write operations. Prevents accidental data modification."
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://neo4j:7474/db/neo4j/tx/commit",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpBasicAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"statements\": [\n    {\n      \"statement\": \"{{ $json.query }}\"\n    }\n  ]\n}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "fullResponse": true
+                        }
+                    }
+                }
+            },
+            "id": "execute-cypher",
+            "name": "3. Execute via Neo4j HTTP API",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                690,
+                300
+            ],
+            "credentials": {
+                "httpBasicAuth": {
+                    "id": "NEO4J_HTTP_CREDENTIAL_ID",
+                    "name": "Neo4j HTTP Auth"
+                }
+            },
+            "continueOnFail": true,
+            "notes": "NEO4J CONNECTION: Uses HTTP API at port 7474. Credential needs Neo4j username (neo4j) and password. Alternative: Use MCP Client Tool if running neo4j-mcp server."
+        },
+        {
+            "parameters": {
+                "jsCode": "// Parse Neo4j HTTP response into clean format\nconst response = $input.first().json;\nconst inputData = $('2. Validate & Prepare Query').first().json;\n\nlet results = [];\nlet columns = [];\nlet error = null;\nlet rowCount = 0;\n\ntry {\n  const body = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;\n  \n  if (body.errors && body.errors.length > 0) {\n    error = body.errors.map(e => e.message).join('; ');\n  }\n  \n  if (body.results && body.results[0]) {\n    const result = body.results[0];\n    columns = result.columns || [];\n    \n    if (result.data) {\n      results = result.data.map(d => {\n        // Convert row array to object using column names\n        const obj = {};\n        columns.forEach((col, i) => {\n          obj[col] = d.row[i];\n        });\n        return obj;\n      });\n      rowCount = results.length;\n    }\n  }\n} catch (e) {\n  error = 'Failed to parse Neo4j response: ' + e.message;\n}\n\nreturn {\n  json: {\n    success: !error,\n    query: inputData.query,\n    mode: inputData.mode,\n    columns: columns,\n    rowCount: rowCount,\n    results: results,\n    error: error,\n    executedAt: new Date().toISOString()\n  }\n};"
+            },
+            "id": "parse-response",
+            "name": "4. Parse & Format Results",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                910,
+                300
+            ],
+            "notes": "DATA TRANSFORMATION: Converts Neo4j's row-based response into JSON objects with named properties for easier consumption by other agents."
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ $json }}"
+            },
+            "id": "respond-webhook",
+            "name": "5. Respond to Caller",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1130,
+                300
+            ],
+            "notes": "RESPONSE: Returns standardized JSON with success, results array, columns, rowCount, and any errors to the calling agent."
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "1. Webhook: Query Graph": {
+            "main": [
+                [
+                    {
+                        "node": "2. Validate & Prepare Query",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Validate & Prepare Query": {
+            "main": [
+                [
+                    {
+                        "node": "3. Execute via Neo4j HTTP API",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3. Execute via Neo4j HTTP API": {
+            "main": [
+                [
+                    {
+                        "node": "4. Parse & Format Results",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. Parse & Format Results": {
+            "main": [
+                [
+                    {
+                        "node": "5. Respond to Caller",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "versionId": "neo4j-query-tool-v1",
+    "meta": {
+        "templateCredsSetupCompleted": false,
+        "instanceId": "gdpr-automation-local"
+    },
+    "id": "gdpr-neo4j-query-tool",
+    "tags": [
+        {
+            "name": "GDPR",
+            "id": "gdpr-tag"
+        },
+        {
+            "name": "Tool",
+            "id": "tool-tag"
+        },
+        {
+            "name": "Neo4j",
+            "id": "neo4j-tag"
+        }
+    ]
+}

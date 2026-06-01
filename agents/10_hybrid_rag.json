@@ -1,0 +1,327 @@
+{
+    "name": "GDPR Hybrid RAG (TCR-QF + GIVE + Embeddings)",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "hybrid-rag",
+                "responseMode": "responseNode"
+            },
+            "id": "webhook-trigger",
+            "name": "1. Webhook: Hybrid RAG",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                250,
+                400
+            ],
+            "webhookId": "hybrid-rag-webhook"
+        },
+        {
+            "parameters": {
+                "jsCode": "const input = $input.first().json.body;\nreturn {\n  json: {\n    question: input.question || '',\n    sessionId: input.sessionId || 'session-' + Date.now(),\n    requestId: input.requestId || null,\n    companyFilter: input.companyFilter || null\n  }\n};"
+            },
+            "id": "prepare-input",
+            "name": "2. Prepare Input",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                470,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "model": "text-embedding-3-small",
+                "text": "={{ $json.question }}"
+            },
+            "id": "embed-question",
+            "name": "3. Generate Question Embedding",
+            "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+            "typeVersion": 1,
+            "position": [
+                690,
+                400
+            ],
+            "credentials": {
+                "openAiApi": {
+                    "id": "OPENAI_CREDENTIAL_ID",
+                    "name": "OpenAI API"
+                }
+            },
+            "notes": "EMBEDDING: Converts question text to vector for semantic search. Uses OpenAI's text-embedding-3-small model."
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://qdrant:6333/collections/gdpr_docs/points/search",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.embedding) }},\n  \"limit\": 5,\n  \"with_payload\": true\n}"
+            },
+            "id": "vector-search",
+            "name": "4. Vector Search (Qdrant)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                910,
+                300
+            ],
+            "continueOnFail": true,
+            "notes": "TCR: Searches vector DB for original document chunks that contain relevant context."
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://n8n:5678/webhook/neo4j-query",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\"query\": \"MATCH (c:Company)-[:COLLECTS]->(d:DataPoint) RETURN c.name as company, collect(DISTINCT d.category)[0..5] as dataTypes LIMIT 10\", \"mode\": \"read\"}"
+            },
+            "id": "graph-query",
+            "name": "5. Graph Query (Neo4j)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                910,
+                500
+            ],
+            "continueOnFail": true,
+            "notes": "Uses Workflow 09 to query the knowledge graph for structured relationships."
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "mergeByFields": {
+                    "values": []
+                }
+            },
+            "id": "merge-context",
+            "name": "6. Merge Contexts",
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                1130,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "const vectorResp = $('4. Vector Search (Qdrant)').first()?.json || {};\nconst graphResp = $('5. Graph Query (Neo4j)').first()?.json || {};\nconst input = $('2. Prepare Input').first().json;\n\nlet vectorContext = [];\ntry {\n  if (vectorResp.result) {\n    vectorContext = vectorResp.result.map(r => ({\n      score: r.score,\n      text: r.payload?.text || r.payload?.content || '',\n      source: r.payload?.source || 'unknown'\n    }));\n  }\n} catch (e) { vectorContext = [{ error: e.message }]; }\n\nlet graphContext = [];\ntry {\n  if (graphResp.results) {\n    graphContext = graphResp.results;\n  }\n} catch (e) { graphContext = [{ error: e.message }]; }\n\nreturn {\n  json: {\n    question: input.question,\n    sessionId: input.sessionId,\n    requestId: input.requestId,\n    vectorContext: vectorContext.slice(0, 3),\n    graphContext: graphContext.slice(0, 10)\n  }\n};"
+            },
+            "id": "format-context",
+            "name": "7. Format Hybrid Context",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1350,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=Answer the question using HYBRID RAG context:\n\n## Question\n{{ $json.question }}\n\n## Vector Context (Original Documents)\n{{ JSON.stringify($json.vectorContext, null, 2) }}\n\n## Graph Context (Knowledge Graph)\n{{ JSON.stringify($json.graphContext, null, 2) }}\n\n---\nProvide: answer, sources, confidence (HIGH/MEDIUM/LOW)",
+                "options": {
+                    "systemMessage": "You are a Privacy Intelligence Oracle. Combine structured graph data with unstructured document context to answer GDPR-related questions. Always cite whether evidence comes from Graph or Vector sources."
+                }
+            },
+            "id": "rag-agent",
+            "name": "8. AI: Hybrid RAG Synthesis",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                1570,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                }
+            },
+            "id": "gemini-rag",
+            "name": "Gemini (RAG)",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                1450,
+                600
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "sessionIdType": "customKey",
+                "sessionKey": "=rag-{{ $json.requestId || $json.sessionId }}",
+                "contextWindowLength": 20
+            },
+            "id": "rag-memory",
+            "name": "RAG Memory (per request)",
+            "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+            "typeVersion": 1.3,
+            "position": [
+                1570,
+                600
+            ],
+            "notes": "REQUEST-SPECIFIC: Memory keyed by requestId for GDPR request continuity"
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ { success: true, question: $json.question, answer: $json.output, sessionId: $('2. Prepare Input').first().json.sessionId } }}"
+            },
+            "id": "respond",
+            "name": "9. Respond",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1790,
+                400
+            ]
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "1. Webhook: Hybrid RAG": {
+            "main": [
+                [
+                    {
+                        "node": "2. Prepare Input",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Prepare Input": {
+            "main": [
+                [
+                    {
+                        "node": "3. Generate Question Embedding",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3. Generate Question Embedding": {
+            "main": [
+                [
+                    {
+                        "node": "4. Vector Search (Qdrant)",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "5. Graph Query (Neo4j)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. Vector Search (Qdrant)": {
+            "main": [
+                [
+                    {
+                        "node": "6. Merge Contexts",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. Graph Query (Neo4j)": {
+            "main": [
+                [
+                    {
+                        "node": "6. Merge Contexts",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "6. Merge Contexts": {
+            "main": [
+                [
+                    {
+                        "node": "7. Format Hybrid Context",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "7. Format Hybrid Context": {
+            "main": [
+                [
+                    {
+                        "node": "8. AI: Hybrid RAG Synthesis",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini (RAG)": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "8. AI: Hybrid RAG Synthesis",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "RAG Memory (per request)": {
+            "ai_memory": [
+                [
+                    {
+                        "node": "8. AI: Hybrid RAG Synthesis",
+                        "type": "ai_memory",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "8. AI: Hybrid RAG Synthesis": {
+            "main": [
+                [
+                    {
+                        "node": "9. Respond",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "versionId": "hybrid-rag-v2-embeddings",
+    "id": "gdpr-hybrid-rag",
+    "tags": [
+        {
+            "name": "GDPR"
+        },
+        {
+            "name": "RAG"
+        },
+        {
+            "name": "Qdrant"
+        }
+    ]
+}

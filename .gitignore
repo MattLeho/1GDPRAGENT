@@ -1,0 +1,46 @@
+# Local secrets and environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Personal/private case data
+TalkTalkGDPR Request/
+frontend/uploads/
+uploads/
+*.mp3
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.wav
+*.flac
+
+# Local generated/vendor/reference data
+n8n-docs-main/
+**/node_modules/
+**/venv/
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.cache/
+**/.next/
+**/dist/
+**/build/
+*.tsbuildinfo
+
+# Logs and scratch output
+*.log
+frontend/lint_errors.txt
+frontend/lint_log*.txt
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+*.code-workspace

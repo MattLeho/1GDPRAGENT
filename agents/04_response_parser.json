@@ -1,0 +1,1159 @@
+{
+    "name": "GDPR Response Parser Agent",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "parse-response",
+                "responseMode": "responseNode",
+                "options": {}
+            },
+            "id": "webhook-trigger",
+            "name": "1. Webhook: Parse Response",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                100,
+                300
+            ],
+            "webhookId": "parse-response-webhook"
+        },
+        {
+            "parameters": {
+                "jsCode": "// Extract request data and check for user uploads\nconst input = items[0].json.body || items[0].json;\n\n// Check if user uploaded files directly or if we have download links\nconst hasDownloadLinks = (input.downloadLinks || []).length > 0;\nconst hasUploadedFiles = (input.uploadedFiles || []).length > 0;\nconst requiresManualDownload = input.requiresManualDownload || false;\nconst portalUrl = input.portalUrl || null;\n\n// Build file queue\nlet fileQueue = [];\n\nif (hasDownloadLinks) {\n  for (const url of input.downloadLinks) {\n    fileQueue.push({ type: 'download', url: url, source: 'company_link' });\n  }\n}\n\nif (hasUploadedFiles) {\n  for (const file of input.uploadedFiles) {\n    fileQueue.push({ type: 'uploaded', path: file.path, name: file.name, source: 'user_upload' });\n  }\n}\n\nreturn {\n  json: {\n    requestId: input.requestId,\n    companyName: input.companyName || 'Unknown Company',\n    fileQueue: fileQueue,\n    totalFiles: fileQueue.length,\n    currentFileIndex: 0,\n    requiresManualDownload: requiresManualDownload,\n    portalUrl: portalUrl,\n    source: input.source || 'manual',\n    processedFiles: [],\n    allAnalyses: [],\n    startedAt: new Date().toISOString()\n  }\n};"
+            },
+            "id": "prepare-input",
+            "name": "2. Prepare Input & File Queue",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                320,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "requires-manual",
+                            "leftValue": "={{ $json.requiresManualDownload }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "if-manual-download",
+            "name": "3. Requires Manual Download?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                540,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO messages (request_id, sender, content, timestamp)\nVALUES (\n  '{{ $json.requestId }}'::uuid,\n  'agent',\n  '⚠️ ACTION REQUIRED: Company requires you to download files from their portal.\\n\\nPortal URL: {{ $json.portalUrl || \"Check your email\" }}\\n\\nPlease:\\n1. Log into the portal\\n2. Download your data export\\n3. Upload the files to this request\\n4. The parser will automatically process them',\n  NOW()\n)\nRETURNING id;",
+                "options": {}
+            },
+            "id": "notify-manual-download",
+            "name": "4. Notify: Manual Download Needed",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                760,
+                200
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            },
+            "notes": "Credentials: Host=postgres, Database=gdpr_local, User=admin, Password=securepassword, Port=5432"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "has-files",
+                            "leftValue": "={{ $json.totalFiles }}",
+                            "rightValue": 0,
+                            "operator": {
+                                "type": "number",
+                                "operation": "gt"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "if-has-files",
+            "name": "5. Has Files to Process?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                760,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "batchSize": 1,
+                "options": {}
+            },
+            "id": "iterate-files",
+            "name": "6. Process One File at a Time",
+            "type": "n8n-nodes-base.splitInBatches",
+            "typeVersion": 3,
+            "position": [
+                980,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Get current file from queue\nconst inputData = $('2. Prepare Input & File Queue').first().json;\nconst currentIndex = items[0].json.currentFileIndex || 0;\nconst file = inputData.fileQueue[currentIndex];\n\nif (!file) {\n  return { json: { done: true, noMoreFiles: true } };\n}\n\nreturn {\n  json: {\n    ...items[0].json,\n    currentFile: file,\n    currentFileIndex: currentIndex,\n    totalFiles: inputData.totalFiles,\n    requestId: inputData.requestId,\n    companyName: inputData.companyName\n  }\n};"
+            },
+            "id": "get-current-file",
+            "name": "7. Get Current File",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1200,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "is-download",
+                            "leftValue": "={{ $json.currentFile.type }}",
+                            "rightValue": "download",
+                            "operator": {
+                                "type": "string",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "if-download-type",
+            "name": "8. Download or Uploaded?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                1420,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.currentFile.url }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    },
+                    "timeout": 120000
+                }
+            },
+            "id": "download-file",
+            "name": "9a. Download File",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1640,
+                300
+            ],
+            "continueOnFail": true
+        },
+        {
+            "parameters": {
+                "filePath": "={{ $json.currentFile.path }}",
+                "options": {}
+            },
+            "id": "read-uploaded",
+            "name": "9b. Read Uploaded File",
+            "type": "n8n-nodes-base.readBinaryFile",
+            "typeVersion": 1,
+            "position": [
+                1640,
+                500
+            ],
+            "continueOnFail": true
+        },
+        {
+            "parameters": {
+                "jsCode": "// Detect file type from binary or filename\nconst binary = items[0].binary?.data;\nconst mimeType = binary?.mimeType || '';\nconst fileName = binary?.fileName || items[0].json.currentFile?.name || '';\nconst ext = fileName.split('.').pop()?.toLowerCase() || '';\n\n// Comprehensive file type mapping\nconst typeMapping = {\n  // Documents\n  'pdf': 'PDF',\n  'application/pdf': 'PDF',\n  \n  // Archives\n  'zip': 'ZIP',\n  'application/zip': 'ZIP',\n  'application/x-zip-compressed': 'ZIP',\n  \n  // Data files - JSON\n  'json': 'JSON',\n  'application/json': 'JSON',\n  \n  // Data files - CSV\n  'csv': 'CSV',\n  'text/csv': 'CSV',\n  'text/comma-separated-values': 'CSV',\n  \n  // Spreadsheets\n  'xls': 'SPREADSHEET',\n  'xlsx': 'SPREADSHEET',\n  'application/vnd.ms-excel': 'SPREADSHEET',\n  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'SPREADSHEET',\n  'ods': 'SPREADSHEET',\n  \n  // Images\n  'jpg': 'IMAGE',\n  'jpeg': 'IMAGE',\n  'png': 'IMAGE',\n  'gif': 'IMAGE',\n  'webp': 'IMAGE',\n  'bmp': 'IMAGE',\n  'image/jpeg': 'IMAGE',\n  'image/png': 'IMAGE',\n  'image/gif': 'IMAGE',\n  \n  // Video (CCTV, recordings)\n  'mp4': 'VIDEO',\n  'avi': 'VIDEO',\n  'mov': 'VIDEO',\n  'mkv': 'VIDEO',\n  'wmv': 'VIDEO',\n  'webm': 'VIDEO',\n  'video/mp4': 'VIDEO',\n  'video/x-msvideo': 'VIDEO',\n  'video/quicktime': 'VIDEO',\n  \n  // Audio (voice recordings)\n  'mp3': 'AUDIO',\n  'wav': 'AUDIO',\n  'ogg': 'AUDIO',\n  'm4a': 'AUDIO',\n  'flac': 'AUDIO',\n  'aac': 'AUDIO',\n  'audio/mpeg': 'AUDIO',\n  'audio/wav': 'AUDIO',\n  'audio/ogg': 'AUDIO',\n  \n  // Documents\n  'txt': 'TEXT',\n  'text/plain': 'TEXT',\n  'html': 'HTML',\n  'text/html': 'HTML',\n  'xml': 'XML',\n  'application/xml': 'XML'\n};\n\nlet fileType = typeMapping[ext] || typeMapping[mimeType] || 'UNKNOWN';\n\n// Calculate file size\nconst fileSize = binary?.fileSize || 0;\nconst fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);\n\nreturn {\n  json: {\n    ...items[0].json,\n    detectedType: fileType,\n    fileName: fileName,\n    mimeType: mimeType,\n    fileSizeMB: parseFloat(fileSizeMB),\n    requiresSpecialHandling: ['VIDEO', 'AUDIO', 'IMAGE'].includes(fileType),\n    canExtractText: ['PDF', 'JSON', 'CSV', 'TEXT', 'HTML', 'XML', 'SPREADSHEET'].includes(fileType)\n  },\n  binary: items[0].binary\n};"
+            },
+            "id": "detect-file-type",
+            "name": "10. Detect File Type",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1860,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "rules": {
+                    "values": [
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{ $json.detectedType }}",
+                                        "rightValue": "PDF",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "PDF"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{ $json.detectedType }}",
+                                        "rightValue": "ZIP",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "ZIP"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{ $json.detectedType }}",
+                                        "rightValue": "JSON",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "JSON"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{ $json.detectedType }}",
+                                        "rightValue": "CSV",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "CSV"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{ $json.detectedType }}",
+                                        "rightValue": "SPREADSHEET",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "SPREADSHEET"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{ $json.requiresSpecialHandling }}",
+                                        "rightValue": true,
+                                        "operator": {
+                                            "type": "boolean",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "MEDIA"
+                        }
+                    ]
+                },
+                "options": {
+                    "fallbackOutput": "extra"
+                }
+            },
+            "id": "switch-file-type",
+            "name": "11. Route by File Type",
+            "type": "n8n-nodes-base.switch",
+            "typeVersion": 3.2,
+            "position": [
+                2080,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "pdf",
+                "options": {}
+            },
+            "id": "extract-pdf",
+            "name": "12a. Extract PDF Text",
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1,
+            "position": [
+                2300,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "decompress",
+                "binaryPropertyName": "data",
+                "outputFormat": "file"
+            },
+            "id": "unzip-files",
+            "name": "12b. Unzip Archive",
+            "type": "n8n-nodes-base.compression",
+            "typeVersion": 1.1,
+            "position": [
+                2300,
+                150
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "toJson",
+                "options": {}
+            },
+            "id": "parse-json",
+            "name": "12c. Parse JSON",
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1,
+            "position": [
+                2300,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "csv",
+                "options": {}
+            },
+            "id": "parse-csv",
+            "name": "12d. Parse CSV",
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1,
+            "position": [
+                2300,
+                450
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "spreadsheet",
+                "options": {}
+            },
+            "id": "parse-spreadsheet",
+            "name": "12e. Parse Spreadsheet",
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1,
+            "position": [
+                2300,
+                600
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// For media files, we can't extract content but log metadata\nconst data = items[0].json;\nconst binary = items[0].binary?.data;\n\nreturn {\n  json: {\n    ...data,\n    extractedContent: null,\n    mediaMetadata: {\n      type: data.detectedType,\n      fileName: data.fileName,\n      sizeMB: data.fileSizeMB,\n      mimeType: data.mimeType,\n      notes: 'Media file saved for manual review. May contain CCTV footage, voice recordings, or images.'\n    },\n    needsManualReview: true\n  },\n  binary: items[0].binary\n};"
+            },
+            "id": "handle-media",
+            "name": "12f. Handle Media File",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2300,
+                750
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Handle unknown file types\nconst data = items[0].json;\nreturn {\n  json: {\n    ...data,\n    extractedContent: null,\n    unknownType: true,\n    notes: 'Unknown file type - saved for manual review'\n  },\n  binary: items[0].binary\n};"
+            },
+            "id": "handle-unknown",
+            "name": "12g. Handle Unknown Type",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2300,
+                900
+            ]
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "mergeByFields": {
+                    "values": []
+                },
+                "options": {}
+            },
+            "id": "merge-extracted",
+            "name": "13. Merge Extracted Data",
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                2520,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=Analyze this GDPR data export file and categorize all personal data found.\n\n## FILE INFORMATION\nCompany: {{ $json.companyName }}\nFile Name: {{ $json.fileName }}\nFile Type: {{ $json.detectedType }}\nFile Size: {{ $json.fileSizeMB }} MB\n\n## EXTRACTED CONTENT\n{{ $json.extractedContent ? JSON.stringify($json.extractedContent).substring(0, 25000) : ($json.mediaMetadata ? 'MEDIA FILE: ' + JSON.stringify($json.mediaMetadata) : 'No content extracted') }}\n\n## YOUR TASK\nAnalyze this data thoroughly. Use your tools if you need to:\n- Look up the company's privacy policy for context\n- Add findings to the knowledge graph\n- Check what we already know about this company\n\nProvide a comprehensive analysis.",
+                "options": {
+                    "systemMessage": "You are an expert GDPR Data Analyst. You analyze data exports from companies and identify all personal data.\n\n## DATA CATEGORIES TO IDENTIFY\n\n1. **CONTACT_INFO**: Emails, phones, addresses, social profiles\n2. **ACCOUNT_INFO**: Usernames, IDs, subscription dates, account settings\n3. **ACTIVITY_DATA**: Login history, page views, clicks, searches, usage patterns\n4. **FINANCIAL_DATA**: Transactions, payment methods, purchase history, bank details\n5. **TECHNICAL_DATA**: IP addresses, device IDs, browser fingerprints, cookies, advertising IDs\n6. **LOCATION_DATA**: GPS coordinates, location history, travel patterns, check-ins\n7. **COMMUNICATION_DATA**: Messages, emails, chat logs, call records, voice transcripts\n8. **MEDIA_DATA**: Photos, videos, audio recordings, CCTV footage, profile pictures\n9. **BIOMETRIC_DATA**: Face data, fingerprints, voice prints, typing patterns\n10. **INFERRED_DATA**: Ad profiles, interest categories, scores, predictions, segments\n11. **SENSITIVE_DATA**: Health data, political views, religious beliefs, sexual orientation\n\n## RISK ASSESSMENT\n- **LOW** (0-30): Basic account info, public data\n- **MEDIUM** (31-60): Activity data, some identifiers, moderate profiling\n- **HIGH** (61-100): Extensive tracking, biometrics, sensitive data, third-party sharing\n\n## AVAILABLE TOOLS\nYou can use these tools to enhance your analysis:\n- **ingestToKnowledgeGraph**: Add discovered entities and relationships to the user's privacy graph\n- **lookupCompanyPolicy**: Check what the company's privacy policy says about this data\n- **saveDataFile**: Save the file locally for the user to review\n\n## OUTPUT FORMAT (JSON)\n{\n  \"fileName\": \"string\",\n  \"fileType\": \"string\", \n  \"dataPointsFound\": number,\n  \"categories\": {\n    \"CATEGORY_NAME\": {\n      \"count\": number,\n      \"examples\": [\"example1\", \"example2\"],\n      \"riskLevel\": \"LOW/MEDIUM/HIGH\",\n      \"concerningFindings\": [\"any issues\"]\n    }\n  },\n  \"thirdPartiesDetected\": [\"list of company names found in data\"],\n  \"dateRangeCovered\": \"earliest to latest date found\",\n  \"summary\": \"2-3 sentence summary\",\n  \"riskScore\": 0-100,\n  \"gdprViolations\": [\"any potential violations\"],\n  \"recommendedActions\": [\"what user should do\"]\n}"
+                }
+            },
+            "id": "ai-analyze",
+            "name": "14. AI: Deep Data Analysis",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                2740,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                },
+                "options": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 4096
+                }
+            },
+            "id": "gemini-model",
+            "name": "Gemini: Data Analyst",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                2620,
+                620
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "toolDescription": "Add discovered personal data entities to the user's privacy knowledge graph",
+                "method": "POST",
+                "url": "http://n8n:5678/webhook/ingest-data",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\"requestId\": \"{{ $fromAI('requestId', 'The request ID') }}\", \"companyName\": \"{{ $fromAI('company', 'Company name') }}\", \"dataType\": \"{{ $fromAI('dataType', 'Category of data') }}\", \"entities\": {{ $fromAI('entities', 'JSON array of entities found') }}}"
+            },
+            "id": "tool-ingest-kg",
+            "name": "Tool: Ingest to Knowledge Graph",
+            "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+            "typeVersion": 1.1,
+            "position": [
+                2740,
+                620
+            ]
+        },
+        {
+            "parameters": {
+                "toolDescription": "Look up a company's privacy policy to understand their data practices",
+                "method": "POST",
+                "url": "http://n8n:5678/webhook/analyze-policy",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\"url\": \"{{ $fromAI('companyDomain', 'Company domain to look up') }}\"}"
+            },
+            "id": "tool-lookup-policy",
+            "name": "Tool: Lookup Company Policy",
+            "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+            "typeVersion": 1.1,
+            "position": [
+                2860,
+                620
+            ]
+        },
+        {
+            "parameters": {
+                "contextWindowLength": 15
+            },
+            "id": "analysis-memory",
+            "name": "Analysis Memory",
+            "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+            "typeVersion": 1.3,
+            "position": [
+                2980,
+                620
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Parse AI analysis and store for this file\nconst aiOutput = items[0].json.output || items[0].json.text || '';\nconst inputData = items[0].json;\n\nlet analysis;\ntry {\n  const jsonMatch = aiOutput.match(/\\{[\\s\\S]*\\}/);\n  analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : { error: 'Failed to parse', raw: aiOutput.substring(0, 500) };\n} catch (e) {\n  analysis = { error: e.message };\n}\n\nreturn {\n  json: {\n    ...inputData,\n    analysis: analysis,\n    analysisComplete: true\n  }\n};"
+            },
+            "id": "parse-analysis",
+            "name": "15. Parse Analysis Result",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2960,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO received_data (id, request_id, file_name, file_type, file_size_mb, analysis_summary, received_at)\nVALUES (\n  gen_random_uuid(),\n  '{{ $json.requestId }}'::uuid,\n  '{{ $json.fileName.replace(/'/g, \"''\") }}',\n  '{{ $json.detectedType }}',\n  {{ $json.fileSizeMB || 0 }},\n  '{{ ($json.analysis.summary || \"Analysis pending\").substring(0, 500).replace(/'/g, \"''\") }}',\n  NOW()\n)\nRETURNING id;",
+                "options": {}
+            },
+            "id": "save-to-db",
+            "name": "16. Save File Record to DB",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                3180,
+                400
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO messages (request_id, sender, content, timestamp)\nVALUES (\n  '{{ $json.requestId }}'::uuid,\n  'agent',\n  '📁 Processed file: {{ $json.fileName }}\\nType: {{ $json.detectedType }}\\nRisk Score: {{ $json.analysis.riskScore || \"Unknown\" }}\\nData Points: {{ $json.analysis.dataPointsFound || \"Unknown\" }}\\n\\n{{ ($json.analysis.summary || \"Analysis complete\").substring(0, 300) }}',\n  NOW()\n)\nRETURNING id;",
+                "options": {}
+            },
+            "id": "log-file-processed",
+            "name": "17. Log File Processed",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                3400,
+                400
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "// Compile all analyses into final response\nconst inputData = $('2. Prepare Input & File Queue').first().json;\nconst allAnalyses = $('17. Log File Processed').all().map(item => item.json.analysis).filter(a => a);\n\n// Calculate aggregate stats\nlet totalDataPoints = 0;\nlet maxRiskScore = 0;\nconst allCategories = {};\nconst allThirdParties = new Set();\nconst allRecommendations = new Set();\n\nfor (const analysis of allAnalyses) {\n  if (analysis.dataPointsFound) totalDataPoints += analysis.dataPointsFound;\n  if (analysis.riskScore) maxRiskScore = Math.max(maxRiskScore, analysis.riskScore);\n  if (analysis.thirdPartiesDetected) {\n    analysis.thirdPartiesDetected.forEach(tp => allThirdParties.add(tp));\n  }\n  if (analysis.recommendedActions) {\n    analysis.recommendedActions.forEach(r => allRecommendations.add(r));\n  }\n  if (analysis.categories) {\n    for (const [cat, data] of Object.entries(analysis.categories)) {\n      if (!allCategories[cat]) allCategories[cat] = { count: 0, examples: [] };\n      allCategories[cat].count += data.count || 0;\n      allCategories[cat].examples.push(...(data.examples || []).slice(0, 2));\n    }\n  }\n}\n\nreturn {\n  json: {\n    success: true,\n    requestId: inputData.requestId,\n    companyName: inputData.companyName,\n    filesProcessed: allAnalyses.length,\n    aggregateAnalysis: {\n      totalDataPoints: totalDataPoints,\n      overallRiskScore: maxRiskScore,\n      categoriesSummary: allCategories,\n      thirdPartiesDetected: Array.from(allThirdParties),\n      recommendedActions: Array.from(allRecommendations)\n    },\n    processedAt: new Date().toISOString()\n  }\n};"
+            },
+            "id": "compile-results",
+            "name": "18. Compile All Results",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                3620,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "UPDATE requests\nSET\n  status = 'data_analyzed',\n  updated_at = NOW()\nWHERE id = '{{ $json.requestId }}'::uuid;",
+                "options": {}
+            },
+            "id": "update-request-status",
+            "name": "19. Update Request Status",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                3840,
+                400
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ $json }}"
+            },
+            "id": "respond-webhook",
+            "name": "20. Respond to Webhook",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                4060,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// No files to process response\nreturn {\n  json: {\n    success: false,\n    requestId: $('2. Prepare Input & File Queue').first().json.requestId,\n    error: 'No files to process. Please upload files or provide download links.',\n    filesProcessed: 0,\n    requiresManualDownload: $('2. Prepare Input & File Queue').first().json.requiresManualDownload\n  }\n};"
+            },
+            "id": "no-files-response",
+            "name": "No Files Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                980,
+                600
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Manual download required - return instruction\nreturn {\n  json: {\n    success: false,\n    requestId: $('2. Prepare Input & File Queue').first().json.requestId,\n    requiresManualDownload: true,\n    portalUrl: $('2. Prepare Input & File Queue').first().json.portalUrl,\n    message: 'Manual download required. Notification sent to user. Re-trigger this workflow after user uploads files.',\n    filesProcessed: 0\n  }\n};"
+            },
+            "id": "manual-download-response",
+            "name": "Manual Download Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                980,
+                200
+            ]
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "1. Webhook: Parse Response": {
+            "main": [
+                [
+                    {
+                        "node": "2. Prepare Input & File Queue",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Prepare Input & File Queue": {
+            "main": [
+                [
+                    {
+                        "node": "3. Requires Manual Download?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3. Requires Manual Download?": {
+            "main": [
+                [
+                    {
+                        "node": "4. Notify: Manual Download Needed",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "5. Has Files to Process?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. Notify: Manual Download Needed": {
+            "main": [
+                [
+                    {
+                        "node": "Manual Download Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. Has Files to Process?": {
+            "main": [
+                [
+                    {
+                        "node": "6. Process One File at a Time",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Files Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "6. Process One File at a Time": {
+            "main": [
+                [
+                    {
+                        "node": "7. Get Current File",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "7. Get Current File": {
+            "main": [
+                [
+                    {
+                        "node": "8. Download or Uploaded?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "8. Download or Uploaded?": {
+            "main": [
+                [
+                    {
+                        "node": "9a. Download File",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "9b. Read Uploaded File",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "9a. Download File": {
+            "main": [
+                [
+                    {
+                        "node": "10. Detect File Type",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "9b. Read Uploaded File": {
+            "main": [
+                [
+                    {
+                        "node": "10. Detect File Type",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "10. Detect File Type": {
+            "main": [
+                [
+                    {
+                        "node": "11. Route by File Type",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "11. Route by File Type": {
+            "main": [
+                [
+                    {
+                        "node": "12a. Extract PDF Text",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "12b. Unzip Archive",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "12c. Parse JSON",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "12d. Parse CSV",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "12e. Parse Spreadsheet",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "12f. Handle Media File",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "12g. Handle Unknown Type",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "12a. Extract PDF Text": {
+            "main": [
+                [
+                    {
+                        "node": "13. Merge Extracted Data",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "12b. Unzip Archive": {
+            "main": [
+                [
+                    {
+                        "node": "13. Merge Extracted Data",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "12c. Parse JSON": {
+            "main": [
+                [
+                    {
+                        "node": "13. Merge Extracted Data",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "12d. Parse CSV": {
+            "main": [
+                [
+                    {
+                        "node": "13. Merge Extracted Data",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "12e. Parse Spreadsheet": {
+            "main": [
+                [
+                    {
+                        "node": "13. Merge Extracted Data",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "12f. Handle Media File": {
+            "main": [
+                [
+                    {
+                        "node": "13. Merge Extracted Data",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "12g. Handle Unknown Type": {
+            "main": [
+                [
+                    {
+                        "node": "13. Merge Extracted Data",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "13. Merge Extracted Data": {
+            "main": [
+                [
+                    {
+                        "node": "14. AI: Deep Data Analysis",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini: Data Analyst": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "14. AI: Deep Data Analysis",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Tool: Ingest to Knowledge Graph": {
+            "ai_tool": [
+                [
+                    {
+                        "node": "14. AI: Deep Data Analysis",
+                        "type": "ai_tool",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Tool: Lookup Company Policy": {
+            "ai_tool": [
+                [
+                    {
+                        "node": "14. AI: Deep Data Analysis",
+                        "type": "ai_tool",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Analysis Memory": {
+            "ai_memory": [
+                [
+                    {
+                        "node": "14. AI: Deep Data Analysis",
+                        "type": "ai_memory",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "14. AI: Deep Data Analysis": {
+            "main": [
+                [
+                    {
+                        "node": "15. Parse Analysis Result",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "15. Parse Analysis Result": {
+            "main": [
+                [
+                    {
+                        "node": "16. Save File Record to DB",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "16. Save File Record to DB": {
+            "main": [
+                [
+                    {
+                        "node": "17. Log File Processed",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "17. Log File Processed": {
+            "main": [
+                [
+                    {
+                        "node": "18. Compile All Results",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "18. Compile All Results": {
+            "main": [
+                [
+                    {
+                        "node": "19. Update Request Status",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "19. Update Request Status": {
+            "main": [
+                [
+                    {
+                        "node": "20. Respond to Webhook",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "No Files Response": {
+            "main": [
+                [
+                    {
+                        "node": "20. Respond to Webhook",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Manual Download Response": {
+            "main": [
+                [
+                    {
+                        "node": "20. Respond to Webhook",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "versionId": "response-parser-v2",
+    "meta": {
+        "templateCredsSetupCompleted": false,
+        "instanceId": "gdpr-automation-local"
+    },
+    "id": "gdpr-response-parser",
+    "tags": [
+        {
+            "name": "GDPR",
+            "id": "gdpr-tag"
+        },
+        {
+            "name": "AI Agent",
+            "id": "ai-agent-tag"
+        },
+        {
+            "name": "Data Processing",
+            "id": "data-tag"
+        }
+    ]
+}

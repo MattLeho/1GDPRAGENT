@@ -1,0 +1,700 @@
+{
+    "name": "GDPR Inbox Monitor Agent",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "minutes",
+                            "minutesInterval": 15
+                        }
+                    ]
+                }
+            },
+            "id": "schedule-trigger",
+            "name": "1. Monitor Every 15 Minutes",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.2,
+            "position": [
+                100,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "SELECT id, company_name, company_url, status, request_type, created_at,\n       EXTRACT(DAY FROM NOW() - created_at) as days_since_sent\nFROM requests\nWHERE status IN ('sent', 'processing', 'awaiting_response', 'verification_needed')\nORDER BY created_at DESC;",
+                "options": {}
+            },
+            "id": "postgres-active-requests",
+            "name": "2. Get Active Requests",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                320,
+                300
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            },
+            "notes": "Credentials: Host=postgres, Database=gdpr_local, User=admin, Password=securepassword, Port=5432"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "has-requests",
+                            "leftValue": "={{ $json.id }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "string",
+                                "operation": "notEmpty"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "if-has-requests",
+            "name": "3. Has Active Requests?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                540,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "resource": "message",
+                "operation": "getAll",
+                "returnAll": false,
+                "limit": 50,
+                "filters": {
+                    "q": "is:unread newer_than:1d"
+                },
+                "options": {}
+            },
+            "id": "gmail-read",
+            "name": "4. Read Gmail Inbox",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [
+                760,
+                200
+            ],
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "GMAIL_CREDENTIAL_ID",
+                    "name": "Gmail OAuth2"
+                }
+            },
+            "notes": "Fetches unread emails from the last day"
+        },
+        {
+            "parameters": {
+                "jsCode": "// Get the list of active company domains from requests\nconst activeRequests = $('2. Get Active Requests').all();\nconst emails = $input.all();\n\nif (!emails || emails.length === 0) {\n  return [{ json: { noEmails: true } }];\n}\n\nconst matchedEmails = [];\n\nfor (const email of emails) {\n  const fromEmail = email.json.from || '';\n  const fromDomain = fromEmail.split('@')[1]?.split('>')[0] || '';\n  \n  // Check if email is from any of our active request companies\n  for (const req of activeRequests) {\n    const companyDomain = (req.json.company_url || req.json.company_name || '')\n      .toLowerCase()\n      .replace(/^https?:\\/\\//, '')\n      .replace('www.', '')\n      .split('/')[0]\n      .split('.')[0];\n    \n    const isMatch = fromDomain.toLowerCase().includes(companyDomain) ||\n                    companyDomain.includes(fromDomain.split('.')[0]);\n    \n    if (isMatch && companyDomain.length > 2) {\n      matchedEmails.push({\n        json: {\n          emailId: email.json.id,\n          threadId: email.json.threadId,\n          from: fromEmail,\n          subject: email.json.subject,\n          snippet: email.json.snippet,\n          date: email.json.date,\n          hasAttachments: (email.json.payload?.parts || []).some(p => p.filename),\n          matchedRequestId: req.json.id,\n          matchedCompany: req.json.company_name,\n          daysSinceSent: req.json.days_since_sent,\n          requestType: req.json.request_type\n        }\n      });\n      break;\n    }\n  }\n}\n\nreturn matchedEmails.length > 0 ? matchedEmails : [{ json: { noMatches: true } }];"
+            },
+            "id": "filter-matching",
+            "name": "5. Match Emails to Requests",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                980,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "has-matches",
+                            "leftValue": "={{ $json.noMatches }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "notEquals"
+                            }
+                        },
+                        {
+                            "id": "no-emails-check",
+                            "leftValue": "={{ $json.noEmails }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "notEquals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "if-has-matches",
+            "name": "6. Has Matching Emails?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                1200,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "resource": "message",
+                "operation": "get",
+                "messageId": "={{ $json.emailId }}",
+                "options": {
+                    "format": "full"
+                }
+            },
+            "id": "gmail-get-full",
+            "name": "7. Get Full Email Content",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [
+                1420,
+                100
+            ],
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "GMAIL_CREDENTIAL_ID",
+                    "name": "Gmail OAuth2"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=Analyze this email response to a GDPR {{ $('5. Match Emails to Requests').first().json.requestType }} request:\n\nFrom: {{ $json.from || $('5. Match Emails to Requests').first().json.from }}\nSubject: {{ $json.subject || $('5. Match Emails to Requests').first().json.subject }}\nDate: {{ $json.date }}\nCompany: {{ $('5. Match Emails to Requests').first().json.matchedCompany }}\nDays since we sent request: {{ $('5. Match Emails to Requests').first().json.daysSinceSent }}\n\nEmail Body:\n{{ $json.textPlain || $json.snippet || $('5. Match Emails to Requests').first().json.snippet }}\n\n{{ $json.textHtml ? 'HTML content available - check for download links' : '' }}\n\nClassify this response and determine what action is needed.",
+                "options": {
+                    "systemMessage": "You are the GDPR Response Analyst AI. Your job is to analyze company responses to GDPR data requests.\n\n## CLASSIFICATION CATEGORIES\n1. **ACKNOWLEDGMENT** - They confirm receiving the request (typical first response)\n2. **VERIFICATION_NEEDED** - They require identity verification (what documents/info they need)\n3. **PROCESSING** - Request is being processed, may include timeline\n4. **DATA_READY** - Data is ready with download link or portal instructions\n5. **DATA_ATTACHED** - Data files attached to this email\n6. **PARTIAL_DATA** - Some data provided, more coming\n7. **REJECTION** - Request denied (extract the specific reason)\n8. **EXTENSION** - Requesting deadline extension (GDPR allows max 60 days total)\n9. **CLARIFICATION** - They need more info about what data is requested\n10. **COMPLETION** - Request is fully complete\n11. **UNRELATED** - Email is not about the GDPR request\n\n## YOUR ANALYSIS TOOLS\nYou have access to these tools to help analyze:\n- **checkPolicyAnalysis**: Look up what we know about this company's privacy policy\n- **draftResponse**: Create a reply email if verification or clarification is needed\n- **queryKnowledgeGraph**: Check what data we have about our relationship with this company\n\n## OUTPUT FORMAT\nReturn JSON:\n{\n  \"classification\": \"CATEGORY\",\n  \"confidence\": 0.0-1.0,\n  \"summary\": \"2-3 sentence summary for the user\",\n  \"companyResponse\": \"What the company said (key quotes)\",\n  \"nextAction\": {\n    \"required\": true/false,\n    \"description\": \"What the user needs to do\",\n    \"urgency\": \"LOW/MEDIUM/HIGH\",\n    \"suggestedReply\": \"Draft reply if verification needed\"\n  },\n  \"deadline\": \"Any deadline mentioned or calculated\",\n  \"downloadLinks\": [\"array of any URLs found\"],\n  \"hasAttachments\": true/false,\n  \"statusUpdate\": \"NEW_STATUS_FOR_DB\"\n}"
+                }
+            },
+            "id": "ai-agent-classify",
+            "name": "8. AI: Analyze & Classify",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                1640,
+                100
+            ]
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                },
+                "options": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 2048
+                }
+            },
+            "id": "gemini-model",
+            "name": "Gemini: Response Analyst",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                1640,
+                320
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "toolDescription": "Look up the stored privacy policy analysis for a company to understand their data practices",
+                "method": "POST",
+                "url": "http://n8n:5678/webhook/analyze-policy",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\"url\": \"{{ $fromAI('companyDomain', 'The company domain to look up') }}\"}"
+            },
+            "id": "tool-policy-lookup",
+            "name": "Tool: Check Policy Analysis",
+            "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+            "typeVersion": 1.1,
+            "position": [
+                1530,
+                450
+            ]
+        },
+        {
+            "parameters": {
+                "toolDescription": "Draft a reply email when verification or clarification is needed from the user",
+                "method": "POST",
+                "url": "http://n8n:5678/webhook/draft-request",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\"requestType\": \"{{ $fromAI('replyType', 'Type of reply: verification, clarification, or followup') }}\", \"companyName\": \"{{ $fromAI('company', 'Company name') }}\", \"context\": \"{{ $fromAI('context', 'Context for the reply') }}\"}"
+            },
+            "id": "tool-draft-response",
+            "name": "Tool: Draft Response",
+            "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+            "typeVersion": 1.1,
+            "position": [
+                1750,
+                450
+            ]
+        },
+        {
+            "parameters": {
+                "contextWindowLength": 10
+            },
+            "id": "response-memory",
+            "name": "Response Analysis Memory",
+            "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+            "typeVersion": 1.3,
+            "position": [
+                1860,
+                320
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Parse the AI classification and prepare database updates\nconst aiOutput = items[0].json.output || items[0].json.text || '';\nconst emailData = $('5. Match Emails to Requests').first().json;\nlet classification;\n\ntry {\n  const jsonMatch = aiOutput.match(/\\{[\\s\\S]*\\}/);\n  classification = jsonMatch ? JSON.parse(jsonMatch[0]) : { classification: 'UNRELATED', confidence: 0.5 };\n} catch (e) {\n  classification = {\n    classification: 'PROCESSING',\n    confidence: 0.3,\n    summary: 'Email received but parsing failed - manual review needed',\n    error: e.message\n  };\n}\n\n// Map classification to request status\nconst statusMap = {\n  'ACKNOWLEDGMENT': 'processing',\n  'VERIFICATION_NEEDED': 'action_required',\n  'PROCESSING': 'processing',\n  'DATA_READY': 'data_available',\n  'DATA_ATTACHED': 'data_received',\n  'PARTIAL_DATA': 'partial_data',\n  'REJECTION': 'rejected',\n  'EXTENSION': 'extended',\n  'CLARIFICATION': 'action_required',\n  'COMPLETION': 'completed',\n  'UNRELATED': null\n};\n\nconst newStatus = classification.statusUpdate || statusMap[classification.classification];\n\nreturn {\n  json: {\n    requestId: emailData.matchedRequestId,\n    company: emailData.matchedCompany,\n    emailId: emailData.emailId,\n    threadId: emailData.threadId,\n    emailFrom: emailData.from,\n    emailSubject: emailData.subject,\n    classification: classification,\n    newStatus: newStatus,\n    shouldUpdateStatus: newStatus !== null,\n    requiresUserAction: classification.nextAction?.required || false,\n    triggerDataIngestion: ['DATA_ATTACHED', 'DATA_READY'].includes(classification.classification),\n    processedAt: new Date().toISOString()\n  }\n};"
+            },
+            "id": "parse-classification",
+            "name": "9. Parse Classification",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1860,
+                100
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "should-update",
+                            "leftValue": "={{ $json.shouldUpdateStatus }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "if-should-update",
+            "name": "10. Should Update Status?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                2080,
+                100
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "UPDATE requests\nSET\n  status = '{{ $json.newStatus }}',\n  updated_at = NOW()\nWHERE id = '{{ $json.requestId }}'::uuid\nRETURNING id, status;",
+                "options": {}
+            },
+            "id": "postgres-update-status",
+            "name": "11. Update Request Status",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                2300,
+                0
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO messages (request_id, sender, content, timestamp)\nVALUES (\n  '{{ $('9. Parse Classification').first().json.requestId }}'::uuid,\n  'company',\n  'Email from {{ $('9. Parse Classification').first().json.company }}\\nSubject: {{ $('9. Parse Classification').first().json.emailSubject.replace(/'/g, \"''\") }}\\n\\nClassification: {{ $('9. Parse Classification').first().json.classification.classification }}\\nSummary: {{ ($('9. Parse Classification').first().json.classification.summary || \"\").replace(/'/g, \"''\") }}\\n\\n{{ $('9. Parse Classification').first().json.classification.nextAction?.description ? \"Action Required: \" + $('9. Parse Classification').first().json.classification.nextAction.description.replace(/'/g, \"''\") : \"\" }}',\n  NOW()\n)\nRETURNING id;",
+                "options": {}
+            },
+            "id": "postgres-log-message",
+            "name": "12. Log Response to Messages",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                2520,
+                0
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "resource": "message",
+                "operation": "markAsRead",
+                "messageId": "={{ $('9. Parse Classification').first().json.emailId }}"
+            },
+            "id": "gmail-mark-read",
+            "name": "13. Mark Email as Read",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [
+                2740,
+                0
+            ],
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "GMAIL_CREDENTIAL_ID",
+                    "name": "Gmail OAuth2"
+                }
+            },
+            "continueOnFail": true
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "trigger-ingest",
+                            "leftValue": "={{ $('9. Parse Classification').first().json.triggerDataIngestion }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "if-trigger-ingest",
+            "name": "14. Has Data to Ingest?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                2960,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://n8n:5678/webhook/ingest-data",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"requestId\": \"{{ $('9. Parse Classification').first().json.requestId }}\",\n  \"companyName\": \"{{ $('9. Parse Classification').first().json.company }}\",\n  \"downloadLinks\": {{ JSON.stringify($('9. Parse Classification').first().json.classification.downloadLinks || []) }},\n  \"emailThreadId\": \"{{ $('9. Parse Classification').first().json.threadId }}\",\n  \"source\": \"email_response\"\n}",
+                "options": {}
+            },
+            "id": "trigger-ingestor",
+            "name": "15. Trigger Data Ingestor",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                3180,
+                -100
+            ],
+            "continueOnFail": true
+        },
+        {
+            "parameters": {},
+            "id": "no-op-end",
+            "name": "No New Emails",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                1420,
+                300
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "no-action-end",
+            "name": "No Action Needed",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                760,
+                400
+            ]
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "1. Monitor Every 15 Minutes": {
+            "main": [
+                [
+                    {
+                        "node": "2. Get Active Requests",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Get Active Requests": {
+            "main": [
+                [
+                    {
+                        "node": "3. Has Active Requests?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3. Has Active Requests?": {
+            "main": [
+                [
+                    {
+                        "node": "4. Read Gmail Inbox",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Action Needed",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. Read Gmail Inbox": {
+            "main": [
+                [
+                    {
+                        "node": "5. Match Emails to Requests",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. Match Emails to Requests": {
+            "main": [
+                [
+                    {
+                        "node": "6. Has Matching Emails?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "6. Has Matching Emails?": {
+            "main": [
+                [
+                    {
+                        "node": "7. Get Full Email Content",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No New Emails",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "7. Get Full Email Content": {
+            "main": [
+                [
+                    {
+                        "node": "8. AI: Analyze & Classify",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini: Response Analyst": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "8. AI: Analyze & Classify",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Tool: Check Policy Analysis": {
+            "ai_tool": [
+                [
+                    {
+                        "node": "8. AI: Analyze & Classify",
+                        "type": "ai_tool",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Tool: Draft Response": {
+            "ai_tool": [
+                [
+                    {
+                        "node": "8. AI: Analyze & Classify",
+                        "type": "ai_tool",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Response Analysis Memory": {
+            "ai_memory": [
+                [
+                    {
+                        "node": "8. AI: Analyze & Classify",
+                        "type": "ai_memory",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "8. AI: Analyze & Classify": {
+            "main": [
+                [
+                    {
+                        "node": "9. Parse Classification",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "9. Parse Classification": {
+            "main": [
+                [
+                    {
+                        "node": "10. Should Update Status?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "10. Should Update Status?": {
+            "main": [
+                [
+                    {
+                        "node": "11. Update Request Status",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                []
+            ]
+        },
+        "11. Update Request Status": {
+            "main": [
+                [
+                    {
+                        "node": "12. Log Response to Messages",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "12. Log Response to Messages": {
+            "main": [
+                [
+                    {
+                        "node": "13. Mark Email as Read",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "13. Mark Email as Read": {
+            "main": [
+                [
+                    {
+                        "node": "14. Has Data to Ingest?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "14. Has Data to Ingest?": {
+            "main": [
+                [
+                    {
+                        "node": "15. Trigger Data Ingestor",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                []
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "versionId": "inbox-monitor-v2",
+    "meta": {
+        "templateCredsSetupCompleted": false,
+        "instanceId": "gdpr-automation-local"
+    },
+    "id": "gdpr-inbox-monitor",
+    "tags": [
+        {
+            "name": "GDPR",
+            "id": "gdpr-tag"
+        },
+        {
+            "name": "Email",
+            "id": "email-tag"
+        },
+        {
+            "name": "Scheduled",
+            "id": "scheduled-tag"
+        }
+    ]
+}

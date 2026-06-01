@@ -1,0 +1,199 @@
+{
+    "name": "Vendor OCR Extractor",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "vendor-extract",
+                "responseMode": "responseNode"
+            },
+            "id": "webhook-trigger",
+            "name": "1. Webhook: Vendor Extract",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                250,
+                300
+            ],
+            "webhookId": "vendor-extract-webhook",
+            "notes": "Receives POST with: imageBase64, mimeType, source (cookie_banner, screenshot, etc.)"
+        },
+        {
+            "parameters": {
+                "jsCode": "const input = $input.first().json.body;\nreturn {\n  json: {\n    imageData: input.imageBase64 || input.imageData,\n    mimeType: input.mimeType || 'image/png',\n    source: input.source || 'screenshot',\n    websiteUrl: input.websiteUrl || null\n  }\n};"
+            },
+            "id": "prepare-input",
+            "name": "2. Prepare Input",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                470,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=Analyze this screenshot/image and extract all vendor, tracker, and third-party service names visible.\n\nThis is a {{ $json.source }} from a website. Look for:\n1. Cookie consent dialogs - extract all listed vendors/trackers\n2. Privacy banners - extract third-party services mentioned\n3. Data sharing notices - extract partner companies\n4. Any logos or company names visible\n\nFor each vendor found, provide:\n- Name (exact as shown)\n- Category (Analytics, Advertising, Social, Essential, Marketing, Other)\n- Confidence (HIGH, MEDIUM, LOW)\n\nOutput as JSON:\n{\n  \"vendors\": [\n    { \"name\": \"Google Analytics\", \"category\": \"Analytics\", \"confidence\": \"HIGH\" },\n    { \"name\": \"Facebook Pixel\", \"category\": \"Advertising\", \"confidence\": \"HIGH\" }\n  ],\n  \"totalFound\": 2,\n  \"sourceType\": \"cookie_banner\"\n}",
+                "options": {
+                    "systemMessage": "You are a privacy analyst specializing in identifying third-party trackers and data processors from website interfaces. Extract vendor names accurately."
+                }
+            },
+            "id": "gemini-ocr",
+            "name": "3. AI: OCR & Vendor Extraction",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                690,
+                300
+            ],
+            "notes": "Uses Gemini vision for OCR and vendor identification"
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                }
+            },
+            "id": "gemini-vision",
+            "name": "Gemini 3.0 Flash (Vision)",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                580,
+                500
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "const input = $('2. Prepare Input').first().json;\nconst aiOutput = $json.output || '{}';\n\nlet vendors = [];\ntry {\n  const parsed = JSON.parse(aiOutput.match(/```(?:json)?\\s*([\\s\\S]*?)```/)?.[1] || aiOutput);\n  vendors = parsed.vendors || [];\n} catch (e) {\n  vendors = [];\n}\n\nreturn {\n  json: {\n    vendors,\n    totalFound: vendors.length,\n    source: input.source,\n    websiteUrl: input.websiteUrl,\n    extractedAt: new Date().toISOString()\n  }\n};"
+            },
+            "id": "parse-vendors",
+            "name": "4. Parse Vendor List",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                910,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO vendor_lists (source_type, website_url, vendors_json, total_count, extracted_at) VALUES ('{{ $json.source }}', '{{ $json.websiteUrl || '' }}', '{{ JSON.stringify($json.vendors).replace(/'/g, \"''\") }}', {{ $json.totalFound }}, NOW()) RETURNING id"
+            },
+            "id": "save-vendors",
+            "name": "5. Save to Database",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                1130,
+                300
+            ],
+            "continueOnFail": true,
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            },
+            "notes": "Saves to vendor_lists table (will be created if doesn't exist)"
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ { success: true, vendors: $('4. Parse Vendor List').first().json.vendors, totalFound: $('4. Parse Vendor List').first().json.totalFound } }}"
+            },
+            "id": "respond",
+            "name": "6. Respond",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1350,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "1. Webhook: Vendor Extract": {
+            "main": [
+                [
+                    {
+                        "node": "2. Prepare Input",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Prepare Input": {
+            "main": [
+                [
+                    {
+                        "node": "3. AI: OCR & Vendor Extraction",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3. AI: OCR & Vendor Extraction": {
+            "main": [
+                [
+                    {
+                        "node": "4. Parse Vendor List",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. Parse Vendor List": {
+            "main": [
+                [
+                    {
+                        "node": "5. Save to Database",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. Save to Database": {
+            "main": [
+                [
+                    {
+                        "node": "6. Respond",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini 3.0 Flash (Vision)": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "3. AI: OCR & Vendor Extraction",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "meta": {
+        "description": "Extracts vendor/tracker names from cookie consent screenshots using Gemini vision OCR. Saves to vendor_lists table for ONSIT discovery."
+    }
+}

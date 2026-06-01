@@ -1,0 +1,77 @@
+# =============================================================================
+# Intelligence Service Dependencies
+# Version-pinned for reproducibility (January 2026)
+# =============================================================================
+
+# FastAPI and ASGI server
+fastapi>=0.128.0
+uvicorn[standard]>=0.34.0
+
+# Async task queue
+celery[redis]>=5.6.0
+redis>=5.2.0
+
+# Google Gemini SDK (NEW - replaces deprecated google-generativeai)
+# Documentation: https://googleapis.github.io/python-genai/
+google-genai>=1.0.0
+
+# Database drivers
+neo4j>=6.0.0                    # Async driver support
+asyncpg>=0.31.0                 # PostgreSQL async driver
+databases>=0.8.0
+
+# Vector database
+qdrant-client>=1.12.0
+
+# Configuration
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
+email-validator>=2.2.0          # Required for pydantic EmailStr
+
+# HTTP client
+httpx>=0.28.0
+aiohttp>=3.11.0                 # Faster async for google-genai
+
+# Cryptography for credential encryption
+cryptography>=44.0.0
+
+# Utilities
+python-multipart>=0.0.18
+python-dotenv>=1.0.0
+tenacity>=9.0.0                 # Retry logic for LLM calls
+
+# =============================================================================
+# ONSIT Discovery Dependencies
+# =============================================================================
+
+# Web crawling and parsing
+beautifulsoup4>=4.12.3
+lxml>=5.3.0
+
+# DNS and WHOIS
+dnspython>=2.7.0                # Async DNS (dns.asyncresolver)
+aiodns>=3.2.0                   # aiohttp DNS resolver
+asyncwhois>=1.1.4               # Async WHOIS + RDAP
+whoisdomain>=1.20260106         # Domain WHOIS (replaces python-whois)
+ipwhois>=1.3.0                  # IP WHOIS lookups
+
+# Domain/URL utilities
+tldextract>=5.1.3               # Domain extraction
+robotexclusionrulesparser>=1.7.1
+
+# OSINT tools
+maigret>=0.5.0                  # Username search (3000+ sites)
+
+# =============================================================================
+# Extraction Engine Dependencies (Phase 4)
+# =============================================================================
+
+# Graph analysis and community detection
+# Note: networkx is installed as maigret dependency - do not pin version here
+
+# Graph visualization
+pyvis>=0.3.2                    # Interactive HTML graph visualization
+
+# Structured extraction (optional - supports fallback to Gemini)
+langextract>=1.1.1              # Google LangExtract for grounded extraction
+

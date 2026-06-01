@@ -1,0 +1,699 @@
+{
+    "name": "GDPR Knowledge Graph Ingestor Agent",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "ingest-data",
+                "responseMode": "responseNode",
+                "options": {}
+            },
+            "id": "webhook-trigger",
+            "name": "1. Webhook: Ingest Data",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                250,
+                300
+            ],
+            "webhookId": "ingest-data-webhook",
+            "notes": "ENTRY POINT: Receives POST requests with extractedData, categories, companyName, and requestId from the Response Parser agent (04). Trigger: POST /webhook/ingest-data"
+        },
+        {
+            "parameters": {
+                "jsCode": "// Prepare data for graph ingestion with batching support\nconst input = $input.first().json.body;\n\nconst requestId = input.requestId || 'unknown';\nconst companyName = input.companyName || 'Unknown Company';\nconst extractedData = input.extractedData || [];\nconst categories = input.categories || {};\nconst source = input.source || 'manual';\n\n// Flatten all data into individual items for processing\nconst dataItems = [];\n\n// Add category-based data points\nfor (const [category, data] of Object.entries(categories)) {\n  if (data.examples && Array.isArray(data.examples)) {\n    for (const example of data.examples) {\n      dataItems.push({\n        type: 'datapoint',\n        category: category,\n        value: example,\n        riskLevel: data.riskLevel || 'MEDIUM'\n      });\n    }\n  }\n}\n\n// Add extracted entities\nfor (const entity of extractedData) {\n  dataItems.push({\n    type: entity.type || 'entity',\n    category: entity.category || 'UNKNOWN',\n    value: entity.value,\n    riskLevel: entity.riskLevel || 'MEDIUM'\n  });\n}\n\nreturn {\n  json: {\n    requestId,\n    companyName,\n    dataItems,\n    totalItems: dataItems.length,\n    batchSize: 50,\n    currentBatch: 0,\n    processedCount: 0,\n    source,\n    ingestStarted: new Date().toISOString()\n  }\n};"
+            },
+            "id": "prepare-input",
+            "name": "2. Prepare Input & Batch Queue",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                470,
+                300
+            ],
+            "notes": "BATCHING: Flattens incoming data into individual items and sets up batch processing (max 50 items per batch). This prevents context window overflow and allows progress tracking."
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO messages (request_id, sender, content, timestamp)\nVALUES (\n  '{{ $json.requestId }}'::uuid,\n  'agent',\n  '🔄 Starting Knowledge Graph ingestion for {{ $json.companyName }}. Processing {{ $json.totalItems }} data items in batches of {{ $json.batchSize }}.',\n  NOW()\n);"
+            },
+            "id": "log-start",
+            "name": "3. Log: Ingestion Started",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                690,
+                300
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            },
+            "notes": "PROGRESS TRACKING: Logs ingestion start to Postgres messages table so the UI can display real-time progress to the user."
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "has-items",
+                            "leftValue": "={{ $json.totalItems }}",
+                            "rightValue": 0,
+                            "operator": {
+                                "type": "number",
+                                "operation": "gt"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                }
+            },
+            "id": "check-items",
+            "name": "4. Has Items to Process?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                910,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "batchSize": 50,
+                "options": {}
+            },
+            "id": "split-batches",
+            "name": "5. Process in Batches of 50",
+            "type": "n8n-nodes-base.splitInBatches",
+            "typeVersion": 3,
+            "position": [
+                1130,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Get current batch of items\nconst inputData = $('2. Prepare Input & Batch Queue').first().json;\nconst allItems = inputData.dataItems;\nconst batchSize = inputData.batchSize;\nconst batchIndex = $('5. Process in Batches of 50').first().json.$batchIndex || 0;\n\nconst startIdx = batchIndex * batchSize;\nconst endIdx = Math.min(startIdx + batchSize, allItems.length);\nconst currentBatch = allItems.slice(startIdx, endIdx);\n\nreturn {\n  json: {\n    ...inputData,\n    currentBatch: currentBatch,\n    currentBatchIndex: batchIndex,\n    batchStartIdx: startIdx,\n    batchEndIdx: endIdx,\n    itemsInBatch: currentBatch.length,\n    progressPercent: Math.round((endIdx / allItems.length) * 100)\n  }\n};"
+            },
+            "id": "get-batch",
+            "name": "6. Get Current Batch",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1350,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=Generate Neo4j Cypher MERGE statements for the following GDPR data batch.\n\n## COMPANY CONTEXT\nCompany: {{ $json.companyName }}\nRequest ID: {{ $json.requestId }}\nBatch: {{ $json.currentBatchIndex + 1 }} (items {{ $json.batchStartIdx + 1 }} to {{ $json.batchEndIdx }})\n\n## DATA ITEMS TO INGEST\n{{ JSON.stringify($json.currentBatch, null, 2) }}\n\n## INSTRUCTIONS\n1. Generate MERGE statements for each data item\n2. Link data points to the company node\n3. Create appropriate relationships based on data type\n4. Include risk_level and source_request properties\n5. Use parameterized values where possible\n6. Maximum 50 statements per batch\n\n## VERIFICATION\nAfter generating, verify each statement:\n- Is the Cypher syntax valid?\n- Does it correctly represent the source data?\n- Are all required properties included?\n\nReturn ONLY a JSON array of statement objects.",
+                "options": {
+                    "systemMessage": "You are an expert Neo4j Cypher generator for a GDPR Knowledge Graph system. Your job is to convert extracted personal data into valid, accurate Cypher MERGE statements.\n\n## GRAPH SCHEMA\n\n### Node Types:\n- `(:User {uid: 'root'})` - The root user (always exists)\n- `(:Company {name, domain})` - Data controllers/companies\n- `(:Account {username, platform, join_date})` - User accounts at companies\n- `(:Attribute {value, type})` - Shared identifiers (email, phone, IP, device_id)\n- `(:DataPoint {category, value, risk_level, source_request})` - Collected data\n- `(:Persona {label, type})` - User personas (Professional, Gamer, etc)\n\n### Relationship Types:\n- `(:User)-[:HAS_ACCOUNT]->(:Account)`\n- `(:Account)-[:HELD_BY]->(:Company)`\n- `(:Company)-[:COLLECTS]->(:DataPoint)`\n- `(:Account)-[:LINKED_TO]->(:Attribute)`\n- `(:DataPoint)-[:DERIVED_FROM]->(:Attribute)`\n\n### Data Categories:\n- CONTACT_INFO, ACCOUNT_INFO, ACTIVITY_DATA, FINANCIAL_DATA\n- TECHNICAL_DATA, LOCATION_DATA, COMMUNICATION_DATA\n- MEDIA_DATA, BIOMETRIC_DATA, INFERRED_DATA, SENSITIVE_DATA\n\n## CYPHER RULES\n1. Always use MERGE to avoid duplicates\n2. Use lowercase for email addresses\n3. Include timestamp: `created_at: datetime()`\n4. Include source: `source_request: $requestId`\n5. Set risk_level: 'LOW', 'MEDIUM', or 'HIGH'\n6. Escape special characters in string values\n\n## OUTPUT FORMAT\nReturn a JSON array:\n```json\n[\n  {\n    \"description\": \"What this statement creates\",\n    \"cypher\": \"MERGE (c:Company {name: 'CompanyName'}) ...\",\n    \"isValid\": true,\n    \"matchesSource\": true\n  }\n]\n```\n\n## VERIFICATION CHECKLIST\nFor each statement, verify:\n- ✅ Syntax is valid Cypher\n- ✅ Node labels match schema\n- ✅ Properties match source data exactly\n- ✅ No hallucinated values\n- ✅ Relationships are logically correct"
+                }
+            },
+            "id": "ai-generate-cypher",
+            "name": "7. AI: Generate Cypher Batch",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                1570,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "gemini-3-flash-preview"
+                },
+                "options": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 8192
+                }
+            },
+            "id": "gemini-model",
+            "name": "Gemini 2.5 Flash",
+            "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+            "typeVersion": 1,
+            "position": [
+                1450,
+                420
+            ],
+            "credentials": {
+                "googleGeminiApi": {
+                    "id": "GEMINI_CREDENTIAL_ID",
+                    "name": "Google Gemini API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "contextWindowLength": 20
+            },
+            "id": "ingestion-memory",
+            "name": "Ingestion Memory",
+            "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+            "typeVersion": 1.3,
+            "position": [
+                1570,
+                420
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Parse AI output and validate Cypher statements\nconst aiOutput = $input.first().json.output || $input.first().json.text || '';\nconst inputData = $('6. Get Current Batch').first().json;\n\nlet statements = [];\nlet parseError = null;\n\ntry {\n  // Find JSON array in response\n  const jsonMatch = aiOutput.match(/\\[\\s*\\{[\\s\\S]*\\}\\s*\\]/); \n  if (jsonMatch) {\n    statements = JSON.parse(jsonMatch[0]);\n  } else {\n    // Try parsing entire output as JSON\n    statements = JSON.parse(aiOutput);\n  }\n} catch (e) {\n  parseError = e.message;\n  // Create fallback statement for company\n  statements = [{\n    description: 'Fallback: Create company node',\n    cypher: `MERGE (c:Company {name: '${inputData.companyName.replace(/'/g, \"''\")}'})\n             SET c.updated_at = datetime()`,\n    isValid: true,\n    matchesSource: true\n  }];\n}\n\n// Filter to only valid, verified statements\nconst validStatements = statements.filter(s => \n  s.cypher && \n  s.isValid !== false && \n  s.matchesSource !== false &&\n  (s.cypher.toUpperCase().includes('MERGE') || s.cypher.toUpperCase().includes('CREATE'))\n);\n\nreturn {\n  json: {\n    ...inputData,\n    statements: validStatements,\n    statementCount: validStatements.length,\n    parseError: parseError,\n    validationComplete: true\n  }\n};"
+            },
+            "id": "parse-validate",
+            "name": "8. Parse & Validate Cypher",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1790,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "has-statements",
+                            "leftValue": "={{ $json.statementCount }}",
+                            "rightValue": 0,
+                            "operator": {
+                                "type": "number",
+                                "operation": "gt"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                }
+            },
+            "id": "check-statements",
+            "name": "9. Has Valid Statements?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                2010,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Prepare Cypher for Neo4j HTTP API execution\nconst inputData = $input.first().json;\nconst statements = inputData.statements || [];\n\n// Format statements for Neo4j HTTP transaction API\nconst neo4jStatements = statements.map(s => ({\n  statement: s.cypher\n}));\n\nreturn {\n  json: {\n    ...inputData,\n    neo4jPayload: {\n      statements: neo4jStatements\n    }\n  }\n};"
+            },
+            "id": "prepare-neo4j",
+            "name": "10. Prepare Neo4j Request",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2230,
+                100
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://neo4j:7474/db/neo4j/tx/commit",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpBasicAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify($json.neo4jPayload) }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "fullResponse": true
+                        }
+                    }
+                }
+            },
+            "id": "execute-neo4j",
+            "name": "11. Execute via Neo4j HTTP API",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2450,
+                100
+            ],
+            "credentials": {
+                "httpBasicAuth": {
+                    "id": "NEO4J_HTTP_CREDENTIAL_ID",
+                    "name": "Neo4j HTTP Auth"
+                }
+            },
+            "continueOnFail": true
+        },
+        {
+            "parameters": {
+                "jsCode": "// Process Neo4j response and track results\nconst neo4jResponse = $input.first().json;\nconst inputData = $('10. Prepare Neo4j Request').first().json;\n\nlet successCount = 0;\nlet errorCount = 0;\nlet errors = [];\n\n// Check if response contains results or errors\nif (neo4jResponse.body) {\n  const body = typeof neo4jResponse.body === 'string' ? JSON.parse(neo4jResponse.body) : neo4jResponse.body;\n  \n  if (body.results) {\n    successCount = body.results.length;\n  }\n  \n  if (body.errors && body.errors.length > 0) {\n    errorCount = body.errors.length;\n    errors = body.errors.map(e => e.message || e.code);\n  }\n} else if (neo4jResponse.statusCode >= 400) {\n  errorCount = inputData.statementCount;\n  errors.push(`HTTP ${neo4jResponse.statusCode}: ${neo4jResponse.statusMessage}`);\n} else {\n  successCount = inputData.statementCount;\n}\n\nreturn {\n  json: {\n    requestId: inputData.requestId,\n    companyName: inputData.companyName,\n    batchIndex: inputData.currentBatchIndex,\n    progressPercent: inputData.progressPercent,\n    statementsExecuted: successCount,\n    statementsErrored: errorCount,\n    errors: errors,\n    totalItems: inputData.totalItems,\n    batchComplete: true\n  }\n};"
+            },
+            "id": "process-result",
+            "name": "12. Process Execution Result",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2670,
+                100
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO messages (request_id, sender, content, timestamp)\nVALUES (\n  '{{ $json.requestId }}'::uuid,\n  'agent',\n  '📊 Batch {{ $json.batchIndex + 1 }} complete: {{ $json.statementsExecuted }} statements executed ({{ $json.progressPercent }}% done)',\n  NOW()\n);"
+            },
+            "id": "log-batch",
+            "name": "13. Log: Batch Progress",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                2890,
+                100
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "// Log skipped batch due to no valid statements\nconst inputData = $input.first().json;\n\nreturn {\n  json: {\n    requestId: inputData.requestId,\n    companyName: inputData.companyName,\n    batchIndex: inputData.currentBatchIndex,\n    progressPercent: inputData.progressPercent,\n    statementsExecuted: 0,\n    statementsErrored: 0,\n    errors: ['No valid statements generated for this batch'],\n    totalItems: inputData.totalItems,\n    batchComplete: true,\n    skipped: true\n  }\n};"
+            },
+            "id": "log-skipped",
+            "name": "14. Log Skipped Batch",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2230,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "mergeByFields": {
+                    "values": []
+                },
+                "options": {}
+            },
+            "id": "merge-batch-results",
+            "name": "15. Merge Batch Results",
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                3110,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Aggregate all batch results\nconst allBatches = $input.all();\nconst inputData = $('2. Prepare Input & Batch Queue').first().json;\n\nlet totalExecuted = 0;\nlet totalErrored = 0;\nconst allErrors = [];\n\nfor (const batch of allBatches) {\n  totalExecuted += batch.json.statementsExecuted || 0;\n  totalErrored += batch.json.statementsErrored || 0;\n  if (batch.json.errors) {\n    allErrors.push(...batch.json.errors);\n  }\n}\n\nreturn {\n  json: {\n    success: totalErrored === 0,\n    requestId: inputData.requestId,\n    companyName: inputData.companyName,\n    totalItemsProcessed: inputData.totalItems,\n    statementsExecuted: totalExecuted,\n    statementsErrored: totalErrored,\n    errors: allErrors.slice(0, 10),\n    ingestCompleted: new Date().toISOString()\n  }\n};"
+            },
+            "id": "aggregate-results",
+            "name": "16. Aggregate All Results",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                3330,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "UPDATE requests\nSET\n  notes = COALESCE(notes, '') || E'\\n\\n[' || NOW() || '] Knowledge Graph ingestion complete: {{ $json.statementsExecuted }} statements executed, {{ $json.statementsErrored }} errors',\n  updated_at = NOW()\nWHERE id = '{{ $json.requestId }}'::uuid;"
+            },
+            "id": "update-request",
+            "name": "17. Update Request Status",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                3550,
+                200
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO messages (request_id, sender, content, timestamp)\nVALUES (\n  '{{ $json.requestId }}'::uuid,\n  'agent',\n  '✅ Knowledge Graph ingestion complete for {{ $json.companyName }}. {{ $json.statementsExecuted }} data points added to your privacy graph.',\n  NOW()\n);"
+            },
+            "id": "log-complete",
+            "name": "18. Log: Ingestion Complete",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                3770,
+                200
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "POSTGRES_CREDENTIAL_ID",
+                    "name": "GDPR Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ $json }}"
+            },
+            "id": "respond-success",
+            "name": "19. Respond Success",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                3990,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// No items to process response\nconst inputData = $('2. Prepare Input & Batch Queue').first().json;\n\nreturn {\n  json: {\n    success: false,\n    requestId: inputData.requestId,\n    companyName: inputData.companyName,\n    error: 'No data items to ingest',\n    statementsExecuted: 0,\n    ingestCompleted: new Date().toISOString()\n  }\n};"
+            },
+            "id": "no-items-response",
+            "name": "20. No Items Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1130,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ $json }}"
+            },
+            "id": "respond-no-items",
+            "name": "21. Respond No Items",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1350,
+                400
+            ]
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "1. Webhook: Ingest Data": {
+            "main": [
+                [
+                    {
+                        "node": "2. Prepare Input & Batch Queue",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Prepare Input & Batch Queue": {
+            "main": [
+                [
+                    {
+                        "node": "3. Log: Ingestion Started",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3. Log: Ingestion Started": {
+            "main": [
+                [
+                    {
+                        "node": "4. Has Items to Process?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. Has Items to Process?": {
+            "main": [
+                [
+                    {
+                        "node": "5. Process in Batches of 50",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "20. No Items Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "6. Get Current Batch": {
+            "main": [
+                [
+                    {
+                        "node": "7. AI: Generate Cypher Batch",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Gemini 2.5 Flash": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "7. AI: Generate Cypher Batch",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Ingestion Memory": {
+            "ai_memory": [
+                [
+                    {
+                        "node": "7. AI: Generate Cypher Batch",
+                        "type": "ai_memory",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "7. AI: Generate Cypher Batch": {
+            "main": [
+                [
+                    {
+                        "node": "8. Parse & Validate Cypher",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "8. Parse & Validate Cypher": {
+            "main": [
+                [
+                    {
+                        "node": "9. Has Valid Statements?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "9. Has Valid Statements?": {
+            "main": [
+                [
+                    {
+                        "node": "10. Prepare Neo4j Request",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "14. Log Skipped Batch",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "10. Prepare Neo4j Request": {
+            "main": [
+                [
+                    {
+                        "node": "11. Execute via Neo4j HTTP API",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "11. Execute via Neo4j HTTP API": {
+            "main": [
+                [
+                    {
+                        "node": "12. Process Execution Result",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "12. Process Execution Result": {
+            "main": [
+                [
+                    {
+                        "node": "13. Log: Batch Progress",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "13. Log: Batch Progress": {
+            "main": [
+                [
+                    {
+                        "node": "15. Merge Batch Results",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "14. Log Skipped Batch": {
+            "main": [
+                [
+                    {
+                        "node": "15. Merge Batch Results",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "15. Merge Batch Results": {
+            "main": [
+                [
+                    {
+                        "node": "5. Process in Batches of 50",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. Process in Batches of 50": {
+            "main": [
+                [
+                    {
+                        "node": "6. Get Current Batch",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "16. Aggregate All Results",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "16. Aggregate All Results": {
+            "main": [
+                [
+                    {
+                        "node": "17. Update Request Status",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "17. Update Request Status": {
+            "main": [
+                [
+                    {
+                        "node": "18. Log: Ingestion Complete",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "18. Log: Ingestion Complete": {
+            "main": [
+                [
+                    {
+                        "node": "19. Respond Success",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "20. No Items Response": {
+            "main": [
+                [
+                    {
+                        "node": "21. Respond No Items",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "versionId": "kg-ingestor-v2-http",
+    "meta": {
+        "templateCredsSetupCompleted": false,
+        "instanceId": "gdpr-automation-local"
+    },
+    "id": "gdpr-kg-ingestor",
+    "tags": [
+        {
+            "name": "GDPR",
+            "id": "gdpr-tag"
+        },
+        {
+            "name": "AI Agent",
+            "id": "ai-agent-tag"
+        },
+        {
+            "name": "Knowledge Graph",
+            "id": "kg-tag"
+        }
+    ]
+}
