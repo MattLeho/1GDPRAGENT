@@ -23,20 +23,32 @@ const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: { name
 };
 
 export function DataVolumeChart({ data }: DataVolumeChartProps) {
-    const totalGB = data.reduce((acc, curr) => acc + curr.value, 0);
+    const chartData = data.filter(item => item.value > 0);
+    const totalGB = chartData.reduce((acc, curr) => acc + curr.value, 0);
+
+    if (chartData.length === 0) {
+        return (
+            <div className="h-[300px] w-full rounded-lg border border-dashed flex flex-col items-center justify-center text-center px-6">
+                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">No received data yet</p>
+                <p className="text-xs text-gray-500 mt-1">
+                    Upload or process DSAR responses to see real company volume.
+                </p>
+            </div>
+        );
+    }
 
     return (
         <div className="h-[300px] w-full relative">
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="text-center">
                     <p className="text-sm text-gray-500 font-medium">Total</p>
-                    <p className="text-3xl font-bold text-gray-900">{totalGB.toFixed(1)}<span className="text-sm text-gray-500 font-normal ml-1">GB</span></p>
+                    <p className="text-3xl font-bold text-gray-900 dark:text-gray-100">{totalGB.toFixed(1)}<span className="text-sm text-gray-500 font-normal ml-1">GB</span></p>
                 </div>
             </div>
             <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                     <Pie
-                        data={data}
+                        data={chartData}
                         cx="50%"
                         cy="50%"
                         innerRadius={80}
@@ -46,7 +58,7 @@ export function DataVolumeChart({ data }: DataVolumeChartProps) {
                         onClick={(data) => console.log(`Filter by ${data.name}`)}
                         className="cursor-pointer outline-none"
                     >
-                        {data.map((entry, index) => (
+                        {chartData.map((entry, index) => (
                             <Cell key={`cell-${index}`} fill={entry.color} strokeWidth={0} />
                         ))}
                     </Pie>

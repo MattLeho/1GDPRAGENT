@@ -1,28 +1,12 @@
-/**
- * RLM Agent Orchestrator
- *
- * Core agent implementing the RLM (Recursive Language Model) agentic loop
- * with Gemini native function calling.
- *
- * Architecture:
- * 1. Build system prompt with GDPR expertise + request context
- * 2. Send user message + tool declarations to Gemini
- * 3. If model returns functionCalls → execute tools → send results back
- * 4. Repeat until model returns final text (max iterations)
- * 5. Return structured response
- *
- * Adapted from:
- * - RLM Paper: context-as-environment, recursive decomposition, selective retrieval
- * - RAG-Anything: hybrid retrieval, knowledge graph index, modality-aware ranking
- */
-
-import { GoogleGenAI, Content, Part, FunctionCall } from '@google/genai';
-import { allToolDeclarations } from './rlm/declarations';
+import { getModelPreferences } from '@/lib/model-preferences';
 import { executeTool } from './rlm/tools';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
+import {
+    generateRLMResponse,
+    providerSupportsToolCalling,
+    RLMMessage,
+    RLMProviderError,
+    RLMToolCall,
+} from './rlm/provider-adapters';
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
@@ -38,18 +22,13 @@ export interface RLMResponse {
 }
 
 interface ToolExecutionResult {
+    id: string;
     name: string;
     args: Record<string, unknown>;
     result: string;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
 const MAX_ITERATIONS = 10;
-const DEFAULT_MODEL = 'gemini-3.1-pro-preview';
-
 const SYSTEM_PROMPT = `You are an expert GDPR Data Protection Assistant embedded in a privacy request management platform. You help users understand, process, and respond to GDPR data access requests (SARs), erasure requests, portability requests, and more.
 
 ## Your Capabilities
@@ -69,30 +48,7 @@ You have access to tools that let you:
 - **Respond in a professional, clear manner** suitable for data protection officers and compliance teams.
 - **Structure longer responses** with headings and bullet points for readability.`;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Agent Class
-// ─────────────────────────────────────────────────────────────────────────────
-
 export class RLMAgent {
-    private client: GoogleGenAI;
-    private model: string;
-
-    constructor() {
-        const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-        if (!apiKey) {
-            throw new Error('GEMINI_API_KEY or GOOGLE_API_KEY must be set');
-        }
-        this.client = new GoogleGenAI({ apiKey });
-        this.model = process.env.GEMINI_MODEL_PRO || DEFAULT_MODEL;
-    }
-
-    /**
-     * Main chat method — implements the RLM agentic loop.
-     *
-     * @param requestId - The GDPR request ID for scoping tool calls
-     * @param userMessage - The user's message
-     * @param conversationHistory - Previous messages for context
-     */
     async chat(
         requestId: string,
         userMessage: string,
@@ -102,89 +58,88 @@ export class RLMAgent {
         let iterations = 0;
 
         try {
-            // Build initial contents array from conversation history
-            const contents: Content[] = this.buildContents(conversationHistory, userMessage);
+            const preferences = await getModelPreferences();
+            const messages = this.buildMessages(conversationHistory, userMessage);
+            const supportsTools = providerSupportsToolCalling(preferences.provider);
 
-            // Agentic loop — keep calling Gemini until it returns text (not tools)
+            if (!supportsTools) {
+                return this.chatWithRetrievedContext(
+                    requestId,
+                    userMessage,
+                    messages,
+                    preferences.provider,
+                    preferences.model,
+                    toolsUsed,
+                );
+            }
+
             while (iterations < MAX_ITERATIONS) {
                 iterations++;
 
-                const response = await this.client.models.generateContent({
-                    model: this.model,
-                    contents,
-                    config: {
-                        systemInstruction: SYSTEM_PROMPT,
-                        tools: [{ functionDeclarations: allToolDeclarations }],
+                let modelResponse;
+                try {
+                    modelResponse = await generateRLMResponse({
+                        provider: preferences.provider,
+                        model: preferences.model,
+                        systemPrompt: SYSTEM_PROMPT,
+                        messages,
+                        useTools: true,
                         temperature: 0.4,
-                    },
-                });
+                    });
+                } catch (error) {
+                    if (error instanceof RLMProviderError && error.retryWithoutTools) {
+                        console.warn(`[RLM] ${preferences.provider}/${preferences.model} rejected tools; using retrieved-context fallback.`);
+                        const fallbackResponse = await this.chatWithRetrievedContext(
+                            requestId,
+                            userMessage,
+                            this.buildMessages(conversationHistory, userMessage),
+                            preferences.provider,
+                            preferences.model,
+                            toolsUsed,
+                        );
+                        return {
+                            ...fallbackResponse,
+                            iterations: iterations + fallbackResponse.iterations - 1,
+                        };
+                    }
 
-                // Get the response parts
-                const candidate = response.candidates?.[0];
-                if (!candidate?.content?.parts) {
-                    return {
-                        content: 'I apologize, but I was unable to generate a response. Please try rephrasing your question.',
-                        toolsUsed,
-                        iterations,
-                        error: 'No candidate response from model',
-                    };
+                    throw error;
                 }
 
-                const parts = candidate.content.parts;
-
-                // Check if the model wants to call functions
-                const functionCalls = parts.filter(
-                    (p): p is Part & { functionCall: FunctionCall } => !!p.functionCall,
-                );
-
-                if (functionCalls.length === 0) {
-                    // Model returned text — we're done
-                    const textContent = parts
-                        .filter(p => p.text)
-                        .map(p => p.text)
-                        .join('');
-
+                if (modelResponse.toolCalls.length === 0) {
                     return {
-                        content: textContent || 'No response generated.',
+                        content: modelResponse.content || 'No response generated.',
                         toolsUsed,
                         iterations,
                     };
                 }
 
-                // Execute all function calls in parallel
-                const toolResults = await this.executeToolCalls(
-                    requestId,
-                    functionCalls,
-                );
+                const toolResults = await this.executeToolCalls(requestId, modelResponse.toolCalls);
 
-                // Track which tools were used
                 for (const result of toolResults) {
                     if (!toolsUsed.includes(result.name)) {
                         toolsUsed.push(result.name);
                     }
                 }
 
-                // Append model's response (with function calls) to contents
-                contents.push({
-                    role: 'model',
-                    parts: functionCalls.map(fc => ({ functionCall: fc.functionCall })),
+                messages.push({
+                    role: 'assistant',
+                    content: modelResponse.content,
+                    toolCalls: modelResponse.toolCalls,
                 });
 
-                // Append function responses
-                contents.push({
-                    role: 'user',
-                    parts: toolResults.map(tr => ({
-                        functionResponse: {
-                            name: tr.name,
-                            response: { result: tr.result },
-                        },
-                    })),
-                });
+                for (const result of toolResults) {
+                    messages.push({
+                        role: 'tool',
+                        toolCallId: result.id,
+                        name: result.name,
+                        content: result.result,
+                    });
+                }
 
-                console.log(`[RLM] Iteration ${iterations}: executed ${toolResults.length} tool(s): ${toolResults.map(t => t.name).join(', ')}`);
+                console.log(`[RLM] Iteration ${iterations}: executed ${toolResults.length} tool(s): ${toolResults.map(result => result.name).join(', ')}`);
             }
 
-            // Max iterations reached — force a text response
             return {
                 content: 'I gathered information using multiple tools but reached my processing limit. Please ask a more specific question for a detailed answer.',
                 toolsUsed,
@@ -203,60 +158,111 @@ export class RLMAgent {
         }
     }
 
-    /**
-     * Build Gemini contents array from conversation history.
-     */
-    private buildContents(history: ChatMessage[], currentMessage: string): Content[] {
-        const contents: Content[] = [];
+    private buildMessages(history: ChatMessage[], currentMessage: string): RLMMessage[] {
+        const recentHistory = history.slice(-10).map(message => ({
+            role: message.role === 'user' ? 'user' as const : 'assistant' as const,
+            content: message.content,
+        }));
 
-        // Add conversation history (last 10 messages for context window management)
-        const recentHistory = history.slice(-10);
-        for (const msg of recentHistory) {
-            contents.push({
-                role: msg.role === 'user' ? 'user' : 'model',
-                parts: [{ text: msg.content }],
-            });
-        }
-
-        // Add current user message
-        contents.push({
-            role: 'user',
-            parts: [{ text: currentMessage }],
-        });
-
-        return contents;
+        return [
+            ...recentHistory,
+            {
+                role: 'user',
+                content: currentMessage,
+            },
+        ];
     }
 
-    /**
-     * Execute tool calls in parallel and return results.
-     */
     private async executeToolCalls(
         requestId: string,
-        functionCalls: (Part & { functionCall: FunctionCall })[],
+        toolCalls: RLMToolCall[],
     ): Promise<ToolExecutionResult[]> {
-        const results = await Promise.all(
-            functionCalls.map(async (fc) => {
-                const name = fc.functionCall.name!;
-                const args = (fc.functionCall.args || {}) as Record<string, unknown>;
-
+        return Promise.all(
+            toolCalls.map(async (toolCall) => {
                 try {
-                    const result = await executeTool(requestId, name, args);
-                    return { name, args, result };
+                    const result = await executeTool(requestId, toolCall.name, toolCall.args);
+                    return { ...toolCall, result };
                 } catch (err) {
                     const errorMsg = err instanceof Error ? err.message : 'Tool execution failed';
-                    console.error(`[RLM] Tool "${name}" failed:`, err);
-                    return { name, args, result: `Error: ${errorMsg}` };
+                    console.error(`[RLM] Tool "${toolCall.name}" failed:`, err);
+                    return { ...toolCall, result: `Error: ${errorMsg}` };
                 }
             }),
         );
+    }
 
-        return results;
+    private async chatWithRetrievedContext(
+        requestId: string,
+        userMessage: string,
+        messages: RLMMessage[],
+        provider: string,
+        model: string,
+        toolsUsed: string[],
+    ): Promise<RLMResponse> {
+        const contextResults = await this.collectFallbackContext(requestId, userMessage);
+
+        for (const result of contextResults) {
+            if (!toolsUsed.includes(result.name)) {
+                toolsUsed.push(result.name);
+            }
+        }
+
+        const currentMessage = messages[messages.length - 1];
+        const messagesWithContext = [
+            ...messages.slice(0, -1),
+            {
+                role: 'user' as const,
+                content: `The selected model/provider does not expose compatible tool calling, so these platform tool results were retrieved before generation:\n\n${contextResults.map(result => `## ${result.name}\n${result.result}`).join('\n\n')}`,
+            },
+            currentMessage,
+        ];
+
+        const response = await generateRLMResponse({
+            provider,
+            model,
+            systemPrompt: SYSTEM_PROMPT,
+            messages: messagesWithContext,
+            useTools: false,
+            temperature: 0.4,
+        });
+
+        return {
+            content: response.content || 'No response generated.',
+            toolsUsed,
+            iterations: 1,
+        };
+    }
+
+    private async collectFallbackContext(
+        requestId: string,
+        userMessage: string,
+    ): Promise<ToolExecutionResult[]> {
+        const fallbackCalls: RLMToolCall[] = [
+            {
+                id: 'fallback_lookup_privacy_policy',
+                name: 'lookup_privacy_policy',
+                args: {},
+            },
+            {
+                id: 'fallback_search_documents',
+                name: 'search_documents',
+                args: { query: userMessage },
+            },
+            {
+                id: 'fallback_search_knowledge_graph',
+                name: 'search_knowledge_graph',
+                args: { query: userMessage },
+            },
+            {
+                id: 'fallback_get_gdpr_reference',
+                name: 'get_gdpr_reference',
+                args: { topic: userMessage },
+            },
+        ];
+
+        return this.executeToolCalls(requestId, fallbackCalls);
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Singleton for reuse across API calls
-// ─────────────────────────────────────────────────────────────────────────────
 
 let agentInstance: RLMAgent | null = null;
 

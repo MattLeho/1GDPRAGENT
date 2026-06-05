@@ -285,12 +285,28 @@ Content: ${content.substring(0, 15000)}`;
 
     for (const rel of relationships) {
         try {
+            const validation = await validateRelationshipWithMakged(rel, content);
+            if (validation.decision !== 'ACCEPT') {
+                await createInferenceReviewAlert(fileId, rel, validation, companyName);
+                continue;
+            }
+
             await runCypher(
                 `MATCH (s:Entity {value: $subject})
                  MERGE (o:Entity {value: $object})
                  MERGE (s)-[r:RELATES_TO {predicate: $predicate}]->(o)
-                 SET r.source = 'file_upload', r.fileId = $fileId, r.updatedAt = datetime()`,
-                { subject: rel.subject, object: rel.object, predicate: rel.predicate, fileId }
+                 SET r.source = 'file_upload',
+                     r.fileId = $fileId,
+                     r.makgedStatus = 'accepted',
+                     r.makgedVotes = $votes,
+                     r.updatedAt = datetime()`,
+                {
+                    subject: rel.subject,
+                    object: rel.object,
+                    predicate: rel.predicate,
+                    fileId,
+                    votes: JSON.stringify(validation.votes || {}),
+                }
             );
         } catch (err) {
             console.error('Relationship write error:', err);
@@ -320,6 +336,80 @@ Content: ${content.substring(0, 15000)}`;
     }
 
     return { success: true, entities: parsed };
+}
+
+async function validateRelationshipWithMakged(
+    rel: Record<string, unknown>,
+    context: string
+): Promise<{ decision: string; votes?: Record<string, unknown>; reason?: string }> {
+    const subject = rel.subject ? String(rel.subject) : '';
+    const predicate = rel.predicate ? String(rel.predicate) : '';
+    const object = rel.object ? String(rel.object) : '';
+
+    if (!subject || !predicate || !object) {
+        return { decision: 'NEEDS_REVIEW', reason: 'Incomplete relationship' };
+    }
+
+    try {
+        const intelligenceUrl = process.env.INTELLIGENCE_URL || 'http://localhost:8001';
+        const response = await fetch(`${intelligenceUrl}/validate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                triple: { subject, predicate, object },
+                context: context.substring(0, 5000),
+                max_rounds: 1,
+            }),
+            signal: AbortSignal.timeout(60000),
+        });
+
+        if (!response.ok) {
+            return { decision: 'NEEDS_REVIEW', reason: `MAKGED returned ${response.status}` };
+        }
+
+        const result = await response.json();
+        return {
+            decision: result.decision || 'NEEDS_REVIEW',
+            votes: result.votes,
+        };
+    } catch (error) {
+        return { decision: 'NEEDS_REVIEW', reason: String(error) };
+    }
+}
+
+async function createInferenceReviewAlert(
+    fileId: string,
+    rel: Record<string, unknown>,
+    validation: { decision: string; votes?: Record<string, unknown>; reason?: string },
+    companyName: string
+): Promise<void> {
+    await runCypher(
+        `MERGE (i:Inference {
+             sourceValue: $subject,
+             predicate: $predicate,
+             targetValue: $object,
+             fileId: $fileId
+         })
+         SET i.source = 'inference',
+             i.riskLevel = 'high',
+             i.risk_level = 'high',
+             i.alertType = 'makged_review',
+             i.decision = $decision,
+             i.reason = $reason,
+             i.companyName = $companyName,
+             i.votesJson = $votes,
+             i.updatedAt = datetime()`,
+        {
+            subject: String(rel.subject || ''),
+            predicate: String(rel.predicate || ''),
+            object: String(rel.object || ''),
+            fileId,
+            decision: validation.decision,
+            reason: validation.reason || 'MAKGED did not accept inferred relationship',
+            companyName,
+            votes: JSON.stringify(validation.votes || {}),
+        }
+    );
 }
 
 function getMimeType(filename: string): string {

@@ -16,7 +16,7 @@ export async function POST(request: Request) {
             names = [],
             usernames = [],
             notes,
-            useLLM = true  // Use LLM for Cypher generation by default
+            useLLM = true  // Optionally call N8N, but direct Neo4j upsert always runs
         } = body;
 
         if (!personaName) {
@@ -25,6 +25,9 @@ export async function POST(request: Request) {
                 { status: 400 }
             );
         }
+
+        let llmSucceeded = false;
+        let llmPersonaId: string | undefined;
 
         if (useLLM) {
             // Use N8N agent with Gemini for intelligent Cypher generation
@@ -39,24 +42,22 @@ export async function POST(request: Request) {
 
             if (!result.success) {
                 console.error('N8N Identity Ingestor failed:', result.error);
-                // Fall back to direct Cypher
-                return await directUpsertIdentity({
-                    personaName, emails, phones, names, usernames
-                });
+            } else {
+                llmSucceeded = true;
+                llmPersonaId = result.data?.personaId;
             }
-
-            return NextResponse.json({
-                success: true,
-                personaId: result.data?.personaId,
-                entitiesCreated: result.data?.entitiesCreated || 0,
-                method: 'llm',
-            });
-        } else {
-            // Direct Cypher without LLM
-            return await directUpsertIdentity({
-                personaName, emails, phones, names, usernames
-            });
         }
+
+        const directResult = await directUpsertIdentityData({
+            personaName, emails, phones, names, usernames
+        });
+
+        return NextResponse.json({
+            success: true,
+            personaId: llmPersonaId || directResult.personaId,
+            entitiesCreated: directResult.entitiesCreated,
+            method: llmSucceeded ? 'llm+direct' : 'direct',
+        });
 
     } catch (error) {
         console.error('Identity upsert endpoint error:', error);
@@ -70,24 +71,40 @@ export async function POST(request: Request) {
 /**
  * Direct Cypher upsert without LLM (fallback)
  */
-async function directUpsertIdentity(data: {
+async function directUpsertIdentityData(data: {
     personaName: string;
     emails: string[];
     phones: string[];
     names: { firstName?: string; lastName?: string }[];
     usernames: string[];
-}) {
-    const { personaName, emails, phones, usernames } = data;
+}): Promise<{ personaId: string; entitiesCreated: number }> {
+    const { personaName, emails, phones, names, usernames } = data;
     let entitiesCreated = 0;
 
     try {
         // Create/merge persona node
         await runCypher(`
-            MERGE (u:User {name: 'MainUser'})
+            MERGE (u:User {uid: 'root'})
+            SET u.name = coalesce(u.name, 'MainUser'), u.updatedAt = datetime()
             MERGE (p:Persona {name: $personaName})
+            SET p.label = $personaName, p.source = 'manual', p.updatedAt = datetime()
             MERGE (u)-[:HAS_PERSONA]->(p)
         `, { personaName });
         entitiesCreated++;
+
+        // Link names
+        for (const name of names) {
+            const fullName = [name?.firstName, name?.lastName].filter(Boolean).join(' ').trim();
+            if (fullName) {
+                await runCypher(`
+                    MATCH (p:Persona {name: $personaName})
+                    MERGE (n:Name {value: $fullName})
+                    SET n.source = 'manual', n.updatedAt = datetime()
+                    MERGE (p)-[:HAS_NAME]->(n)
+                `, { personaName, fullName });
+                entitiesCreated++;
+            }
+        }
 
         // Link emails
         for (const email of emails) {
@@ -95,6 +112,7 @@ async function directUpsertIdentity(data: {
                 await runCypher(`
                     MATCH (p:Persona {name: $personaName})
                     MERGE (e:Email {address: $email})
+                    SET e.source = 'manual', e.updatedAt = datetime()
                     MERGE (p)-[:USES_EMAIL]->(e)
                 `, { personaName, email: email.trim().toLowerCase() });
                 entitiesCreated++;
@@ -107,6 +125,7 @@ async function directUpsertIdentity(data: {
                 await runCypher(`
                     MATCH (p:Persona {name: $personaName})
                     MERGE (ph:Phone {number: $phone})
+                    SET ph.source = 'manual', ph.updatedAt = datetime()
                     MERGE (p)-[:HAS_PHONE]->(ph)
                 `, { personaName, phone: phone.trim() });
                 entitiesCreated++;
@@ -119,24 +138,20 @@ async function directUpsertIdentity(data: {
                 await runCypher(`
                     MATCH (p:Persona {name: $personaName})
                     MERGE (id:Identifier {value: $username, type: 'username'})
+                    SET id.source = 'manual', id.updatedAt = datetime()
                     MERGE (p)-[:HAS_IDENTIFIER]->(id)
                 `, { personaName, username: username.trim() });
                 entitiesCreated++;
             }
         }
 
-        return NextResponse.json({
-            success: true,
+        return {
             personaId: personaName.toLowerCase().replace(/\s+/g, '_'),
             entitiesCreated,
-            method: 'direct',
-        });
+        };
 
     } catch (error) {
         console.error('Direct Cypher upsert failed:', error);
-        return NextResponse.json(
-            { error: 'Failed to update knowledge graph' },
-            { status: 500 }
-        );
+        throw new Error('Failed to update knowledge graph');
     }
 }

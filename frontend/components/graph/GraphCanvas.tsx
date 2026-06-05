@@ -60,6 +60,7 @@ export interface GraphData {
 export interface GraphCanvasProps {
     onNodeClick: (node: GraphNode) => void;
     selectedNodeId?: string | null;
+    refreshKey?: number;
 }
 
 // =============================================================================
@@ -100,13 +101,42 @@ const communityColors = [
     '#ec4899', '#eab308', '#ef4444', '#8b5cf6', '#14b8a6',
 ];
 
+function getLinkEndpointId(endpoint: string | GraphNode): string {
+    return typeof endpoint === 'string' ? endpoint : endpoint.id;
+}
+
+function mergeGraphSlices(current: GraphData, incoming: GraphData): GraphData {
+    const nodeMap = new Map(current.nodes.map(node => [node.id, node]));
+    for (const node of incoming.nodes || []) {
+        nodeMap.set(node.id, { ...nodeMap.get(node.id), ...node });
+    }
+
+    const linkMap = new Map<string, GraphLink>();
+    for (const link of [...current.links, ...(incoming.links || [])]) {
+        const source = getLinkEndpointId(link.source);
+        const target = getLinkEndpointId(link.target);
+        linkMap.set(`${source}:${target}:${link.type}`, {
+            ...link,
+            source,
+            target,
+        });
+    }
+
+    return {
+        nodes: Array.from(nodeMap.values()),
+        links: Array.from(linkMap.values()),
+    };
+}
+
 // =============================================================================
 // Component
 // =============================================================================
 
-export function GraphCanvas({ onNodeClick, selectedNodeId }: GraphCanvasProps) {
+export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0 }: GraphCanvasProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const graphRef = useRef<any>(null);
+    const lastClickRef = useRef<{ nodeId: string; clickedAt: number } | null>(null);
+    const initializedTypesRef = useRef(false);
 
     // State
     const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
@@ -144,23 +174,28 @@ export function GraphCanvas({ onNodeClick, selectedNodeId }: GraphCanvasProps) {
             if (!filters.showInferences) {
                 params.set('showInferences', 'false');
             }
+            if (filters.searchQuery.trim()) {
+                params.set('search', filters.searchQuery.trim());
+            }
+            if (filters.riskLevel !== 'all') {
+                params.set('riskLevel', filters.riskLevel);
+            }
 
             const res = await fetch(`/api/graph?${params.toString()}`);
             if (res.ok) {
                 const data = await res.json();
+                setError(null);
 
                 if (isLoadingMore) {
                     // Append new nodes and links
-                    setGraphData(prev => ({
-                        nodes: [...prev.nodes, ...data.nodes],
-                        links: [...prev.links, ...data.links],
-                    }));
+                    setGraphData(prev => mergeGraphSlices(prev, data));
                 } else {
                     setGraphData(data);
                     // Initialize selectedTypes with all available types if empty
-                    if (filters.selectedTypes.length === 0) {
+                    if (!initializedTypesRef.current) {
                         const types = [...new Set(data.nodes.map((n: GraphNode) => n.type))];
                         setFilters(prev => ({ ...prev, selectedTypes: types as string[] }));
+                        initializedTypesRef.current = true;
                     }
                 }
 
@@ -177,6 +212,8 @@ export function GraphCanvas({ onNodeClick, selectedNodeId }: GraphCanvasProps) {
                 } else {
                     setDbStatus('connected');
                 }
+            } else {
+                setError(`Graph API returned ${res.status}`);
             }
         } catch (e) {
             console.error('Failed to load graph data', e);
@@ -185,12 +222,12 @@ export function GraphCanvas({ onNodeClick, selectedNodeId }: GraphCanvasProps) {
             setLoading(false);
             setLoadingMore(false);
         }
-    }, [filters.showONSIT, filters.showGDPR, filters.showInferences, filters.selectedTypes.length]);
+    }, [filters.showONSIT, filters.showGDPR, filters.showInferences, filters.searchQuery, filters.riskLevel]);
 
-    // Initial fetch
+    // Initial fetch and external refreshes
     useEffect(() => {
         fetchGraphData();
-    }, []);
+    }, [fetchGraphData, refreshKey]);
 
     // Handle container resize
     useEffect(() => {
@@ -252,7 +289,9 @@ export function GraphCanvas({ onNodeClick, selectedNodeId }: GraphCanvasProps) {
         });
 
         // Filter by selected types
-        if (filters.selectedTypes.length > 0 && filters.selectedTypes.length < availableTypes.length) {
+        if (availableTypes.length > 0 && filters.selectedTypes.length === 0) {
+            nodes = [];
+        } else if (filters.selectedTypes.length > 0 && filters.selectedTypes.length < availableTypes.length) {
             nodes = nodes.filter(n => filters.selectedTypes.includes(n.type));
         }
 
@@ -391,15 +430,52 @@ export function GraphCanvas({ onNodeClick, selectedNodeId }: GraphCanvasProps) {
         []
     );
 
+    const expandNodeNeighbors = useCallback(async (node: GraphNode) => {
+        setLoadingMore(true);
+
+        try {
+            const params = new URLSearchParams();
+            params.set('centerNodeId', node.id);
+            params.set('limit', '150');
+            if (!filters.showInferences) {
+                params.set('showInferences', 'false');
+            }
+
+            const response = await fetch(`/api/graph?${params.toString()}`);
+            if (!response.ok) {
+                throw new Error(`Graph API returned ${response.status}`);
+            }
+
+            const neighborData = await response.json();
+            setGraphData(prev => mergeGraphSlices(prev, neighborData));
+            setError(null);
+        } catch (expansionError) {
+            console.error('Failed to expand node neighbors', expansionError);
+            setError(expansionError instanceof Error ? expansionError.message : 'Failed to expand node neighbors');
+        } finally {
+            setLoadingMore(false);
+        }
+    }, [filters.showInferences]);
+
     // Event handlers - using any for react-force-graph compatibility
     const handleNodeClick = useCallback((node: any) => {
         const typedNode = node as GraphNode;
+        const now = Date.now();
+        const previousClick = lastClickRef.current;
+
+        if (previousClick?.nodeId === typedNode.id && now - previousClick.clickedAt < 350) {
+            lastClickRef.current = null;
+            void expandNodeNeighbors(typedNode);
+        } else {
+            lastClickRef.current = { nodeId: typedNode.id, clickedAt: now };
+        }
+
         onNodeClick(typedNode);
         if (graphRef.current) {
             graphRef.current.centerAt(typedNode.x, typedNode.y, 500);
             graphRef.current.zoom(2, 500);
         }
-    }, [onNodeClick]);
+    }, [expandNodeNeighbors, onNodeClick]);
 
     const handleNodeHover = useCallback((node: any) => {
         const typedNode = node ? (node as GraphNode) : null;

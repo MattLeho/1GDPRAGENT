@@ -1,7 +1,15 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { safeQuery, db } from '@/lib/db';
 import { Request } from './requests';
+
+export interface RequestAccountDetail {
+    id: string;
+    request_id: string;
+    field_key: string;
+    field_value_encrypted: string;
+}
 
 /**
  * Gets a single request by ID
@@ -32,11 +40,33 @@ export async function updateRequestStatus(
             `UPDATE requests SET status = $1 WHERE id = $2`,
             [status, id]
         );
+        revalidatePath('/dashboard/requests');
+        revalidatePath(`/dashboard/requests/${id}`);
+        revalidatePath('/dashboard/home');
         return { success: true };
     } catch (error) {
         console.error('Failed to update request status:', error);
         return { success: false };
     }
+}
+
+/**
+ * Gets encrypted account details attached to a request
+ */
+export async function getRequestAccountDetails(requestId: string): Promise<RequestAccountDetail[]> {
+    const result = await safeQuery<RequestAccountDetail>(
+        `SELECT id, request_id, field_key, field_value_encrypted
+         FROM request_details
+         WHERE request_id = $1
+         ORDER BY field_key ASC`,
+        [requestId]
+    );
+
+    if (result.error) {
+        console.error('Failed to fetch request account details:', result.error);
+    }
+
+    return result.rows;
 }
 
 /**

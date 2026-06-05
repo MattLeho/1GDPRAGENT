@@ -1,7 +1,6 @@
-import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getRequestById, getRequestHistory, updateRequestStatus } from "@/lib/actions/request-detail";
+import { getRequestAccountDetails, getRequestById, getRequestHistory, updateRequestStatus } from "@/lib/actions/request-detail";
 import { getMessages } from "@/lib/actions/messages";
 import { getRequestAnalysis } from "@/lib/actions/policy-analysis";
 import { getReceivedData } from "@/lib/actions/data";
@@ -14,11 +13,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import {
     ArrowLeft,
-    Calendar,
     Clock,
     Mail,
     FileText,
-    Globe,
     MapPin,
     Bot,
     User,
@@ -40,12 +37,13 @@ export default async function RequestDetailPage({ params }: PageProps) {
     const { id } = await params;
 
     // Fetch all data in parallel
-    const [request, messages, analysis, receivedData, history] = await Promise.all([
+    const [request, messages, analysis, receivedData, history, requestDetails] = await Promise.all([
         getRequestById(id),
         getMessages(id),
         getRequestAnalysis(id),
         getReceivedData(id),
         getRequestById(id).then(r => r?.domain ? getRequestHistory(r.domain, id) : []),
+        getRequestAccountDetails(id),
     ]);
 
     if (!request) {
@@ -93,6 +91,13 @@ export default async function RequestDetailPage({ params }: PageProps) {
             case 'action_required': return 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200';
             default: return 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200';
         }
+    };
+
+    const formatFieldKey = (key: string) => {
+        return key
+            .replace(/_\d+$/, '')
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, (letter) => letter.toUpperCase());
     };
 
     return (
@@ -329,6 +334,24 @@ export default async function RequestDetailPage({ params }: PageProps) {
                                     <span className="capitalize">{request.request_type}</span>
                                 </div>
                                 <Separator />
+                                {requestDetails.length > 0 && (
+                                    <>
+                                        <div>
+                                            <span className="text-sm text-muted-foreground">Account Details</span>
+                                            <div className="mt-2 flex flex-wrap gap-1.5">
+                                                {requestDetails.map((detail) => (
+                                                    <Badge key={detail.id} variant="secondary" className="text-xs">
+                                                        {formatFieldKey(detail.field_key)}
+                                                    </Badge>
+                                                ))}
+                                            </div>
+                                            <p className="mt-2 text-xs text-muted-foreground">
+                                                Encrypted values are stored with this request for agent context.
+                                            </p>
+                                        </div>
+                                        <Separator />
+                                    </>
+                                )}
                                 <div>
                                     <span className="text-sm text-muted-foreground">Notes</span>
                                     <p className="text-sm mt-1">{request.notes || 'No notes'}</p>
@@ -343,14 +366,23 @@ export default async function RequestDetailPage({ params }: PageProps) {
                             </CardHeader>
                             <CardContent className="space-y-2">
                                 {request.status !== 'completed' && (
-                                    <Button className="w-full" size="sm">
-                                        <CheckCircle2 className="mr-2 h-4 w-4" />
-                                        Mark Complete
-                                    </Button>
+                                    <form
+                                        action={async () => {
+                                            "use server";
+                                            await updateRequestStatus(request.id, 'completed');
+                                        }}
+                                    >
+                                        <Button className="w-full" size="sm" type="submit">
+                                            <CheckCircle2 className="mr-2 h-4 w-4" />
+                                            Mark Complete
+                                        </Button>
+                                    </form>
                                 )}
-                                <Button variant="outline" className="w-full" size="sm">
-                                    <Download className="mr-2 h-4 w-4" />
-                                    Export Data
+                                <Button variant="outline" className="w-full" size="sm" asChild>
+                                    <a href={`/api/upload?requestId=${request.id}`} target="_blank" rel="noopener noreferrer">
+                                        <Download className="mr-2 h-4 w-4" />
+                                        Open Data Export
+                                    </a>
                                 </Button>
                             </CardContent>
                         </Card>

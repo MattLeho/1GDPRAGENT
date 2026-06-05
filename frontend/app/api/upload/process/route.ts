@@ -620,6 +620,7 @@ async function ingestToGraph(
 ): Promise<{ success: boolean; error?: string }> {
     try {
         const N8N_WEBHOOK_INGEST = process.env.N8N_WEBHOOK_INGEST_DATA || 'http://localhost:5678/webhook-test/ingest-data';
+        const intelligenceUrl = process.env.INTELLIGENCE_URL || 'http://localhost:8001';
 
         // First, extract entities from the content using Gemini Pro (intelligent model for accuracy)
         const extractionPrompt = `You are a GDPR Data Protection and Knowledge Graph expert. Your task is to analyze this document — which is part of a user's GDPR data access request to the company "${companyName || 'Unknown'}" — and extract structured data for a privacy knowledge graph.
@@ -688,22 +689,59 @@ ${content.substring(0, 20000)}`;
             extractedJson = { extractedData: [], categories: {} };
         }
 
-        // Send to N8N KG Ingestor
-        const response = await fetch(N8N_WEBHOOK_INGEST, {
+        const ingestPayload = {
+            requestId: requestId || fileId,
+            request_id: requestId || fileId,
+            companyName: companyName || 'Unknown',
+            company_name: companyName || 'Unknown',
+            extractedData: (extractedJson as { extractedData?: unknown[] }).extractedData || [],
+            extracted_data: (extractedJson as { extractedData?: unknown[] }).extractedData || [],
+            categories: (extractedJson as { categories?: Record<string, unknown> }).categories || {},
+            source: 'file_upload',
+            fileId: fileId,
+        };
+
+        let ingestionSucceeded = false;
+        let ingestionError = '';
+
+        // Prefer the built-in Python KG ingestor. N8N remains an optional fallback.
+        try {
+            const response = await fetch(`${intelligenceUrl}/ingest`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    company_name: ingestPayload.company_name,
+                    request_id: ingestPayload.request_id,
+                    extracted_data: ingestPayload.extracted_data,
+                    categories: ingestPayload.categories,
+                    source: ingestPayload.source,
+                }),
+                signal: AbortSignal.timeout(120000),
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                ingestionSucceeded = result.success !== false;
+                ingestionError = result.errors?.join('; ') || '';
+            } else {
+                ingestionError = `Intelligence ingestor returned ${response.status}`;
+            }
+        } catch (error) {
+            ingestionError = `Intelligence ingestor unavailable: ${String(error)}`;
+        }
+
+        if (!ingestionSucceeded) {
+            console.warn('[Graph ingestion] Falling back to N8N:', ingestionError);
+        }
+
+        const response = ingestionSucceeded ? null : await fetch(N8N_WEBHOOK_INGEST, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                requestId: requestId || fileId,
-                companyName: companyName || 'Unknown',
-                extractedData: (extractedJson as { extractedData?: unknown[] }).extractedData || [],
-                categories: (extractedJson as { categories?: Record<string, unknown> }).categories || {},
-                source: 'file_upload',
-                fileId: fileId,
-            }),
+            body: JSON.stringify(ingestPayload),
         });
 
-        if (!response.ok) {
-            throw new Error(`N8N webhook returned ${response.status}`);
+        if (response && !response.ok) {
+            throw new Error(`${ingestionError}; N8N webhook returned ${response.status}`);
         }
 
         // Update database to mark as ingested

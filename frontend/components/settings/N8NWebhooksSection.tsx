@@ -181,7 +181,7 @@ export function N8NWebhooksSection() {
                 const error = await res.json();
                 toast.error(error.message || 'Failed to save webhooks');
             }
-        } catch (error) {
+        } catch {
             toast.error('Failed to save webhooks');
         } finally {
             setIsLoading(false);

@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef } from "react";
+import Link from "next/link";
 import {
     Dialog,
     DialogContent,
@@ -19,9 +20,7 @@ import {
     Paperclip,
     Image as ImageIcon,
     X,
-    Upload,
     File,
-    Download
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -31,8 +30,9 @@ interface ReviewItem {
     title: string;
     description: string;
     date: string;
-    data?: any;
+    data?: unknown;
     companyName?: string;
+    requestId?: string;
 }
 
 interface Attachment {
@@ -58,7 +58,7 @@ export function ReviewDetailModal({ isOpen, onClose, item }: ReviewDetailModalPr
 
     if (!item) return null;
 
-    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: 'file' | 'image') => {
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files;
         if (!files) return;
 
@@ -171,6 +171,13 @@ export function ReviewDetailModal({ isOpen, onClose, item }: ReviewDetailModalPr
                                         <h4 className="text-sm font-medium text-muted-foreground">Received</h4>
                                         <p className="mt-1 text-sm">{item.date}</p>
                                     </div>
+                                    {item.requestId && (
+                                        <Button variant="outline" size="sm" asChild>
+                                            <Link href={`/dashboard/requests/${item.requestId}`}>
+                                                Open request detail
+                                            </Link>
+                                        </Button>
+                                    )}
                                     <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
                                         <h4 className="text-sm font-medium mb-2 text-blue-700 dark:text-blue-300">AI Analysis</h4>
                                         <p className="text-sm text-blue-600 dark:text-blue-400">
@@ -184,7 +191,7 @@ export function ReviewDetailModal({ isOpen, onClose, item }: ReviewDetailModalPr
 
                         <TabsContent value="data" className="h-full">
                             <ScrollArea className="h-full rounded-md border bg-zinc-900 text-zinc-50 p-4 font-mono text-xs">
-                                <pre>{JSON.stringify(item.data || { info: "No raw data attached", meta: "Sample content" }, null, 2)}</pre>
+                                <pre>{JSON.stringify(item.data || { info: "No raw data attached" }, null, 2)}</pre>
                             </ScrollArea>
                         </TabsContent>
 
@@ -252,7 +259,7 @@ The agent will use this to compose a response email to the company."
                                     className="hidden"
                                     multiple
                                     accept=".pdf,.doc,.docx,.txt,.csv,.xlsx"
-                                    onChange={(e) => handleFileSelect(e, 'file')}
+                                    onChange={handleFileSelect}
                                 />
                                 <input
                                     ref={imageInputRef}
@@ -260,7 +267,7 @@ The agent will use this to compose a response email to the company."
                                     className="hidden"
                                     multiple
                                     accept="image/*"
-                                    onChange={(e) => handleFileSelect(e, 'image')}
+                                    onChange={handleFileSelect}
                                 />
 
                                 <Button

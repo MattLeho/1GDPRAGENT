@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 /**
- * Middleware to protect dashboard routes
+ * Proxy to protect dashboard routes
  */
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
     // Check for session cookie
     const session = request.cookies.get('gdpr-session');
 

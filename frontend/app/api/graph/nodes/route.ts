@@ -8,13 +8,15 @@
  * @see https://github.com/reconurge/flowsint - Entity types
  */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getDriver } from '@/lib/graph';
+import { mapTypeToLabel, normalizeRiskLevel, sanitizeProperties } from '@/lib/graph/schema';
 
 /**
  * Node creation request body
  */
 interface CreateNodeRequest {
+    id?: string;
     type: string;
     label: string;
     properties?: Record<string, unknown>;
@@ -28,87 +30,15 @@ interface CreateNodeRequest {
 }
 
 /**
- * Map entity type to Neo4j label
- * Uses Flowsint entity type conventions
- */
-function mapTypeToLabel(type: string): string {
-    const labelMap: Record<string, string> = {
-        // Core ONSIT types
-        email: 'Email',
-        username: 'Username',
-        phone: 'Phone',
-        domain: 'Domain',
-        ip: 'IP',
-
-        // Social/identity types
-        social_profile: 'SocialProfile',
-        socialprofile: 'SocialProfile',
-        individual: 'Individual',
-        organization: 'Organization',
-
-        // OSINT findings
-        breach_record: 'BreachRecord',
-        breachrecord: 'BreachRecord',
-        credential: 'Credential',
-        website: 'Website',
-        document: 'PublicDocument',
-        publicdocument: 'PublicDocument',
-
-        // Crypto types
-        cryptowallet: 'CryptoWallet',
-        crypto_wallet: 'CryptoWallet',
-
-        // Existing types
-        user: 'User',
-        persona: 'Persona',
-        company: 'Company',
-        account: 'Account',
-        attribute: 'Attribute',
-        datapoint: 'DataPoint',
-        inference: 'Inference',
-    };
-
-    return labelMap[type.toLowerCase()] || type;
-}
-
-/**
- * Sanitize properties for Neo4j storage
- * Converts complex objects to JSON strings
- */
-function sanitizeProperties(props: Record<string, unknown>): Record<string, unknown> {
-    const sanitized: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(props)) {
-        if (value === null || value === undefined) continue;
-
-        if (typeof value === 'object' && !Array.isArray(value)) {
-            // Convert objects to JSON string
-            sanitized[key] = JSON.stringify(value);
-        } else if (Array.isArray(value)) {
-            // Keep arrays of primitives, stringify arrays of objects
-            if (value.length > 0 && typeof value[0] === 'object') {
-                sanitized[key] = JSON.stringify(value);
-            } else {
-                sanitized[key] = value;
-            }
-        } else {
-            sanitized[key] = value;
-        }
-    }
-
-    return sanitized;
-}
-
-/**
  * POST /api/graph/nodes
  * 
  * Creates a single node in the knowledge graph.
  */
 export async function POST(request: Request) {
-    const driver = getDriver();
-    const session = driver.session();
-
+    let session;
     try {
+        const driver = getDriver();
+        session = driver.session();
         const body: CreateNodeRequest = await request.json();
 
         // Validate required fields
@@ -121,7 +51,7 @@ export async function POST(request: Request) {
 
         const nodeLabel = mapTypeToLabel(body.type || 'Entity');
         const source = body.source || 'manual';
-        const riskLevel = body.riskLevel || 'low';
+        const riskLevel = normalizeRiskLevel(body.riskLevel);
 
         // Build properties
         const baseProperties = {
@@ -178,6 +108,149 @@ export async function POST(request: Request) {
             { status: 500 }
         );
     } finally {
-        await session.close();
+        await session?.close();
+    }
+}
+
+/**
+ * PUT /api/graph/nodes
+ *
+ * Upserts a node by internal Neo4j id when provided, otherwise by type+label+source.
+ */
+export async function PUT(request: Request) {
+    let session;
+
+    try {
+        const driver = getDriver();
+        session = driver.session();
+        const body: CreateNodeRequest = await request.json();
+
+        if (!body.label) {
+            return NextResponse.json(
+                { success: false, error: 'Label is required' },
+                { status: 400 }
+            );
+        }
+
+        const nodeLabel = mapTypeToLabel(body.type || 'Entity');
+        const source = body.source || 'manual';
+        const now = new Date().toISOString();
+        const props: Record<string, unknown> = {
+            label: body.label,
+            source,
+            riskLevel: normalizeRiskLevel(body.riskLevel),
+            confidence: body.confidence ?? 1.0,
+            updatedAt: now,
+            ...sanitizeProperties(body.properties || {}),
+        };
+
+        if (body.evidence && body.evidence.length > 0) {
+            props.evidenceJson = JSON.stringify(body.evidence);
+        }
+
+        const result = body.id
+            ? await session.run(
+                `
+                MATCH (n)
+                WHERE id(n) = toInteger($id)
+                SET n:${nodeLabel}
+                SET n += $props
+                RETURN id(n) as id, labels(n) as labels, properties(n) as props
+                `,
+                { id: body.id, props }
+            )
+            : await session.run(
+                `
+                MERGE (n:${nodeLabel} {label: $label, source: $source})
+                ON CREATE SET n.createdAt = $createdAt
+                SET n += $props
+                RETURN id(n) as id, labels(n) as labels, properties(n) as props
+                `,
+                { label: body.label, source, createdAt: now, props }
+            );
+
+        const record = result.records[0];
+        if (!record) {
+            return NextResponse.json(
+                { success: false, error: 'Node not found' },
+                { status: 404 }
+            );
+        }
+
+        return NextResponse.json({
+            success: true,
+            nodeId: record.get('id').toString(),
+            labels: record.get('labels'),
+            properties: record.get('props'),
+        });
+    } catch (error) {
+        console.error('[Graph Nodes PUT] Error:', error);
+        return NextResponse.json(
+            {
+                success: false,
+                error: error instanceof Error ? error.message : 'Failed to upsert node'
+            },
+            { status: 500 }
+        );
+    } finally {
+        await session?.close();
+    }
+}
+
+/**
+ * DELETE /api/graph/nodes?id=<neo4j-id>
+ */
+export async function DELETE(request: NextRequest) {
+    let session;
+
+    try {
+        const nodeId = request.nextUrl.searchParams.get('id');
+
+        if (!nodeId || !/^\d+$/.test(nodeId)) {
+            return NextResponse.json(
+                { success: false, error: 'Valid numeric node id is required' },
+                { status: 400 }
+            );
+        }
+
+        const driver = getDriver();
+        session = driver.session();
+
+        const result = await session.run(
+            `
+            MATCH (n)
+            WHERE id(n) = toInteger($nodeId)
+            WITH n, labels(n) as labels, coalesce(n.label, n.name, n.value, n.address, toString(id(n))) as label
+            DETACH DELETE n
+            RETURN labels, label
+            `,
+            { nodeId }
+        );
+
+        const record = result.records[0];
+        if (!record) {
+            return NextResponse.json(
+                { success: false, error: 'Node not found' },
+                { status: 404 }
+            );
+        }
+
+        return NextResponse.json({
+            success: true,
+            deletedNodeId: nodeId,
+            label: record.get('label'),
+            labels: record.get('labels'),
+        });
+    } catch (error) {
+        console.error('[Graph Nodes DELETE] Error:', error);
+        return NextResponse.json(
+            {
+                success: false,
+                error: error instanceof Error ? error.message : 'Failed to delete node'
+            },
+            { status: 500 }
+        );
+    } finally {
+        await session?.close();
     }
 }

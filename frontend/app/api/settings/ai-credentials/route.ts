@@ -10,16 +10,15 @@
  */
 
 import { NextResponse } from 'next/server';
-import { Pool } from 'pg';
 import crypto from 'crypto';
-
-// =============================================================================
-// Database Connection
-// =============================================================================
-
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-});
+import { pool } from '@/lib/db';
+import {
+    AI_PROVIDER_FORM_FIELDS,
+    AI_PROVIDER_IDS,
+    hasEnvAICredential,
+    normalizeAIProvider,
+} from '@/lib/ai-credentials';
+import type { AIProviderId } from '@/lib/ai-credentials';
 
 // =============================================================================
 // Encryption Utilities
@@ -46,37 +45,40 @@ function encrypt(text: string): string {
     return iv.toString('hex') + ':' + encrypted;
 }
 
-function decrypt(encryptedText: string): string {
-    try {
-        const [ivHex, encrypted] = encryptedText.split(':');
-        const iv = Buffer.from(ivHex, 'hex');
-        const decipher = crypto.createDecipheriv('aes-256-cbc', getKey(), iv);
-        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
-        return decrypted;
-    } catch {
-        return '';
-    }
-}
-
 // =============================================================================
 // Environment Variable Check
 // =============================================================================
 
-interface EnvKeys {
-    googleApiKey: boolean;
-    openaiApiKey: boolean;
-    openrouterApiKey: boolean;
-    anthropicApiKey: boolean;
+function emptyProviderKeyState(): Record<string, boolean> {
+    return Object.fromEntries(
+        AI_PROVIDER_IDS.map(provider => [AI_PROVIDER_FORM_FIELDS[provider], false])
+    );
 }
 
-function checkEnvKeys(): EnvKeys {
-    return {
-        googleApiKey: !!(process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY),
-        openaiApiKey: !!process.env.OPENAI_API_KEY,
-        openrouterApiKey: !!process.env.OPENROUTER_API_KEY,
-        anthropicApiKey: !!process.env.ANTHROPIC_API_KEY,
-    };
+function checkEnvKeys(): Record<string, boolean> {
+    return Object.fromEntries(
+        AI_PROVIDER_IDS.map(provider => [
+            AI_PROVIDER_FORM_FIELDS[provider],
+            hasEnvAICredential(provider),
+        ])
+    );
+}
+
+async function ensureAICredentialsTable() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS ai_credentials (
+            id SERIAL PRIMARY KEY,
+            provider VARCHAR(50) UNIQUE NOT NULL,
+            api_key_encrypted TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+}
+
+function fieldForProvider(provider: unknown): string | null {
+    const normalizedProvider = normalizeAIProvider(provider);
+    return normalizedProvider ? AI_PROVIDER_FORM_FIELDS[normalizedProvider] : null;
 }
 
 // =============================================================================
@@ -85,29 +87,18 @@ function checkEnvKeys(): EnvKeys {
 
 export async function GET() {
     try {
+        await ensureAICredentialsTable();
+
         // Check if table exists and has data
         const result = await pool.query(`
             SELECT provider, api_key_encrypted IS NOT NULL as has_key
             FROM ai_credentials
         `);
 
-        const savedKeys: Record<string, boolean> = {
-            googleApiKey: false,
-            openaiApiKey: false,
-            openrouterApiKey: false,
-            anthropicApiKey: false,
-        };
-
-        // Map provider names to form field names
-        const providerMap: Record<string, string> = {
-            'google': 'googleApiKey',
-            'openai': 'openaiApiKey',
-            'openrouter': 'openrouterApiKey',
-            'anthropic': 'anthropicApiKey',
-        };
+        const savedKeys = emptyProviderKeyState();
 
         for (const row of result.rows) {
-            const fieldName = providerMap[row.provider];
+            const fieldName = fieldForProvider(row.provider);
             if (fieldName) {
                 savedKeys[fieldName] = row.has_key;
             }
@@ -122,12 +113,7 @@ export async function GET() {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.warn('[AI Credentials GET] Table may not exist:', errorMessage);
         return NextResponse.json({
-            savedKeys: {
-                googleApiKey: false,
-                openaiApiKey: false,
-                openrouterApiKey: false,
-                anthropicApiKey: false,
-            },
+            savedKeys: emptyProviderKeyState(),
             envKeys: checkEnvKeys(),
         });
     }
@@ -141,35 +127,31 @@ interface AICredentialsBody {
     googleApiKey?: string;
     openaiApiKey?: string;
     openrouterApiKey?: string;
-    anthropicApiKey?: string;
+    ollamaApiKey?: string;
+    huggingfaceApiKey?: string;
+    nvidiaApiKey?: string;
 }
+
+const credentialFields: Array<{ provider: AIProviderId; field: keyof AICredentialsBody }> = [
+    { provider: 'google', field: 'googleApiKey' },
+    { provider: 'openai', field: 'openaiApiKey' },
+    { provider: 'openrouter', field: 'openrouterApiKey' },
+    { provider: 'ollama', field: 'ollamaApiKey' },
+    { provider: 'huggingface', field: 'huggingfaceApiKey' },
+    { provider: 'nvidia', field: 'nvidiaApiKey' },
+];
 
 export async function POST(request: Request) {
     try {
         const body: AICredentialsBody = await request.json();
 
         // Ensure table exists
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS ai_credentials (
-                id SERIAL PRIMARY KEY,
-                provider VARCHAR(50) UNIQUE NOT NULL,
-                api_key_encrypted TEXT,
-                created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        `);
+        await ensureAICredentialsTable();
 
-        // Map form fields to provider names
-        const credentials = [
-            { provider: 'google', key: body.googleApiKey },
-            { provider: 'openai', key: body.openaiApiKey },
-            { provider: 'openrouter', key: body.openrouterApiKey },
-            { provider: 'anthropic', key: body.anthropicApiKey },
-        ];
+        const savedKeys = emptyProviderKeyState();
 
-        const savedKeys: Record<string, boolean> = {};
-
-        for (const { provider, key } of credentials) {
+        for (const { provider, field } of credentialFields) {
+            const key = body[field];
             if (key && key.trim()) {
                 const encryptedKey = encrypt(key.trim());
                 await pool.query(`
@@ -180,7 +162,7 @@ export async function POST(request: Request) {
                         updated_at = NOW()
                 `, [provider, encryptedKey]);
 
-                savedKeys[`${provider}ApiKey`] = true;
+                savedKeys[field] = true;
             }
         }
 
@@ -190,15 +172,8 @@ export async function POST(request: Request) {
             FROM ai_credentials
         `);
 
-        const providerMap: Record<string, string> = {
-            'google': 'googleApiKey',
-            'openai': 'openaiApiKey',
-            'openrouter': 'openrouterApiKey',
-            'anthropic': 'anthropicApiKey',
-        };
-
         for (const row of result.rows) {
-            const fieldName = providerMap[row.provider];
+            const fieldName = fieldForProvider(row.provider);
             if (fieldName) {
                 savedKeys[fieldName] = row.has_key;
             }
@@ -207,12 +182,20 @@ export async function POST(request: Request) {
         return NextResponse.json({
             success: true,
             savedKeys,
+            envKeys: checkEnvKeys(),
         });
     } catch (error) {
         console.error('[AI Credentials POST] Error:', error);
+        const missingEncryptionKey = error instanceof Error &&
+            error.message.includes('CREDENTIALS_ENCRYPTION_KEY');
+
         return NextResponse.json(
-            { error: 'Failed to save AI credentials' },
-            { status: 500 }
+            {
+                error: missingEncryptionKey
+                    ? 'Credential encryption key is not configured'
+                    : 'Failed to save AI credentials',
+            },
+            { status: missingEncryptionKey ? 400 : 500 }
         );
     }
 }

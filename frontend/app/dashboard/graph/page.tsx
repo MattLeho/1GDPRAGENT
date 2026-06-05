@@ -15,6 +15,7 @@ interface GraphNode {
 
 export default function GraphPage() {
     const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+    const [graphRefreshKey, setGraphRefreshKey] = useState(0);
 
     const handleNodeClick = useCallback((node: GraphNode) => {
         setSelectedNode(node);
@@ -24,21 +25,60 @@ export default function GraphPage() {
         setSelectedNode(null);
     }, []);
 
-    const handleDeleteNode = useCallback((nodeId: string) => {
-        toast.info('Delete functionality coming soon', {
-            description: `Would delete node: ${nodeId}`,
+    const handleDeleteNode = useCallback(async (nodeId: string) => {
+        if (!window.confirm('Delete this graph node and its relationships?')) {
+            return;
+        }
+
+        const response = await fetch(`/api/graph/nodes?id=${encodeURIComponent(nodeId)}`, {
+            method: 'DELETE',
         });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            toast.error('Failed to delete node', {
+                description: data.error || `Node ${nodeId} was not deleted.`,
+            });
+            return;
+        }
+
+        toast.success('Node deleted', {
+            description: data.label || `Node ${nodeId} removed from graph.`,
+        });
+        setSelectedNode(null);
+        setGraphRefreshKey(key => key + 1);
     }, []);
 
-    const handleMergeNode = useCallback((nodeId: string) => {
-        toast.info('Merge functionality coming soon', {
-            description: `Would open merge dialog for: ${nodeId}`,
+    const handleMergeNode = useCallback(async (nodeId: string) => {
+        const targetId = window.prompt('Enter the target node ID to merge into:');
+        if (!targetId) {
+            return;
+        }
+
+        const response = await fetch('/api/graph/nodes/merge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sourceId: nodeId, targetId }),
         });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            toast.error('Failed to merge nodes', {
+                description: data.error || `Node ${nodeId} was not merged.`,
+            });
+            return;
+        }
+
+        toast.success('Nodes merged', {
+            description: `${data.relationshipsRewired} relationships rewired.`,
+        });
+        setSelectedNode(null);
+        setGraphRefreshKey(key => key + 1);
     }, []);
 
     const handleFlagNode = useCallback((nodeId: string) => {
         toast.success('Node flagged for review', {
-            description: 'MAKGED agents will verify this data.',
+            description: `MAKGED agents will verify node ${nodeId}.`,
         });
     }, []);
 
@@ -61,6 +101,7 @@ export default function GraphPage() {
                     <GraphCanvas
                         onNodeClick={handleNodeClick}
                         selectedNodeId={selectedNode?.id}
+                        refreshKey={graphRefreshKey}
                     />
                 </div>
 

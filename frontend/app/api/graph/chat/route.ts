@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { runCypher } from '@/lib/graph';
+import { getAICredential } from '@/lib/ai-credentials';
+import { getModelPreferences } from '@/lib/model-preferences';
 
 /**
  * Graph Chat API - Answers questions about the knowledge graph using Gemini
@@ -19,6 +21,7 @@ export async function POST(request: Request) {
         // First, fetch relevant graph data based on query keywords
         const lowerQuery = query.toLowerCase();
         let cypherQuery = 'MATCH (n) RETURN n LIMIT 50';
+        let cypherParams: Record<string, unknown> = {};
 
         // Use more specific queries based on what's being asked
         if (lowerQuery.includes('email')) {
@@ -37,11 +40,12 @@ export async function POST(request: Request) {
             const company = lowerQuery.includes('amazon') ? 'Amazon' :
                 lowerQuery.includes('google') ? 'Google' : 'Facebook';
             cypherQuery = `
-                MATCH (c:Company {name: '${company}'})
+                MATCH (c:Company {name: $company})
                 OPTIONAL MATCH (a:Account)-[:HELD_BY]->(c)
                 OPTIONAL MATCH (a)-[:REGISTERED_WITH]->(e:Email)
                 RETURN c, a, e LIMIT 50
             `;
+            cypherParams = { company };
         } else if (lowerQuery.includes('phone')) {
             cypherQuery = `
                 MATCH (p:Persona)-[r:HAS_PHONE]->(ph:Phone)
@@ -57,7 +61,7 @@ export async function POST(request: Request) {
         }
 
         // Execute the query
-        const results = await runCypher(cypherQuery);
+        const results = await runCypher(cypherQuery, cypherParams);
 
         // Build context from results
         const context = buildContextFromResults(results, lowerQuery);
@@ -112,7 +116,10 @@ function buildContextFromResults(results: unknown[], query: string): string {
 }
 
 async function callGemini(query: string, context: string): Promise<string> {
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    const preferences = await getModelPreferences();
+    const apiKey = await getAICredential('google') ||
+        process.env.GEMINI_API_KEY ||
+        process.env.GOOGLE_API_KEY;
 
     if (!apiKey) {
         // Fallback to simple response if no API key
@@ -122,7 +129,9 @@ async function callGemini(query: string, context: string): Promise<string> {
     try {
         const { GoogleGenAI } = await import('@google/genai');
         const ai = new GoogleGenAI({ apiKey });
-        const model = process.env.GEMINI_MODEL_FLASH || 'gemini-3-flash-preview';
+        const model = preferences.provider === 'google'
+            ? preferences.model
+            : process.env.GEMINI_MODEL_FLASH || 'gemini-3-flash-preview';
 
         const response = await ai.models.generateContent({
             model,

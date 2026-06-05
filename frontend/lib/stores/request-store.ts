@@ -12,10 +12,16 @@ export interface AnalysisResult {
 export interface Profile {
     id: string;
     identity_name: string;
+    contactName?: string;
+    contactEmail?: string;
     // Encrypted fields are stored as is
     encrypted_name: string;
     encrypted_email: string;
     encrypted_address: string;
+    requestDetails?: {
+        fieldKey: string;
+        encryptedValue: string;
+    }[];
 }
 
 export type RequestScope = 'all' | 'specific' | 'deletion';

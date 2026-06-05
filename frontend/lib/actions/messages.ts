@@ -66,6 +66,8 @@ export async function getUnreadItems(): Promise<{
     description: string;
     date: string;
     requestId?: string;
+    companyName?: string;
+    data?: Record<string, unknown>;
 }[]> {
     const items: {
         type: 'email' | 'file' | 'action';
@@ -74,6 +76,8 @@ export async function getUnreadItems(): Promise<{
         description: string;
         date: string;
         requestId?: string;
+        companyName?: string;
+        data?: Record<string, unknown>;
     }[] = [];
 
     // Get unread messages from companies
@@ -117,6 +121,12 @@ export async function getUnreadItems(): Promise<{
             description: msg.content.substring(0, 100) + (msg.content.length > 100 ? '...' : ''),
             date: formatTimeAgo(msg.timestamp),
             requestId: msg.request_id,
+            companyName: msg.company_name,
+            data: {
+                content: msg.content,
+                timestamp: msg.timestamp,
+                requestId: msg.request_id,
+            },
         });
     });
 
@@ -129,6 +139,13 @@ export async function getUnreadItems(): Promise<{
             description: `${data.file_name} (${data.file_size_mb} MB)`,
             date: formatTimeAgo(data.date_received),
             requestId: data.request_id,
+            companyName: data.company_name,
+            data: {
+                fileName: data.file_name,
+                fileSizeMb: data.file_size_mb,
+                dateReceived: data.date_received,
+                requestId: data.request_id,
+            },
         });
     });
 

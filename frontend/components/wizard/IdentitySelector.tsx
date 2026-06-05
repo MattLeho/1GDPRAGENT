@@ -101,9 +101,6 @@ export function IdentitySelector() {
         name: "identifiers"
     })
 
-    // Watch values for the form
-    const watchedValues = form.watch()
-
     // Effect to update form when persona is selected and has linked emails
     const handlePersonaChange = (personaId: string) => {
         setSelectedPersona(personaId)
@@ -119,6 +116,16 @@ export function IdentitySelector() {
 
     const onSubmit = async (data: IdentityFormValues) => {
         const encryptionKey = "user-session-key"
+        const fullName = `${data.firstName} ${data.lastName}`
+        const requestDetails = [
+            { fieldKey: "full_name", encryptedValue: encryptData(fullName, encryptionKey) },
+            { fieldKey: "email", encryptedValue: encryptData(data.email, encryptionKey) },
+            ...(data.phone ? [{ fieldKey: "phone", encryptedValue: encryptData(data.phone, encryptionKey) }] : []),
+            ...(data.identifiers || []).map((identifier, index) => ({
+                fieldKey: `${identifier.type}_${index + 1}`,
+                encryptedValue: encryptData(identifier.value, encryptionKey),
+            })),
+        ].filter(detail => detail.encryptedValue)
 
         // 1. Store Request Context
         if (data.notes) setNotes(data.notes)
@@ -130,13 +137,15 @@ export function IdentitySelector() {
         }
 
         // 2. Create client-side profile request
-        const fullName = `${data.firstName} ${data.lastName}`
         const profile: Profile = {
             id: crypto.randomUUID(),
             identity_name: data.persona || selectedPersona,
+            contactName: fullName,
+            contactEmail: data.email,
             encrypted_name: encryptData(fullName, encryptionKey),
             encrypted_email: encryptData(data.email, encryptionKey),
             encrypted_address: encryptData("Address Placeholder", encryptionKey),
+            requestDetails,
         }
 
         // 3. Sync with Neo4j Graph via LLM-based upsert
@@ -213,7 +222,7 @@ export function IdentitySelector() {
                                 ) : (
                                     <div className="space-y-3">
                                         {personas.map((p) => {
-                                            const { icon: Icon, color } = getPersonaIcon(p.id)
+                                            const { icon: Icon } = getPersonaIcon(p.id)
                                             const isSelected = selectedPersona === p.id
                                             return (
                                                 <div

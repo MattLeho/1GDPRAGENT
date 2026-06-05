@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { draftRequest, sendEmail } from "@/lib/n8n-client";
+import { getModelPreferences } from "@/lib/model-preferences";
+import { completeWorkflowLog, failWorkflowLog, startWorkflowLog } from "@/lib/workflow-logs";
 
 interface AnalysisData {
     dpo_email?: string;
@@ -22,6 +24,78 @@ interface RequestPayload {
     analysis: AnalysisData | null;
 }
 
+interface DraftEmail {
+    subject: string;
+    body: string;
+}
+
+interface RequestAccountDetail {
+    fieldKey: string;
+    encryptedValue: string;
+}
+
+function extractIdentityField(identity: unknown, fieldNames: string[]): string | null {
+    if (!identity || typeof identity !== 'object') {
+        return null;
+    }
+
+    const identityRecord = identity as Record<string, unknown>;
+    for (const fieldName of fieldNames) {
+        const value = identityRecord[fieldName];
+        if (typeof value === 'string' && value.trim()) {
+            return value.trim();
+        }
+    }
+
+    for (const value of Object.values(identityRecord)) {
+        if (typeof value === 'string') {
+            continue;
+        }
+        if (value && typeof value === 'object') {
+            const nested = extractIdentityField(value, fieldNames);
+            if (nested) {
+                return nested;
+            }
+        }
+    }
+
+    return null;
+}
+
+function extractRequestAccountDetails(identity: unknown): RequestAccountDetail[] {
+    if (!identity || typeof identity !== 'object') {
+        return [];
+    }
+
+    const requestDetails = (identity as Record<string, unknown>).requestDetails;
+    if (!Array.isArray(requestDetails)) {
+        return [];
+    }
+
+    return requestDetails.flatMap((detail) => {
+        if (!detail || typeof detail !== 'object') {
+            return [];
+        }
+
+        const detailRecord = detail as Record<string, unknown>;
+        const fieldKey = detailRecord.fieldKey;
+        const encryptedValue = detailRecord.encryptedValue;
+
+        if (typeof fieldKey !== 'string' || typeof encryptedValue !== 'string') {
+            return [];
+        }
+
+        const normalizedKey = fieldKey.trim();
+        const normalizedValue = encryptedValue.trim();
+
+        if (!normalizedKey || !normalizedValue) {
+            return [];
+        }
+
+        return [{ fieldKey: normalizedKey, encryptedValue: normalizedValue }];
+    });
+}
+
 export async function submitRequest(payload: RequestPayload) {
     console.log("Submitting Request Payload:", payload);
 
@@ -39,7 +113,7 @@ export async function submitRequest(payload: RequestPayload) {
                 // Capitalize first letter
                 companyName = companyName.charAt(0).toUpperCase() + companyName.slice(1);
             }
-        } catch (e) {
+        } catch {
             console.warn("Could not parse company URL:", companyUrl);
         }
 
@@ -85,7 +159,25 @@ export async function submitRequest(payload: RequestPayload) {
         }
 
         const newRequestId = res.rows[0].id;
+        const userName = extractIdentityField(payload.identity, ['contactName', 'name', 'fullName', 'full_name', 'displayName']) || 'GDPR requester';
+        const userEmail = extractIdentityField(payload.identity, ['contactEmail', 'email', 'emailAddress', 'email_address']) || 'not-provided@example.local';
         console.log("Inserted Request ID:", newRequestId);
+
+        const requestDetails = extractRequestAccountDetails(payload.identity);
+        if (requestDetails.length > 0) {
+            try {
+                await Promise.all(requestDetails.map(detail =>
+                    db.query(
+                        `INSERT INTO request_details (request_id, field_key, field_value_encrypted)
+                         VALUES ($1, $2, $3)`,
+                        [newRequestId, detail.fieldKey, detail.encryptedValue]
+                    )
+                ));
+                console.log(`Saved ${requestDetails.length} request detail fields for request:`, newRequestId);
+            } catch (detailsError) {
+                console.error("Failed to save request details:", detailsError);
+            }
+        }
 
         // Save policy analysis if provided
         if (payload.analysis) {
@@ -119,48 +211,210 @@ export async function submitRequest(payload: RequestPayload) {
             console.error("Failed to create initial message:", msgError);
         }
 
-        // Trigger N8N to draft and send the request email
+        const modelPreferences = await getModelPreferences();
+
+        // Trigger the selected workflow backend. Built-in is the default; N8N remains available.
         let emailSent = false;
+        let draftCreated = false;
+        let draftBackend: 'built_in' | 'n8n' | null = null;
+        let builtInDraft: DraftEmail | null = null;
         if (payload.analysis?.dpo_email) {
-            try {
-                // Draft the email via N8N
-                const draftResult = await draftRequest({
-                    companyName,
-                    companyUrl,
-                    requestType: payload.scope,
-                    identity: payload.identity as Record<string, unknown>,
-                    notes: payload.notes,
-                    datePeriod: payload.dateRange ? {
-                        from: payload.dateRange.from?.toISOString(),
-                        to: payload.dateRange.to?.toISOString(),
-                    } : undefined,
+            const workflowBackend = modelPreferences.workflowBackend;
+            const dpoEmail = payload.analysis.dpo_email;
+            const shouldUseBuiltIn = workflowBackend === 'built_in' || workflowBackend === 'hybrid';
+            const shouldUseN8N = workflowBackend === 'n8n' || workflowBackend === 'hybrid';
+
+            if (shouldUseBuiltIn) {
+                const builtInLogId = await startWorkflowLog({
+                    requestId: newRequestId,
+                    workflowName: 'Built-in GDPR Request Drafter',
+                    workflowType: 'built_in',
+                    details: {
+                        backend: workflowBackend,
+                        companyName,
+                        dpoEmail,
+                        requestType: payload.scope,
+                    },
                 });
 
-                if (draftResult.success && draftResult.data) {
-                    // Send the email via N8N
-                    const sendResult = await sendEmail({
-                        to: payload.analysis.dpo_email,
-                        subject: draftResult.data.subject,
-                        body: draftResult.data.body,
+                try {
+                    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+                    const response = await fetch(`${baseUrl}/api/gdpr-agent/draft`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            requestType: payload.scope,
+                            company: companyName,
+                            userQuery: payload.notes || `Prepare a ${payload.scope} GDPR request.`,
+                            userName,
+                            userEmail,
+                            policyUrl: companyUrl,
+                        }),
                     });
 
-                    if (sendResult.success) {
-                        emailSent = true;
-                        // Log that email was sent
+                    if (!response.ok) {
+                        throw new Error(`Built-in draft route returned ${response.status}`);
+                    }
+
+                    const builtInResult = await response.json() as {
+                        success?: boolean;
+                        error?: string;
+                        draft?: {
+                            subject?: string;
+                            body?: string;
+                        };
+                    };
+
+                    if (!builtInResult.success || !builtInResult.draft?.subject || !builtInResult.draft.body) {
+                        throw new Error(builtInResult.error || 'Built-in draft failed');
+                    }
+
+                    builtInDraft = {
+                        subject: builtInResult.draft.subject,
+                        body: builtInResult.draft.body,
+                    };
+                    draftCreated = true;
+                    draftBackend = 'built_in';
+                    await completeWorkflowLog(builtInLogId, {
+                        subject: builtInDraft.subject,
+                        emailTransport: shouldUseN8N ? 'n8n_send_email' : 'draft_only',
+                    });
+
+                    const deliveryNote = shouldUseN8N
+                        ? 'Hybrid mode will use the N8N email sender transport for delivery.'
+                        : 'Email was not sent by the built-in backend; switch to N8N or hybrid to deliver through the N8N email transport.';
+
+                    await db.query(
+                        `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
+                        [newRequestId, `Built-in workflow drafted a GDPR request for ${dpoEmail}.\n\nEmail delivery: ${deliveryNote}\n\nSubject: ${builtInDraft.subject}\n\n${builtInDraft.body}`]
+                    );
+                    await db.query(
+                        `UPDATE requests SET progress = 15, status = 'action_required' WHERE id = $1`,
+                        [newRequestId]
+                    );
+                } catch (builtInError) {
+                    console.error("Built-in workflow failed:", builtInError);
+                    await failWorkflowLog(builtInLogId, builtInError, {
+                        backend: workflowBackend,
+                        stage: 'draft',
+                    });
+
+                    if (!shouldUseN8N) {
                         await db.query(
                             `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
-                            [newRequestId, `GDPR request email sent to ${payload.analysis.dpo_email}`]
+                            [newRequestId, `Built-in workflow failed. Please check model provider settings and retry. Error: ${builtInError instanceof Error ? builtInError.message : 'Unknown error'}`]
                         );
-                        // Update request status
+                    }
+                }
+            }
+
+            if (shouldUseN8N) {
+                let emailDraft = builtInDraft;
+
+                if (!emailDraft || workflowBackend === 'n8n') {
+                    const n8nDraftLogId = await startWorkflowLog({
+                        requestId: newRequestId,
+                        workflowName: 'N8N Request Drafter',
+                        workflowType: 'n8n',
+                        details: {
+                            backend: workflowBackend,
+                            companyName,
+                            dpoEmail,
+                            requestType: payload.scope,
+                        },
+                    });
+
+                    try {
+                        const draftResult = await draftRequest({
+                            companyName,
+                            companyUrl,
+                            requestType: payload.scope,
+                            identity: payload.identity as Record<string, unknown>,
+                            notes: payload.notes,
+                            datePeriod: payload.dateRange ? {
+                                from: payload.dateRange.from?.toISOString(),
+                                to: payload.dateRange.to?.toISOString(),
+                            } : undefined,
+                        });
+
+                        if (!draftResult.success || !draftResult.data?.subject || !draftResult.data.body) {
+                            throw new Error(draftResult.error || 'N8N draft workflow failed');
+                        }
+
+                        emailDraft = {
+                            subject: draftResult.data.subject,
+                            body: draftResult.data.body,
+                        };
+                        draftCreated = true;
+                        draftBackend = 'n8n';
+                        await completeWorkflowLog(n8nDraftLogId, {
+                            subject: emailDraft.subject,
+                        });
+                    } catch (n8nDraftError) {
+                        console.error("N8N draft workflow failed:", n8nDraftError);
+                        await failWorkflowLog(n8nDraftLogId, n8nDraftError, {
+                            backend: workflowBackend,
+                            stage: 'draft',
+                        });
+
+                        if (!builtInDraft) {
+                            await db.query(
+                                `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
+                                [newRequestId, `N8N request drafter failed. Error: ${n8nDraftError instanceof Error ? n8nDraftError.message : 'Unknown error'}`]
+                            );
+                        }
+                    }
+                }
+
+                if (emailDraft) {
+                    const n8nEmailLogId = await startWorkflowLog({
+                        requestId: newRequestId,
+                        workflowName: 'N8N Email Sender',
+                        workflowType: 'n8n',
+                        details: {
+                            backend: workflowBackend,
+                            to: dpoEmail,
+                            draftSource: emailDraft === builtInDraft ? 'built_in' : 'n8n',
+                        },
+                    });
+
+                    try {
+                        const sendResult = await sendEmail({
+                            to: dpoEmail,
+                            subject: emailDraft.subject,
+                            body: emailDraft.body,
+                        });
+
+                        if (!sendResult.success) {
+                            throw new Error(sendResult.error || 'N8N email workflow failed');
+                        }
+
+                        emailSent = true;
+                        await completeWorkflowLog(n8nEmailLogId, {
+                            messageId: sendResult.data?.messageId || null,
+                        });
+
+                        await db.query(
+                            `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
+                            [newRequestId, `N8N email transport sent the GDPR request email to ${dpoEmail}`]
+                        );
                         await db.query(
                             `UPDATE requests SET progress = 20, status = 'processing' WHERE id = $1`,
                             [newRequestId]
                         );
+                    } catch (n8nEmailError) {
+                        console.error("N8N email workflow failed:", n8nEmailError);
+                        await failWorkflowLog(n8nEmailLogId, n8nEmailError, {
+                            backend: workflowBackend,
+                            stage: 'email_send',
+                        });
+
+                        await db.query(
+                            `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
+                            [newRequestId, `N8N email transport failed. Draft is available for review. Error: ${n8nEmailError instanceof Error ? n8nEmailError.message : 'Unknown error'}`]
+                        );
                     }
                 }
-            } catch (n8nError) {
-                console.error("N8N email workflow failed:", n8nError);
-                // Request is still created, just not sent automatically
             }
         }
 
@@ -171,9 +425,12 @@ export async function submitRequest(payload: RequestPayload) {
             success: true,
             message: emailSent
                 ? "Request sent and GDPR email delivered!"
-                : "Request queued for processing",
+                : draftCreated
+                    ? `Request created and ${draftBackend === 'n8n' ? 'N8N' : 'built-in'} workflow drafted an email for review`
+                    : "Request queued for processing",
             requestId: newRequestId,
             emailSent,
+            draftCreated,
         };
 
     } catch (error: unknown) {

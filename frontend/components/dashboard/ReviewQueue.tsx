@@ -1,9 +1,9 @@
 "use client";
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { FileText, Mail, AlertCircle, CheckCircle, Download, MessageSquare, Eye } from 'lucide-react';
+import { FileText, Mail, AlertCircle, CheckCircle, Download, Eye } from 'lucide-react';
 import { ReviewDetailModal } from './ReviewDetailModal';
 
 // Support both old and new interfaces
@@ -15,6 +15,7 @@ interface ReviewItem {
     date: string;
     data?: unknown;
     companyName?: string;
+    requestId?: string;
 }
 
 interface ReviewQueueProps {
@@ -24,11 +25,44 @@ interface ReviewQueueProps {
 export function ReviewQueue({ items }: ReviewQueueProps) {
     const [selectedItem, setSelectedItem] = useState<ReviewItem | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [readItemIds, setReadItemIds] = useState<Set<string>>(new Set());
+
+    useEffect(() => {
+        const frameId = window.requestAnimationFrame(() => {
+            try {
+                const savedIds = JSON.parse(localStorage.getItem('gdpr-review-queue-read') || '[]');
+                if (Array.isArray(savedIds)) {
+                    setReadItemIds(new Set(savedIds.filter((id): id is string => typeof id === 'string')));
+                }
+            } catch {
+                setReadItemIds(new Set());
+            }
+        });
+
+        return () => window.cancelAnimationFrame(frameId);
+    }, []);
+
+    const persistReadIds = (ids: Set<string>) => {
+        setReadItemIds(ids);
+        localStorage.setItem('gdpr-review-queue-read', JSON.stringify([...ids]));
+    };
+
+    const markRead = (itemId: string) => {
+        const nextIds = new Set(readItemIds);
+        nextIds.add(itemId);
+        persistReadIds(nextIds);
+    };
+
+    const markAllRead = () => {
+        persistReadIds(new Set([...readItemIds, ...items.map(item => item.id)]));
+    };
 
     const handleReview = (item: ReviewItem) => {
         setSelectedItem(item);
         setIsModalOpen(true);
     };
+
+    const unreadItems = items.filter(item => !readItemIds.has(item.id));
 
     const getTypeConfig = (type: ReviewItem['type']) => {
         switch (type) {
@@ -68,21 +102,26 @@ export function ReviewQueue({ items }: ReviewQueueProps) {
                     <CardTitle className="text-sm font-medium flex items-center justify-between">
                         <span className="flex items-center gap-2">
                             Review Queue
-                            {items.length > 0 && (
+                            {unreadItems.length > 0 && (
                                 <Badge variant="destructive" className="text-xs rounded-full px-2">
-                                    {items.length}
+                                    {unreadItems.length}
                                 </Badge>
                             )}
                         </span>
-                        {items.length > 0 && (
-                            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground">
+                        {unreadItems.length > 0 && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-xs text-muted-foreground"
+                                onClick={markAllRead}
+                            >
                                 Mark All Read
                             </Button>
                         )}
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
-                    {items.length === 0 ? (
+                    {unreadItems.length === 0 ? (
                         <div className="text-center py-8">
                             <div className="w-12 h-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-3">
                                 <CheckCircle className="h-6 w-6 text-green-600" />
@@ -92,7 +131,7 @@ export function ReviewQueue({ items }: ReviewQueueProps) {
                         </div>
                     ) : (
                         <div className="space-y-3">
-                            {items.map((item) => {
+                            {unreadItems.map((item) => {
                                 const config = getTypeConfig(item.type);
                                 const Icon = config.icon;
 
@@ -120,15 +159,24 @@ export function ReviewQueue({ items }: ReviewQueueProps) {
                                             </p>
                                         </div>
 
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => handleReview(item)}
-                                            className="shrink-0"
-                                        >
-                                            <Eye className="h-3 w-3 mr-1" />
-                                            Review
-                                        </Button>
+                                        <div className="flex shrink-0 items-center gap-2">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => handleReview(item)}
+                                            >
+                                                <Eye className="h-3 w-3 mr-1" />
+                                                Review
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => markRead(item.id)}
+                                                className="text-xs text-muted-foreground"
+                                            >
+                                                Mark read
+                                            </Button>
+                                        </div>
                                     </div>
                                 );
                             })}

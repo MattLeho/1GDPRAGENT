@@ -6,7 +6,7 @@
  * Settings section for managing AI provider API credentials.
  * Separate from ONSIT tools - this handles AI model providers.
  * 
- * Providers: Google (Gemini), OpenAI, OpenRouter, Anthropic
+ * Providers: Google (Gemini), OpenAI, Ollama, OpenRouter, Hugging Face, NVIDIA
  * 
  * All credentials are encrypted before storage.
  * Falls back to environment variables if not configured in-app.
@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { GsapReveal } from '@/components/ui/animations';
 import { toast } from 'sonner';
 import {
     Sparkles,
@@ -35,6 +36,8 @@ import {
     Cpu,
     Zap,
     BrainCircuit,
+    Search,
+    Workflow,
 } from 'lucide-react';
 
 // =============================================================================
@@ -45,8 +48,9 @@ const aiCredentialsSchema = z.object({
     googleApiKey: z.string().optional(),
     openaiApiKey: z.string().optional(),
     openrouterApiKey: z.string().optional(),
-    anthropicApiKey: z.string().optional(),
-    preferredGeminiModel: z.string().optional(),
+    ollamaApiKey: z.string().optional(),
+    huggingfaceApiKey: z.string().optional(),
+    nvidiaApiKey: z.string().optional(),
 });
 
 type AICredentialsForm = z.infer<typeof aiCredentialsSchema>;
@@ -63,6 +67,7 @@ interface AIProvider {
     models: string;
     icon: React.ElementType;
     color: string;
+    keyOptional?: boolean;
 }
 
 const aiProviders: AIProvider[] = [
@@ -94,13 +99,32 @@ const aiProviders: AIProvider[] = [
         color: 'text-orange-500',
     },
     {
-        id: 'anthropicApiKey',
-        name: 'Anthropic',
-        description: 'Claude models for complex reasoning tasks',
-        docsUrl: 'https://console.anthropic.com/settings/keys',
-        models: 'claude-3.5-sonnet',
+        id: 'ollamaApiKey',
+        name: 'Ollama',
+        description: 'Local models from your own Ollama server',
+        docsUrl: 'https://ollama.com',
+        models: 'Local installed models',
         icon: BrainCircuit,
         color: 'text-violet-500',
+        keyOptional: true,
+    },
+    {
+        id: 'huggingfaceApiKey',
+        name: 'Hugging Face',
+        description: 'Specialized and fine-tuned open models',
+        docsUrl: 'https://huggingface.co/settings/tokens',
+        models: 'Text generation and specialist models',
+        icon: BrainCircuit,
+        color: 'text-pink-500',
+    },
+    {
+        id: 'nvidiaApiKey',
+        name: 'NVIDIA',
+        description: 'Hosted open models via NVIDIA API',
+        docsUrl: 'https://build.nvidia.com/explore/discover',
+        models: 'Llama, Mistral, Nemotron, and more',
+        icon: Cpu,
+        color: 'text-green-500',
     },
 ];
 
@@ -108,20 +132,37 @@ const aiProviders: AIProvider[] = [
 // Component
 // =============================================================================
 
-// Available Gemini 3 models
-const geminiModels = [
-    { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (Fast)', description: 'Optimized for speed' },
-    { value: 'gemini-3-flash-preview-8b', label: 'Gemini 3 Flash 8B', description: 'Lightweight model' },
-    { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro (Powerful)', description: 'Best for complex tasks' },
-    { value: 'gemini-3-flash-lite-preview', label: 'Gemini 3 Flash Lite', description: 'Minimal latency' },
+const modelProviders = [
+    { value: 'google', label: 'Google' },
+    { value: 'openai', label: 'OpenAI' },
+    { value: 'ollama', label: 'Ollama' },
+    { value: 'openrouter', label: 'OpenRouter' },
+    { value: 'huggingface', label: 'Hugging Face' },
+    { value: 'nvidia', label: 'NVIDIA' },
 ];
+
+interface ModelOption {
+    id: string;
+    name: string;
+    provider: string;
+    contextWindow?: number;
+    priceLabel: string;
+    description?: string;
+}
 
 export function AICredentialsSection() {
     const [isLoading, setIsLoading] = useState(false);
     const [savedKeys, setSavedKeys] = useState<Record<string, boolean>>({});
     const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
     const [envKeys, setEnvKeys] = useState<Record<string, boolean>>({});
+    const [workflowBackend, setWorkflowBackend] = useState('built_in');
+    const [selectedProvider, setSelectedProvider] = useState('google');
     const [selectedModel, setSelectedModel] = useState('gemini-3-flash-preview');
+    const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+    const [modelSearch, setModelSearch] = useState('');
+    const [isFetchingModels, setIsFetchingModels] = useState(false);
+    const [modelFetchError, setModelFetchError] = useState<string | null>(null);
+    const [modelFetchWarning, setModelFetchWarning] = useState<string | null>(null);
 
     const form = useForm<AICredentialsForm>({
         resolver: zodResolver(aiCredentialsSchema),
@@ -129,8 +170,9 @@ export function AICredentialsSection() {
             googleApiKey: '',
             openaiApiKey: '',
             openrouterApiKey: '',
-            anthropicApiKey: '',
-            preferredGeminiModel: 'gemini-3-flash-preview',
+            ollamaApiKey: '',
+            huggingfaceApiKey: '',
+            nvidiaApiKey: '',
         },
     });
 
@@ -143,10 +185,6 @@ export function AICredentialsSection() {
                     const data = await res.json();
                     setSavedKeys(data.savedKeys || {});
                     setEnvKeys(data.envKeys || {});
-                    if (data.preferredGeminiModel) {
-                        setSelectedModel(data.preferredGeminiModel);
-                        form.setValue('preferredGeminiModel', data.preferredGeminiModel);
-                    }
                 }
             } catch (e) {
                 console.error('Failed to load AI credentials', e);
@@ -154,6 +192,69 @@ export function AICredentialsSection() {
         }
         loadCredentials();
     }, [form]);
+
+    useEffect(() => {
+        async function loadPreferences() {
+            try {
+                const res = await fetch('/api/settings/model-preferences');
+                if (res.ok) {
+                    const data = await res.json();
+                    setWorkflowBackend(data.workflowBackend || 'built_in');
+                    setSelectedProvider(data.provider || 'google');
+                    setSelectedModel(data.model || 'gemini-3-flash-preview');
+                }
+            } catch (e) {
+                console.error('Failed to load model preferences', e);
+            }
+        }
+        loadPreferences();
+    }, []);
+
+    useEffect(() => {
+        let isCurrentRequest = true;
+
+        async function loadModels() {
+            setIsFetchingModels(true);
+            setModelFetchError(null);
+            setModelFetchWarning(null);
+            try {
+                const res = await fetch(`/api/settings/ai-models?provider=${encodeURIComponent(selectedProvider)}`);
+                const data = await res.json().catch(() => ({}));
+
+                if (!res.ok) {
+                    throw new Error(data.error || data.message || `Model fetch failed with ${res.status}`);
+                }
+
+                const models = data.models || [];
+                if (isCurrentRequest) {
+                    setModelOptions(models);
+                    setModelFetchWarning(data.fallback ? data.message || 'Showing fallback models.' : null);
+                    setSelectedModel(current =>
+                        models.some((model: ModelOption) => model.id === current)
+                            ? current
+                            : models[0]?.id || current
+                    );
+                }
+            } catch (e) {
+                console.error('Failed to load models', e);
+                if (isCurrentRequest) {
+                    setModelFetchError(e instanceof Error
+                        ? e.message
+                        : 'Could not fetch models for this provider. Check credentials or local provider availability.');
+                    setModelOptions([]);
+                }
+            } finally {
+                if (isCurrentRequest) {
+                    setIsFetchingModels(false);
+                }
+            }
+        }
+        loadModels();
+
+        return () => {
+            isCurrentRequest = false;
+        };
+    }, [selectedProvider]);
 
     const handleSave = async (data: AICredentialsForm) => {
         setIsLoading(true);
@@ -168,12 +269,13 @@ export function AICredentialsSection() {
                 const result = await res.json();
                 setSavedKeys(result.savedKeys || {});
                 form.reset();
-                toast.success('AI credentials saved successfully');
+                await savePreferences();
+                toast.success('AI settings saved successfully');
             } else {
                 const error = await res.json();
                 toast.error(error.message || 'Failed to save credentials');
             }
-        } catch (error) {
+        } catch {
             toast.error('Failed to save credentials');
         } finally {
             setIsLoading(false);
@@ -183,6 +285,27 @@ export function AICredentialsSection() {
     const toggleShowKey = (keyId: string) => {
         setShowKeys(prev => ({ ...prev, [keyId]: !prev[keyId] }));
     };
+
+    const savePreferences = async () => {
+        const res = await fetch('/api/settings/model-preferences', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                workflowBackend,
+                provider: selectedProvider,
+                model: selectedModel,
+            }),
+        });
+
+        if (!res.ok) {
+            throw new Error('Failed to save model preferences');
+        }
+    };
+
+    const filteredModels = modelOptions.filter(model => {
+        const query = modelSearch.toLowerCase();
+        return model.name.toLowerCase().includes(query) || model.id.toLowerCase().includes(query);
+    });
 
     return (
         <Card className="lg:col-span-2">
@@ -207,7 +330,7 @@ export function AICredentialsSection() {
                         return (
                             <div
                                 key={provider.id}
-                                className="flex items-start gap-4 p-4 rounded-lg border bg-zinc-50/50 dark:bg-zinc-900/50"
+                                className="grid gap-3 rounded-lg border bg-zinc-50/50 p-4 dark:bg-zinc-900/50 sm:grid-cols-[auto_1fr]"
                             >
                                 <div className="p-2 rounded-lg bg-white dark:bg-zinc-800 shadow-sm">
                                     <Icon className={`h-5 w-5 ${provider.color}`} />
@@ -233,9 +356,9 @@ export function AICredentialsSection() {
                                         {provider.description}
                                     </p>
                                     <p className="text-xs text-muted-foreground/70">
-                                        Models: {provider.models}
+                                        Models: {provider.models}{provider.keyOptional ? ' (API key optional)' : ''}
                                     </p>
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                                         <div className="relative flex-1">
                                             <Input
                                                 id={provider.id}
@@ -280,40 +403,124 @@ export function AICredentialsSection() {
                         );
                     })}
 
-                    {/* Gemini Model Selector */}
-                    <div className="p-4 rounded-lg border bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30">
-                        <div className="flex items-start gap-3">
-                            <Sparkles className="h-5 w-5 text-blue-600 mt-0.5" />
+                    {/* Workflow Backend Selector */}
+                    <div className="p-4 rounded-lg border bg-zinc-50/50 dark:bg-zinc-900/50">
+                        <div className="grid gap-3 sm:grid-cols-[auto_1fr]">
+                            <Workflow className="h-5 w-5 text-purple-600 mt-0.5" />
                             <div className="flex-1 space-y-3">
                                 <div>
-                                    <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
-                                        Preferred Gemini Model
-                                    </p>
-                                    <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
-                                        Select which Gemini 3 model to use for AI operations. This applies to all Python agents and N8N workflows.
+                                    <p className="text-sm font-medium">Workflow Backend</p>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        Built-in workflows are the default. N8N can still be used for the original webhook automation.
                                     </p>
                                 </div>
-                                <Select
-                                    value={selectedModel}
-                                    onValueChange={(value) => {
-                                        setSelectedModel(value);
-                                        form.setValue('preferredGeminiModel', value);
-                                    }}
-                                >
+                                <Select value={workflowBackend} onValueChange={setWorkflowBackend}>
                                     <SelectTrigger className="bg-white dark:bg-zinc-900">
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {geminiModels.map(model => (
-                                            <SelectItem key={model.value} value={model.value}>
-                                                <div className="flex flex-col">
-                                                    <span className="font-medium">{model.label}</span>
-                                                    <span className="text-xs text-muted-foreground">{model.description}</span>
-                                                </div>
-                                            </SelectItem>
-                                        ))}
+                                        <SelectItem value="built_in">Built-in workflows (default)</SelectItem>
+                                        <SelectItem value="n8n">N8N workflows</SelectItem>
+                                        <SelectItem value="hybrid">Hybrid: built-in first, N8N fallback</SelectItem>
                                     </SelectContent>
                                 </Select>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Model Selector */}
+                    <div className="p-4 rounded-lg border bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30">
+                        <div className="grid gap-3 sm:grid-cols-[auto_1fr]">
+                            <Sparkles className="h-5 w-5 text-blue-600 mt-0.5" />
+                            <div className="flex-1 space-y-3">
+                                <div>
+                                    <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                                        Preferred Model
+                                    </p>
+                                    <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
+                                        Select the provider and model for built-in workflows and the RLM agent. Pricing is shown when the provider exposes it.
+                                    </p>
+                                </div>
+                                <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+                                    <Select
+                                        value={selectedProvider}
+                                        onValueChange={(value) => {
+                                            setSelectedProvider(value);
+                                            setModelSearch('');
+                                        }}
+                                    >
+                                        <SelectTrigger className="bg-white dark:bg-zinc-900">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {modelProviders.map(provider => (
+                                                <SelectItem key={provider.value} value={provider.value}>
+                                                    {provider.label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <div className="relative">
+                                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            value={modelSearch}
+                                            onChange={(event) => setModelSearch(event.target.value)}
+                                            placeholder="Search models..."
+                                            className="pl-9 bg-white dark:bg-zinc-900"
+                                        />
+                                    </div>
+                                </div>
+                                <GsapReveal key={selectedProvider} direction="up" distance={8}>
+                                    <div className="space-y-2" aria-live="polite">
+                                        <Select
+                                            value={selectedModel}
+                                            onValueChange={setSelectedModel}
+                                            disabled={isFetchingModels || filteredModels.length === 0}
+                                        >
+                                            <SelectTrigger
+                                                className="bg-white dark:bg-zinc-900"
+                                                aria-busy={isFetchingModels}
+                                            >
+                                                <SelectValue placeholder={isFetchingModels ? 'Loading models...' : 'Select a model'} />
+                                            </SelectTrigger>
+                                            <SelectContent className="max-h-80">
+                                                {filteredModels.map(model => (
+                                                    <SelectItem key={model.id} value={model.id}>
+                                                        <div className="flex flex-col">
+                                                            <span className="font-medium">{model.name}</span>
+                                                            <span className="text-xs text-muted-foreground">
+                                                                {model.priceLabel}
+                                                                {model.contextWindow ? `, ${model.contextWindow.toLocaleString()} context` : ''}
+                                                            </span>
+                                                        </div>
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+
+                                        {isFetchingModels && (
+                                            <p className="flex items-center gap-2 text-xs text-blue-700 dark:text-blue-300" role="status">
+                                                <Loader2 className="h-3 w-3 animate-spin" />
+                                                Fetching available models...
+                                            </p>
+                                        )}
+                                        {!isFetchingModels && modelFetchError && (
+                                            <p className="text-xs text-red-700 dark:text-red-300" role="alert">
+                                                {modelFetchError}
+                                            </p>
+                                        )}
+                                        {!isFetchingModels && modelFetchWarning && !modelFetchError && (
+                                            <p className="text-xs text-amber-700 dark:text-amber-300" role="status">
+                                                {modelFetchWarning}
+                                            </p>
+                                        )}
+                                        {!isFetchingModels && !modelFetchError && filteredModels.length === 0 && (
+                                            <p className="text-xs text-blue-700 dark:text-blue-300">
+                                                No models match your search for this provider.
+                                            </p>
+                                        )}
+                                    </div>
+                                </GsapReveal>
                             </div>
                         </div>
                     </div>
@@ -335,7 +542,7 @@ export function AICredentialsSection() {
                     </div>
                 </CardContent>
                 <CardFooter className="justify-end">
-                    <Button type="submit" disabled={isLoading}>
+                    <Button type="submit" disabled={isLoading || isFetchingModels}>
                         {isLoading ? (
                             <>
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

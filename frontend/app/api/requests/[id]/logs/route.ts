@@ -1,5 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { ensureWorkflowLogsTable } from '@/lib/workflow-logs';
+
+interface Activity {
+    id: string;
+    type: 'workflow' | 'event' | 'file';
+    title: string;
+    description: string | null;
+    status: string;
+    timestamp: Date | string | null;
+    details?: unknown;
+    error?: string | null;
+    progress?: number | null;
+    graphIngested?: boolean | null;
+}
+
+function describeWorkflowType(workflowType: string | null): string {
+    switch (workflowType) {
+        case 'built_in':
+            return 'Built-in Workflow Execution';
+        case 'n8n':
+            return 'N8N Workflow Execution';
+        case 'email_transport':
+            return 'Email Transport';
+        case 'file_processing':
+            return 'File Processing';
+        case 'graph_ingestion':
+            return 'Graph Ingestion';
+        default:
+            return 'Workflow Execution';
+    }
+}
 
 // Get workflow logs and activity for a request
 export async function GET(
@@ -8,6 +39,7 @@ export async function GET(
 ) {
     try {
         const { id } = await params;
+        await ensureWorkflowLogsTable();
 
         // Get workflow logs
         const logsResult = await pool.query(
@@ -42,7 +74,7 @@ export async function GET(
         );
 
         // Combine into unified activity feed
-        const activities: any[] = [];
+        const activities: Activity[] = [];
 
         // Add workflow logs
         logsResult.rows.forEach(log => {
@@ -50,11 +82,7 @@ export async function GET(
                 id: log.id,
                 type: 'workflow',
                 title: log.workflow_name,
-                description: log.workflow_type === 'n8n'
-                    ? 'N8N Workflow Execution'
-                    : log.workflow_type === 'file_processing'
-                        ? 'File Processing'
-                        : 'Graph Ingestion',
+                description: describeWorkflowType(log.workflow_type),
                 status: log.status,
                 timestamp: log.started_at,
                 details: log.details,
@@ -97,7 +125,7 @@ export async function GET(
 
         // Sort by timestamp descending
         activities.sort((a, b) =>
-            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+            new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
         );
 
         return NextResponse.json({

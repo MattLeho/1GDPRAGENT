@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import {
@@ -53,6 +54,7 @@ export interface GraphFilters {
     showInferences: boolean;
     selectedTypes: string[];
     riskLevel: 'all' | 'low' | 'medium' | 'high' | 'critical';
+    searchQuery: string;
     dateFrom?: Date;
     dateTo?: Date;
 }
@@ -118,6 +120,7 @@ export function GraphToolbar({
         !filters.showONSIT || !filters.showGDPR || !filters.showInferences ? 1 : 0,
         filters.selectedTypes.length < availableTypes.length ? 1 : 0,
         filters.riskLevel !== 'all' ? 1 : 0,
+        filters.searchQuery.trim() ? 1 : 0,
         filters.dateFrom || filters.dateTo ? 1 : 0,
     ].reduce((a, b) => a + b, 0);
 
@@ -142,6 +145,17 @@ export function GraphToolbar({
 
     return (
         <div className="flex items-center gap-2 flex-wrap" role="toolbar" aria-label="Graph controls">
+            <div className="relative w-full sm:w-64">
+                <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                    value={filters.searchQuery}
+                    onChange={(event) => updateFilter('searchQuery', event.target.value)}
+                    placeholder="Search graph..."
+                    className="h-9 pl-8"
+                    aria-label="Search graph nodes"
+                />
+            </div>
+
             {/* Layer Toggles */}
             <Popover open={layerPopoverOpen} onOpenChange={setLayerPopoverOpen}>
                 <PopoverTrigger asChild>
@@ -399,4 +413,5 @@ export const defaultGraphFilters: GraphFilters = {
     showInferences: true,
     selectedTypes: [],
     riskLevel: 'all',
+    searchQuery: '',
 };

@@ -9,6 +9,7 @@
 
 import { NextResponse } from 'next/server';
 import { getDriver } from '@/lib/graph';
+import { mapTypeToLabel, normalizeRiskLevel, sanitizeProperties } from '@/lib/graph/schema';
 
 /**
  * Node creation request body
@@ -24,65 +25,6 @@ interface CreateNodeRequest {
 
 interface BulkCreateRequest {
     nodes: CreateNodeRequest[];
-}
-
-/**
- * Map entity type to Neo4j label
- */
-function mapTypeToLabel(type: string): string {
-    const labelMap: Record<string, string> = {
-        email: 'Email',
-        username: 'Username',
-        phone: 'Phone',
-        domain: 'Domain',
-        ip: 'IP',
-        social_profile: 'SocialProfile',
-        socialprofile: 'SocialProfile',
-        individual: 'Individual',
-        organization: 'Organization',
-        breach_record: 'BreachRecord',
-        breachrecord: 'BreachRecord',
-        credential: 'Credential',
-        website: 'Website',
-        document: 'PublicDocument',
-        publicdocument: 'PublicDocument',
-        cryptowallet: 'CryptoWallet',
-        crypto_wallet: 'CryptoWallet',
-        user: 'User',
-        persona: 'Persona',
-        company: 'Company',
-        account: 'Account',
-        attribute: 'Attribute',
-        datapoint: 'DataPoint',
-        inference: 'Inference',
-    };
-
-    return labelMap[type.toLowerCase()] || type;
-}
-
-/**
- * Sanitize properties for Neo4j storage
- */
-function sanitizeProperties(props: Record<string, unknown>): Record<string, unknown> {
-    const sanitized: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(props)) {
-        if (value === null || value === undefined) continue;
-
-        if (typeof value === 'object' && !Array.isArray(value)) {
-            sanitized[key] = JSON.stringify(value);
-        } else if (Array.isArray(value)) {
-            if (value.length > 0 && typeof value[0] === 'object') {
-                sanitized[key] = JSON.stringify(value);
-            } else {
-                sanitized[key] = value;
-            }
-        } else {
-            sanitized[key] = value;
-        }
-    }
-
-    return sanitized;
 }
 
 /**
@@ -132,7 +74,7 @@ export async function POST(request: Request) {
 
                 const nodeLabel = mapTypeToLabel(nodeData.type || 'Entity');
                 const source = nodeData.source || 'onsit';
-                const riskLevel = nodeData.riskLevel || 'low';
+                const riskLevel = normalizeRiskLevel(nodeData.riskLevel);
 
                 const baseProperties = {
                     label: nodeData.label,

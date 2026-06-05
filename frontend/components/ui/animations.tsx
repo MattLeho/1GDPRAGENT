@@ -11,7 +11,8 @@
  */
 
 import { motion, AnimatePresence, Variants } from "framer-motion";
-import { ReactNode } from "react";
+import { gsap } from "gsap";
+import { ReactNode, useLayoutEffect, useRef } from "react";
 
 // =============================================================================
 // Animation Variants
@@ -106,6 +107,75 @@ export function PageFade({ children, className }: PageTransitionProps) {
 }
 
 // =============================================================================
+// GSAP-backed State Transitions
+// =============================================================================
+
+type GsapDirection = "up" | "down" | "left" | "right" | "none";
+
+interface GsapRevealProps extends PageTransitionProps {
+    delay?: number;
+    direction?: GsapDirection;
+    distance?: number;
+    duration?: number;
+}
+
+function getGsapOffset(direction: GsapDirection, distance: number) {
+    switch (direction) {
+        case "up":
+            return { y: distance };
+        case "down":
+            return { y: -distance };
+        case "left":
+            return { x: distance };
+        case "right":
+            return { x: -distance };
+        default:
+            return {};
+    }
+}
+
+export function GsapReveal({
+    children,
+    className,
+    delay = 0,
+    direction = "up",
+    distance = 12,
+    duration = 0.28,
+}: GsapRevealProps) {
+    const elementRef = useRef<HTMLDivElement>(null);
+
+    useLayoutEffect(() => {
+        const element = elementRef.current;
+        if (!element) return;
+
+        const prefersReducedMotion =
+            typeof window !== "undefined" &&
+            window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+        if (prefersReducedMotion) {
+            gsap.set(element, { opacity: 1, clearProps: "transform" });
+            return;
+        }
+
+        const context = gsap.context(() => {
+            gsap.fromTo(
+                element,
+                { opacity: 0, ...getGsapOffset(direction, distance) },
+                { opacity: 1, x: 0, y: 0, duration, delay, ease: "power2.out" }
+            );
+        }, element);
+
+        return () => context.revert();
+    }, [delay, direction, distance, duration]);
+
+    return (
+        <div ref={elementRef} className={className}>
+            {children}
+        </div>
+    );
+}
+
+// =============================================================================
 // Card & Item Animations
 // =============================================================================
 
@@ -132,7 +202,7 @@ export function AnimatedListItem({ children, className, delay = 0 }: AnimatedCar
     return (
         <motion.div
             variants={staggerItem}
-            transition={{ duration: 0.25, ease: "easeOut" }}
+            transition={{ duration: 0.25, delay, ease: "easeOut" }}
             className={className}
         >
             {children}

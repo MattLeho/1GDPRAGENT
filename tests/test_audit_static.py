@@ -9,6 +9,15 @@ def read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
+def service_block(compose: str, service_name: str) -> str:
+    match = re.search(
+        rf"(?ms)^  {re.escape(service_name)}:\n(?P<block>.*?)(?=^  [A-Za-z0-9_-]+:\n|^networks:\n|^volumes:\n|\Z)",
+        compose,
+    )
+    assert match, f"{service_name} service should be defined in docker-compose.yml."
+    return match.group("block")
+
+
 def test_compose_host_ports_are_configurable_to_avoid_local_collisions():
     compose = read("docker-compose.yml")
 
@@ -23,6 +32,36 @@ def test_compose_host_ports_are_configurable_to_avoid_local_collisions():
             f"{binding} is hard-coded; host ports should be configurable so the "
             "GDPR stack can run beside other local containers."
         )
+
+
+def test_next_proxy_convention_replaces_deprecated_middleware():
+    proxy_path = ROOT / "frontend/proxy.ts"
+    middleware_path = ROOT / "frontend/middleware.ts"
+
+    assert proxy_path.exists(), "Next.js 16 proxy convention should use frontend/proxy.ts."
+    assert not middleware_path.exists(), "frontend/middleware.ts is deprecated in Next.js 16."
+
+    proxy = read("frontend/proxy.ts")
+
+    assert "export function proxy" in proxy, "frontend/proxy.ts should export a proxy function."
+    assert "export function middleware" not in proxy, "Deprecated middleware export should not remain."
+
+
+def test_compose_defines_n8n_and_celery_healthchecks():
+    compose = read("docker-compose.yml")
+    n8n = service_block(compose, "n8n")
+    celery = service_block(compose, "celery-worker")
+
+    assert "healthcheck:" in n8n and "/healthz/readiness" in n8n, (
+        "n8n should expose a Docker healthcheck using its readiness endpoint."
+    )
+    assert "healthcheck:" in celery and "celery -A tasks inspect ping" in celery, (
+        "celery-worker should expose a Docker healthcheck that pings the worker."
+    )
+    assert "$$HOSTNAME" in celery, (
+        "Celery healthcheck should escape HOSTNAME so Docker Compose passes it "
+        "to the container shell."
+    )
 
 
 def test_initial_schema_defines_tables_used_by_routes_and_migrations():

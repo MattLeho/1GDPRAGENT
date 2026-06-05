@@ -203,6 +203,20 @@ CREATE TABLE IF NOT EXISTS ai_credentials (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- 16. MODEL_PREFERENCES (workflow backend and active model selection)
+CREATE TABLE IF NOT EXISTS model_preferences (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    workflow_backend TEXT NOT NULL DEFAULT 'built_in',
+    provider TEXT NOT NULL DEFAULT 'google',
+    model TEXT NOT NULL DEFAULT 'gemini-3-flash-preview',
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT single_model_preferences_row CHECK (id = 1)
+);
+
+INSERT INTO model_preferences (id, workflow_backend, provider, model)
+VALUES (1, 'built_in', 'google', 'gemini-3-flash-preview')
+ON CONFLICT (id) DO NOTHING;
+
 -- Create access_requests view for compatibility
 CREATE OR REPLACE VIEW access_requests AS
 SELECT 

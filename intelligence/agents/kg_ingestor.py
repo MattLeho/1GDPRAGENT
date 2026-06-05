@@ -146,7 +146,10 @@ class KGIngestorAgent:
         """
         self.batch_size = batch_size
         self.log_progress = log_progress
-        self.llm = GeminiClient.get_flash_client()
+        try:
+            self.llm = GeminiClient.get_flash_client()
+        except ValueError:
+            self.llm = None
         self.neo4j = get_neo4j_client()
         self.postgres = get_postgres_client()
     
@@ -317,43 +320,151 @@ class KGIngestorAgent:
         batch_idx: int,
         request: IngestRequest,
     ) -> list[dict]:
-        """Generate Cypher statements for a batch using LLM."""
-        
-        # Format data items for prompt
-        data_items_json = json.dumps([
-            {
-                "type": item.type,
+        """Build deterministic, parameterized Cypher statements for a batch."""
+        statements = [{
+            "description": "Upsert source company",
+            "cypher": """
+                MERGE (c:Company {name: $company_name})
+                SET c.source = coalesce(c.source, $source),
+                    c.updated_at = datetime()
+            """,
+            "parameters": {
+                "company_name": request.company_name,
+                "source": request.source,
+            },
+            "isValid": True,
+        }]
+
+        for idx, item in enumerate(batch):
+            validation_status = await self._validate_risky_item(item, request)
+            if validation_status == "rejected":
+                continue
+
+            params = {
+                "company_name": request.company_name,
+                "request_id": request.request_id,
+                "source": request.source,
+                "item_type": item.type,
                 "category": item.category,
                 "value": item.value,
-                "riskLevel": item.risk_level,
+                "risk_level": item.risk_level.upper(),
+                "validation_status": validation_status,
             }
-            for item in batch
-        ], indent=2)
-        
-        start_idx = batch_idx * self.batch_size + 1
-        end_idx = start_idx + len(batch) - 1
-        
-        prompt = CYPHER_GENERATION_PROMPT.format(
-            schema=GRAPH_SCHEMA,
-            company_name=request.company_name,
-            request_id=request.request_id,
-            batch_num=batch_idx + 1,
-            start_idx=start_idx,
-            end_idx=end_idx,
-            data_items=data_items_json,
-        )
-        
-        try:
-            response = await self.llm.complete(prompt, temperature=0.1)
-            return self._parse_cypher_response(response, request.company_name)
-        except Exception as e:
-            # Fallback: create basic company node
-            return [{
-                "description": "Fallback: Create company node",
-                "cypher": f"MERGE (c:Company {{name: '{request.company_name.replace(chr(39), chr(39)+chr(39))}'}}) "
-                         f"SET c.updated_at = datetime()",
+
+            statements.append({
+                "description": f"Upsert data point {batch_idx + 1}:{idx + 1}",
+                "cypher": """
+                    MERGE (c:Company {name: $company_name})
+                    MERGE (d:DataPoint {
+                        category: $category,
+                        value: $value,
+                        source_request: $request_id
+                    })
+                    SET d.type = $item_type,
+                        d.risk_level = $risk_level,
+                        d.source = $source,
+                        d.makged_status = $validation_status,
+                        d.updated_at = datetime()
+                    MERGE (c)-[:COLLECTS]->(d)
+                """,
+                "parameters": params,
                 "isValid": True,
-            }]
+            })
+
+            entity_statement = self._build_entity_statement(item, params)
+            if entity_statement:
+                statements.append(entity_statement)
+
+        return statements
+
+    async def _validate_risky_item(self, item: DataItem, request: IngestRequest) -> str:
+        """Run MAKGED for high-risk extracted facts when an LLM key is configured."""
+        if not self._requires_makged(item):
+            return "not_required"
+
+        if not self.llm:
+            return "not_configured"
+
+        try:
+            from validators.makged import MAKGEDValidator, Triple, Decision
+
+            validator = MAKGEDValidator(max_rounds=1)
+            result = await validator.validate(
+                Triple(head=request.company_name, relation="COLLECTS", tail=item.value),
+                source_text=f"{item.category}: {item.value}",
+            )
+            return "accepted" if result.decision == Decision.ACCEPT else "rejected"
+        except Exception:
+            return "needs_review"
+
+    def _requires_makged(self, item: DataItem) -> bool:
+        risk_level = item.risk_level.upper()
+        category = item.category.upper()
+        item_type = item.type.upper()
+
+        return (
+            risk_level in {"HIGH", "CRITICAL"}
+            or "SENSITIVE" in category
+            or "INFERRED" in category
+            or item_type in {"INFERENCE", "INFERRED"}
+        )
+
+    def _build_entity_statement(self, item: DataItem, base_params: dict) -> Optional[dict]:
+        """Create searchable typed entity nodes for common identifier values."""
+        item_type = item.type.lower()
+
+        if item_type in {"email", "person_email"}:
+            return {
+                "description": "Upsert email identifier",
+                "cypher": """
+                    MATCH (d:DataPoint {
+                        category: $category,
+                        value: $value,
+                        source_request: $request_id
+                    })
+                    MERGE (e:Email {address: toLower($value)})
+                    SET e.source = $source, e.updated_at = datetime()
+                    MERGE (d)-[:DERIVED_IDENTIFIER]->(e)
+                """,
+                "parameters": base_params,
+                "isValid": True,
+            }
+
+        if item_type in {"phone", "telephone", "mobile"}:
+            return {
+                "description": "Upsert phone identifier",
+                "cypher": """
+                    MATCH (d:DataPoint {
+                        category: $category,
+                        value: $value,
+                        source_request: $request_id
+                    })
+                    MERGE (p:Phone {number: $value})
+                    SET p.source = $source, p.updated_at = datetime()
+                    MERGE (d)-[:DERIVED_IDENTIFIER]->(p)
+                """,
+                "parameters": base_params,
+                "isValid": True,
+            }
+
+        if item_type in {"username", "handle"}:
+            return {
+                "description": "Upsert username identifier",
+                "cypher": """
+                    MATCH (d:DataPoint {
+                        category: $category,
+                        value: $value,
+                        source_request: $request_id
+                    })
+                    MERGE (u:Username {value: $value})
+                    SET u.source = $source, u.updated_at = datetime()
+                    MERGE (d)-[:DERIVED_IDENTIFIER]->(u)
+                """,
+                "parameters": base_params,
+                "isValid": True,
+            }
+
+        return None
     
     def _parse_cypher_response(
         self,
@@ -397,7 +508,13 @@ class KGIngestorAgent:
         """Execute Cypher statements via Neo4j."""
         result = {"success_count": 0, "error_count": 0, "errors": []}
         
-        neo4j_statements = [{"statement": s["cypher"]} for s in statements]
+        neo4j_statements = [
+            {
+                "statement": s["cypher"],
+                "parameters": s.get("parameters", {}),
+            }
+            for s in statements
+        ]
         
         try:
             batch_result = await self.neo4j.execute_batch(neo4j_statements)

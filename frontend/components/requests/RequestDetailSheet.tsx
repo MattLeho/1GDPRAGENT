@@ -6,7 +6,6 @@ import {
     SheetContent,
     SheetHeader,
     SheetTitle,
-    SheetDescription,
 } from "@/components/ui/sheet";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -21,14 +20,12 @@ import { getRequestAnalysis, PolicyAnalysis } from "@/lib/actions/policy-analysi
 import {
     Mail,
     FileText,
-    ChevronRight,
     Clock,
     Bot,
     User,
     Building2,
     Globe,
     MapPin,
-    ShieldCheck,
     AlertTriangle,
     Database,
     Loader2,
@@ -47,6 +44,19 @@ interface RequestDetailSheetProps {
     onOpenChange: (open: boolean) => void;
 }
 
+interface WorkflowLog {
+    workflow?: string;
+    status?: string;
+    startedAt: string;
+    finishedAt?: string | null;
+    error?: string | null;
+}
+
+interface ChatMessage {
+    role: string;
+    content: string;
+}
+
 export function RequestDetailSheet({
     request,
     open,
@@ -56,8 +66,8 @@ export function RequestDetailSheet({
     const [analysis, setAnalysis] = useState<PolicyAnalysis | null>(null);
     const [loading, setLoading] = useState(false);
     const [notes, setNotes] = useState("");
-    const [n8nLogs, setN8nLogs] = useState<any[]>([]);
-    const [chatMessages, setChatMessages] = useState<any[]>([]);
+    const [n8nLogs, setN8nLogs] = useState<WorkflowLog[]>([]);
+    const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
     const [chatInput, setChatInput] = useState("");
     const [chatLoading, setChatLoading] = useState(false);
 
@@ -70,8 +80,12 @@ export function RequestDetailSheet({
             Promise.all([
                 getMessages(request.id),
                 getRequestAnalysis(request.id),
-                fetch(`/api/request-threads/${request.id}/logs`).then(r => r.json()).catch(() => ({ logs: [] })),
-                fetch(`/api/request-threads/${request.id}/chat`).then(r => r.json()).catch(() => ({ messages: [] })),
+                fetch(`/api/request-threads/${request.id}/logs`)
+                    .then(r => r.json() as Promise<{ logs?: WorkflowLog[] }>)
+                    .catch(() => ({ logs: [] })),
+                fetch(`/api/request-threads/${request.id}/chat`)
+                    .then(r => r.json() as Promise<{ messages?: ChatMessage[] }>)
+                    .catch(() => ({ messages: [] })),
             ]).then(([msgs, pol, logsData, chatData]) => {
                 setMessages(msgs);
                 setAnalysis(pol);
@@ -324,7 +338,7 @@ export function RequestDetailSheet({
                                 </div>
                             ) : (
                                 <div className="space-y-4">
-                                    {chatMessages.map((msg: any, idx: number) => (
+                                    {chatMessages.map((msg, idx) => (
                                         <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : ''}`}>
                                             {msg.role !== 'user' && (
                                                 <div className="h-8 w-8 rounded-full flex items-center justify-center bg-indigo-100 dark:bg-indigo-900">
@@ -365,11 +379,12 @@ export function RequestDetailSheet({
                                                     method: 'POST',
                                                     headers: { 'Content-Type': 'application/json' },
                                                     body: JSON.stringify({ message: chatInput }),
-                                                }).then(r => r.json()).then(data => {
-                                                    if (data.response) {
-                                                        setChatMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
+                                                }).then(r => r.json() as Promise<{ response?: string }>).then(data => {
+                                                    const assistantResponse = data.response;
+                                                    if (assistantResponse) {
+                                                        setChatMessages(prev => [...prev, { role: 'assistant', content: assistantResponse }]);
                                                     }
-                                                }).catch(err => {
+                                                }).catch(() => {
                                                     toast.error('Failed to send message');
                                                 }).finally(() => {
                                                     setChatLoading(false);
@@ -397,7 +412,7 @@ export function RequestDetailSheet({
                                 </div>
                             ) : (
                                 <div className="space-y-3">
-                                    {n8nLogs.map((log: any, idx: number) => (
+                                    {n8nLogs.map((log, idx) => (
                                         <Card key={idx}>
                                             <CardHeader className="pb-2">
                                                 <div className="flex items-center justify-between">

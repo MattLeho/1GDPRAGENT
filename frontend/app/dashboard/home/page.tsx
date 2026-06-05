@@ -1,4 +1,3 @@
-import { Suspense } from 'react';
 import Link from 'next/link';
 import { getEnhancedDashboardStats } from '@/lib/actions/dashboard';
 import { getRequests } from '@/lib/actions/requests';
@@ -9,7 +8,6 @@ import { StatsOverview } from '@/components/dashboard/StatsOverview';
 import { PrivacyScoreCard } from '@/components/dashboard/PrivacyScoreCard';
 import { RequestsTimeline } from '@/components/dashboard/RequestsTimeline';
 import { TopDataHolders } from '@/components/dashboard/TopDataHolders';
-import { ActivityFeed } from '@/components/dashboard/ActivityFeed';
 import { QuickActions } from '@/components/dashboard/QuickActions';
 import { ComplianceGauge } from '@/components/dashboard/ComplianceGauge';
 import { DataVolumeChart } from '@/components/dashboard/DataVolumeChart';
@@ -19,8 +17,7 @@ import { AgentManager } from '@/components/dashboard/AgentManager';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
-import { Sparkles, ArrowRight, Calendar, Shield, Zap } from 'lucide-react';
+import { Sparkles, ArrowRight, Shield, Zap } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,13 +33,14 @@ export default async function DashboardHome() {
     const taskData = pendingRequests.slice(0, 5).map(r => ({
         id: r.id,
         companyName: r.company_name,
-        status: r.status as any,
+        status: r.status,
         dueDate: 'Action Required'
     }));
 
     // Get current date for greeting
     const hour = new Date().getHours();
     const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+    const nonZeroVolumeByCompany = stats.volumeByCompany.filter(item => item.value > 0);
 
     return (
         <div className="space-y-8 pb-8">
@@ -126,15 +124,17 @@ export default async function DashboardHome() {
                             </CardHeader>
                             <CardContent>
                                 <DataVolumeChart data={stats.volumeByCompany} />
-                                <div className="grid grid-cols-2 gap-2 mt-4">
-                                    {stats.volumeByCompany.slice(0, 4).map((item) => (
-                                        <div key={item.name} className="flex items-center gap-2 text-sm">
-                                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
-                                            <span className="text-muted-foreground truncate">{item.name}</span>
-                                            <span className="font-medium ml-auto">{item.value.toFixed(1)}GB</span>
-                                        </div>
-                                    ))}
-                                </div>
+                                {nonZeroVolumeByCompany.length > 0 && (
+                                    <div className="grid grid-cols-2 gap-2 mt-4">
+                                        {nonZeroVolumeByCompany.slice(0, 4).map((item) => (
+                                            <div key={item.name} className="flex items-center gap-2 text-sm">
+                                                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                                                <span className="text-muted-foreground truncate">{item.name}</span>
+                                                <span className="font-medium ml-auto">{item.value.toFixed(1)}GB</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </CardContent>
                         </Card>
 

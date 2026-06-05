@@ -32,7 +32,17 @@ export async function upsertAccount(
 
         if (key === 'identifiers' && Array.isArray(value)) {
             // Handle Dynamic Identifiers Array
-            dynamicIdentifiers.push(...value)
+            for (const identifier of value) {
+                if (!identifier || typeof identifier !== 'object') continue
+
+                const typedIdentifier = identifier as Record<string, unknown>
+                const identifierType = typedIdentifier.type ? String(typedIdentifier.type) : ''
+                const identifierValue = typedIdentifier.value ? String(typedIdentifier.value) : ''
+
+                if (identifierType && identifierValue) {
+                    dynamicIdentifiers.push({ type: identifierType, value: identifierValue })
+                }
+            }
             continue
         }
 
@@ -44,7 +54,14 @@ export async function upsertAccount(
     }
 
     // Ensure we have a username/identifier for the constraint
-    const username = simpleProps['username'] || simpleProps['id'] || 'unknown_user'
+    const username = String(simpleProps['username'] || simpleProps['id'] || 'unknown_user')
+    const email = linkableAttributes['email']?.trim().toLowerCase()
+    const phone = linkableAttributes['phone']?.trim()
+    const ip = (linkableAttributes['ip'] || linkableAttributes['ip_address'])?.trim()
+
+    if (dynamicIdentifiers.length > 0) {
+        simpleProps.identifiers_json = JSON.stringify(dynamicIdentifiers)
+    }
 
     // 2. Construct Cypher Query
     let cypher = `
@@ -55,17 +72,17 @@ export async function upsertAccount(
     `
 
     // 3. Dynamic Linked Nodes
-    if (linkableAttributes['email']) {
+    if (email) {
         cypher += `
-          MERGE (e:Email { address: '${linkableAttributes['email']}' })
+          MERGE (e:Email { address: $email })
           MERGE (a)-[:REGISTERED_WITH]->(e)
           MERGE (p)-[:USES_EMAIL]->(e) 
         `
     }
 
-    if (linkableAttributes['phone']) {
+    if (phone) {
         cypher += `
-          MERGE (ph:Phone { number: '${linkableAttributes['phone']}' })
+          MERGE (ph:Phone { number: $phone })
           MERGE (a)-[:VERIFIED_BY]->(ph)
         `
     }
@@ -76,25 +93,21 @@ export async function upsertAccount(
     // Simplification: Create text properties for them on the Account node for now to ensure they are saved.
     // e.g. identifiers_username_0: "foo"
     // Better: Creating a JSON string property for them
-    if (dynamicIdentifiers.length > 0) {
-        cypher += ` SET a.identifiers_json = '${JSON.stringify(dynamicIdentifiers)}' `
-
-        // Also create specific nodes for searchability if needed
-        dynamicIdentifiers.forEach((id, idx) => {
-            if (id.type === 'username' || id.type === 'handle') {
-                cypher += `
-                   MERGE (id${idx}:Identifier { value: '${id.value}', type: '${id.type}' })
-                   MERGE (a)-[:HAS_IDENTIFIER]->(id${idx})
-                 `
-            }
-        })
+    const searchableIdentifiers = dynamicIdentifiers.filter(id => id.type === 'username' || id.type === 'handle')
+    if (searchableIdentifiers.length > 0) {
+        cypher += `
+          WITH a, p
+          UNWIND $searchableIdentifiers as identifier
+          MERGE (id:Identifier { value: identifier.value, type: identifier.type })
+          MERGE (a)-[:HAS_IDENTIFIER]->(id)
+        `
     }
 
     // IP/Device handling (unchanged)
-    if (linkableAttributes['ip'] || linkableAttributes['ip_address']) {
-        const ip = linkableAttributes['ip'] || linkableAttributes['ip_address']
+    if (ip) {
         cypher += `
-          MERGE (ip:IPAddress { value: '${ip}' })
+          WITH a
+          MERGE (ip:IPAddress { value: $ip })
           MERGE (a)-[:ACCESSED_FROM]->(ip)
         `
     }
@@ -106,7 +119,11 @@ export async function upsertAccount(
         personaName,
         platform,
         username,
-        simpleProps
+        simpleProps,
+        email,
+        phone,
+        ip,
+        searchableIdentifiers,
     })
 
     return { success: true, message: `Upserted ${platform} account for ${personaName}` }

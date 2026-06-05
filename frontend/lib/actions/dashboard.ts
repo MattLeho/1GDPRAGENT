@@ -86,12 +86,13 @@ export async function getEnhancedDashboardStats(): Promise<EnhancedDashboardStat
     const isDbAvailable = !countRes.error;
     const counts = countRes.rows[0] || { total: '0', pending: '0', completed: '0', access_count: '0', deletion_count: '0' };
 
-    // Volume by company (linked to requests)
+    // Volume by company from actual received data linked to requests
     const volumeRes = await safeQuery<{ company_name: string; total_mb: string }>(`
         SELECT r.company_name, COALESCE(SUM(rd.file_size_mb), 0) as total_mb
         FROM requests r
-        LEFT JOIN received_data rd ON r.id = rd.request_id
+        JOIN received_data rd ON r.id = rd.request_id
         GROUP BY r.company_name
+        HAVING COALESCE(SUM(rd.file_size_mb), 0) > 0
         ORDER BY total_mb DESC
         LIMIT 5
     `);

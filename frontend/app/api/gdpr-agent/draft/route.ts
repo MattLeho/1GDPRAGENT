@@ -6,6 +6,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getAICredential } from '@/lib/ai-credentials';
+import { getModelPreferences } from '@/lib/model-preferences';
 
 const GDPR_AGENT_URL = process.env.GDPR_AGENT_URL || 'http://localhost:8000';
 
@@ -36,7 +38,9 @@ export async function POST(request: NextRequest) {
         }
 
         // Get API key from database or environment
-        const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+        const apiKey = await getAICredential('google') ||
+            process.env.GOOGLE_API_KEY ||
+            process.env.GEMINI_API_KEY;
 
         // Call Python agent
         const response = await fetch(`${GDPR_AGENT_URL}/draft-request`, {
@@ -99,7 +103,10 @@ async function fallbackDraft(
         // Dynamic import to avoid issues if not installed
         const { GoogleGenAI } = await import('@google/genai');
 
-        const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+        const preferences = await getModelPreferences();
+        const apiKey = await getAICredential('google') ||
+            process.env.GOOGLE_API_KEY ||
+            process.env.GEMINI_API_KEY;
         if (!apiKey) {
             return NextResponse.json(
                 { success: false, error: 'No API key configured' },
@@ -132,7 +139,7 @@ Requirements:
 Format as a complete letter.`;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
+            model: preferences.provider === 'google' ? preferences.model : 'gemini-3-flash-preview',
             contents: prompt,
         });
 

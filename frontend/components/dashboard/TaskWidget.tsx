@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
 interface Task {
     id: string;
     companyName: string;
-    status: 'draft' | 'pending' | 'action_needed';
+    status: 'draft' | 'pending' | 'action_needed' | 'scheduled' | 'processing' | 'action_required' | 'completed';
     dueDate: string;
     logoUrl?: string;
 }
