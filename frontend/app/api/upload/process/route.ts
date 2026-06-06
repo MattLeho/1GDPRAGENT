@@ -4,6 +4,7 @@ import { readFile } from 'fs/promises';
 import { GoogleGenAI } from '@google/genai';
 import { getAICredential } from '@/lib/ai-credentials';
 import { getWorkflowModelPreference } from '@/lib/model-preferences';
+import { replaceArtifactsForFile } from '@/lib/data-artifacts';
 
 const DEFAULT_PROCESS_DELAY_MS = 750;
 const DEFAULT_RATE_LIMIT_DELAY_MS = 10000;
@@ -68,8 +69,8 @@ async function getGoogleWorkflowModel(purpose: 'extraction' | 'graph'): Promise<
     }
 
     return purpose === 'extraction'
-        ? process.env.GEMINI_MODEL_EXTRACTION || process.env.GEMINI_MODEL_FLASH_LITE || 'gemini-2.5-flash-lite'
-        : process.env.GEMINI_MODEL_GRAPH || process.env.GEMINI_MODEL_FLASH || 'gemini-2.5-flash';
+        ? process.env.GEMINI_MODEL_EXTRACTION || process.env.GEMINI_MODEL_FLASH_LITE || 'gemini-3.1-flash-lite'
+        : process.env.GEMINI_MODEL_GRAPH || process.env.GEMINI_MODEL_FLASH || 'gemini-3.1-flash';
 }
 
 // Models — Gemini 3 Flash (fast tasks) + Gemini 3.1 Pro (intelligent tasks)
@@ -255,6 +256,7 @@ Transcript:\n\n${transcript}`,
              WHERE id = $3`,
             [transcript, aiSummary, fileId]
         );
+        await replaceArtifactsForFile({ ...file, id: fileId, ai_summary: aiSummary } as any, transcript);
 
         return {
             success: true,
@@ -386,6 +388,7 @@ Document Content:\n\n${extractedText.substring(0, 10000)}`,
                 ? [extractedText, aiSummary, fileId, JSON.stringify(extractedEntities)]
                 : [extractedText, aiSummary, fileId]
         );
+        await replaceArtifactsForFile({ ...file, id: fileId, ai_summary: aiSummary } as any, extractedText);
 
         return {
             success: true,
@@ -474,6 +477,7 @@ Spreadsheet Content:\n\n${extractedContent.substring(0, 10000)}`,
              WHERE id = $3`,
             [extractedContent, aiSummary, fileId]
         );
+        await replaceArtifactsForFile({ ...file, id: fileId, ai_summary: aiSummary } as any, extractedContent);
 
         return {
             success: true,
@@ -543,6 +547,7 @@ async function processImage(fileId: string, file: Record<string, unknown>): Prom
              WHERE id = $2`,
             [extractedText, fileId]
         );
+        await replaceArtifactsForFile({ ...file, id: fileId } as any, extractedText);
 
         return {
             success: true,
@@ -596,6 +601,7 @@ async function processDataFile(fileId: string, file: Record<string, unknown>): P
              WHERE id = $3`,
             [fileContent.substring(0, 100000), markdownContent, fileId]
         );
+        await replaceArtifactsForFile({ ...file, id: fileId, ai_summary: markdownContent } as any, fileContent);
 
         return {
             success: true,

@@ -1,6 +1,7 @@
 import { pool } from '@/lib/db';
 import { DEFAULT_AI_PROVIDER, normalizeAIProvider } from '@/lib/ai-credentials';
 import type { AIProviderId } from '@/lib/ai-credentials';
+import { resolveModelForProvider } from '@/lib/model-intents';
 
 export type WorkflowBackend = 'built_in' | 'n8n' | 'hybrid';
 export type ModelPurpose = 'default' | 'rlm' | 'drafting' | 'extraction' | 'graph' | 'policy';
@@ -25,7 +26,7 @@ interface ModelPreferencesInput {
 }
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<AIProviderId, string> = {
-    google: 'gemini-2.5-flash',
+    google: 'flash_latest',
     openai: 'gpt-4.1-mini',
     ollama: 'llama3.2',
     openrouter: 'openai/gpt-4.1-mini',
@@ -39,15 +40,15 @@ const DEFAULT_WORKFLOW_MODELS: Record<ModelPurpose, WorkflowModelPreference> = {
     drafting: { provider: DEFAULT_AI_PROVIDER, model: DEFAULT_MODEL_BY_PROVIDER[DEFAULT_AI_PROVIDER] },
     extraction: {
         provider: 'google',
-        model: process.env.GEMINI_MODEL_EXTRACTION || process.env.GEMINI_MODEL_FLASH_LITE || 'gemini-2.5-flash-lite',
+        model: process.env.GEMINI_MODEL_EXTRACTION || process.env.GEMINI_MODEL_FLASH_LITE || 'flash_lite_latest',
     },
     graph: {
         provider: 'google',
-        model: process.env.GEMINI_MODEL_GRAPH || process.env.GEMINI_MODEL_FLASH || 'gemini-2.5-flash',
+        model: process.env.GEMINI_MODEL_GRAPH || process.env.GEMINI_MODEL_FLASH || 'flash_latest',
     },
     policy: {
         provider: 'google',
-        model: process.env.GEMINI_MODEL_POLICY || process.env.GEMINI_MODEL_FLASH || 'gemini-2.5-flash',
+        model: process.env.GEMINI_MODEL_POLICY || process.env.GEMINI_MODEL_FLASH || 'flash_latest',
     },
 };
 
@@ -64,7 +65,7 @@ async function ensurePreferencesTable() {
             id INTEGER PRIMARY KEY DEFAULT 1,
             workflow_backend TEXT NOT NULL DEFAULT 'built_in',
             provider TEXT NOT NULL DEFAULT 'google',
-            model TEXT NOT NULL DEFAULT 'gemini-2.5-flash',
+            model TEXT NOT NULL DEFAULT 'flash_latest',
             workflow_models JSONB NOT NULL DEFAULT '{}'::jsonb,
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             CONSTRAINT single_model_preferences_row CHECK (id = 1)
@@ -196,5 +197,10 @@ export async function saveModelPreferences(preferences: ModelPreferencesInput): 
 
 export async function getWorkflowModelPreference(purpose: ModelPurpose): Promise<WorkflowModelPreference> {
     const preferences = await getModelPreferences();
-    return preferences.workflowModels[purpose] || preferences.workflowModels.default;
+    const preference = preferences.workflowModels[purpose] || preferences.workflowModels.default;
+
+    return {
+        ...preference,
+        model: await resolveModelForProvider(preference.provider, preference.model),
+    };
 }

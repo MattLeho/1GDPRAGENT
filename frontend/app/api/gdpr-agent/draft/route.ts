@@ -139,7 +139,7 @@ Requirements:
 Format as a complete letter.`;
 
         const response = await ai.models.generateContent({
-            model: preferences.provider === 'google' ? preferences.model : 'gemini-2.5-flash',
+            model: preferences.provider === 'google' ? preferences.model : 'gemini-3.1-flash',
             contents: prompt,
         });
 

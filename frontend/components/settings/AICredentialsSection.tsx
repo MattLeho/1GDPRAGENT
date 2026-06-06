@@ -76,7 +76,7 @@ const aiProviders: AIProvider[] = [
         name: 'Google AI (Gemini)',
         description: 'Powers transcription, analysis, and knowledge extraction',
         docsUrl: 'https://aistudio.google.com/apikey',
-        models: 'gemini-2.5-flash-lite, gemini-2.5-flash',
+        models: 'Latest Flash Lite, Latest Flash, Gemini models',
         icon: Sparkles,
         color: 'text-blue-500',
     },
@@ -157,11 +157,11 @@ interface WorkflowModelChoice {
 }
 
 const defaultWorkflowModels: Record<ModelPurpose, WorkflowModelChoice> = {
-    default: { provider: 'google', model: 'gemini-2.5-flash' },
-    drafting: { provider: 'google', model: 'gemini-2.5-flash' },
-    extraction: { provider: 'google', model: 'gemini-2.5-flash-lite' },
-    graph: { provider: 'google', model: 'gemini-2.5-flash' },
-    policy: { provider: 'google', model: 'gemini-2.5-flash' },
+    default: { provider: 'google', model: 'flash_latest' },
+    drafting: { provider: 'google', model: 'flash_latest' },
+    extraction: { provider: 'google', model: 'flash_lite_latest' },
+    graph: { provider: 'google', model: 'flash_latest' },
+    policy: { provider: 'google', model: 'flash_latest' },
 };
 
 interface ModelOption {
@@ -231,7 +231,7 @@ export function AICredentialsSection() {
                         ...(data.workflowModels || {}),
                         default: {
                             provider: data.provider || data.workflowModels?.default?.provider || 'google',
-                            model: data.model || data.workflowModels?.default?.model || 'gemini-2.5-flash',
+                            model: data.model || data.workflowModels?.default?.model || 'flash_latest',
                         },
                     });
                 }

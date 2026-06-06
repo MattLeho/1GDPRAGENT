@@ -5,6 +5,7 @@ import { GoogleGenAI } from '@google/genai';
 import { runCypher } from '@/lib/graph';
 import { getAICredential } from '@/lib/ai-credentials';
 import { getWorkflowModelPreference } from '@/lib/model-preferences';
+import { replaceArtifactsForFile } from '@/lib/data-artifacts';
 
 const DEFAULT_SCAN_DELAY_MS = 1500;
 const DEFAULT_RATE_LIMIT_DELAY_MS = 10000;
@@ -108,6 +109,7 @@ export async function POST() {
                             processing_progress = 80
                         WHERE id = $3
                     `, [content.substring(0, 50000), summary, file.id]);
+                    await replaceArtifactsForFile({ ...file, ai_summary: summary }, content);
 
                     results.processed++;
                 }
@@ -199,7 +201,7 @@ async function extractContent(file: Record<string, any>): Promise<string | null>
             const extractionModel = await getWorkflowModelPreference('extraction');
 
             const response = await generateContentWithBackoff(client, {
-                model: extractionModel.provider === 'google' ? extractionModel.model : 'gemini-2.5-flash-lite',
+                model: extractionModel.provider === 'google' ? extractionModel.model : 'gemini-3.1-flash-lite',
                 contents: [{
                     role: 'user',
                     parts: [
@@ -218,7 +220,7 @@ async function extractContent(file: Record<string, any>): Promise<string | null>
             const extractionModel = await getWorkflowModelPreference('extraction');
 
             const response = await generateContentWithBackoff(client, {
-                model: extractionModel.provider === 'google' ? extractionModel.model : 'gemini-2.5-flash-lite',
+                model: extractionModel.provider === 'google' ? extractionModel.model : 'gemini-3.1-flash-lite',
                 contents: [{
                     role: 'user',
                     parts: [
@@ -237,7 +239,7 @@ async function extractContent(file: Record<string, any>): Promise<string | null>
             const extractionModel = await getWorkflowModelPreference('extraction');
 
             const response = await generateContentWithBackoff(client, {
-                model: extractionModel.provider === 'google' ? extractionModel.model : 'gemini-2.5-flash-lite',
+                model: extractionModel.provider === 'google' ? extractionModel.model : 'gemini-3.1-flash-lite',
                 contents: [{
                     role: 'user',
                     parts: [
@@ -274,7 +276,7 @@ async function generateSummary(content: string, fileName: string): Promise<strin
         const client = await createGoogleClient();
         const extractionModel = await getWorkflowModelPreference('extraction');
         const response = await generateContentWithBackoff(client, {
-            model: extractionModel.provider === 'google' ? extractionModel.model : 'gemini-2.5-flash-lite',
+            model: extractionModel.provider === 'google' ? extractionModel.model : 'gemini-3.1-flash-lite',
             contents: `Summarize this document in 2-3 concise sentences. Focus on what personal data or GDPR-relevant information it contains.\n\nFile: ${fileName}\n\nContent:\n${content.substring(0, 10000)}`,
             config: { maxOutputTokens: 200 },
         });
@@ -320,7 +322,7 @@ Content: ${content.substring(0, 15000)}`;
     const client = await createGoogleClient();
     const graphModel = await getWorkflowModelPreference('graph');
     const response = await generateContentWithBackoff(client, {
-        model: graphModel.provider === 'google' ? graphModel.model : 'gemini-2.5-flash',
+        model: graphModel.provider === 'google' ? graphModel.model : 'gemini-3.1-flash',
         contents: prompt,
     });
 
@@ -340,8 +342,25 @@ Content: ${content.substring(0, 15000)}`;
             await runCypher(
                 `MERGE (e:Entity {value: $value})
                  SET e.type = $type, e.category = $category, e.riskLevel = $riskLevel,
-                     e.source = 'file_upload', e.fileId = $fileId, e.updatedAt = datetime()`,
-                { value: entity.value, type: entity.type, category: entity.category || 'OTHER', riskLevel: entity.riskLevel || 'MEDIUM', fileId }
+                     e.source = 'file_upload',
+                     e.fileId = $fileId,
+                     e.requestId = $requestId,
+                     e.companyName = $companyName,
+                     e.sourceProvider = 'google',
+                     e.confidence = $confidence,
+                     e.evidenceJson = $evidenceJson,
+                     e.updatedAt = datetime()`,
+                {
+                    value: entity.value,
+                    type: entity.type,
+                    category: entity.category || 'OTHER',
+                    riskLevel: entity.riskLevel || 'MEDIUM',
+                    fileId,
+                    requestId,
+                    companyName,
+                    confidence: entity.confidence || 'MEDIUM',
+                    evidenceJson: JSON.stringify({ fileId, companyName, source: 'file_upload' }),
+                }
             );
         } catch (err) {
             console.error('Entity write error:', err);
@@ -362,6 +381,11 @@ Content: ${content.substring(0, 15000)}`;
                  MERGE (s)-[r:RELATES_TO {predicate: $predicate}]->(o)
                  SET r.source = 'file_upload',
                      r.fileId = $fileId,
+                     r.requestId = $requestId,
+                     r.companyName = $companyName,
+                     r.sourceProvider = 'google',
+                     r.confidence = $confidence,
+                     r.evidenceJson = $evidenceJson,
                      r.makgedStatus = 'accepted',
                      r.makgedVotes = $votes,
                      r.updatedAt = datetime()`,
@@ -370,6 +394,10 @@ Content: ${content.substring(0, 15000)}`;
                     object: rel.object,
                     predicate: rel.predicate,
                     fileId,
+                    requestId,
+                    companyName,
+                    confidence: rel.confidence || 'MEDIUM',
+                    evidenceJson: JSON.stringify({ fileId, companyName, source: 'file_upload' }),
                     votes: JSON.stringify(validation.votes || {}),
                 }
             );

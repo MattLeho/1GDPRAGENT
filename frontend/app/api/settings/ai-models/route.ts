@@ -5,6 +5,7 @@ import {
     normalizeAIProvider,
 } from '@/lib/ai-credentials';
 import type { AIProviderId } from '@/lib/ai-credentials';
+import { MODEL_INTENT_FALLBACKS, MODEL_INTENT_LABELS } from '@/lib/model-intents';
 
 interface ModelOption {
     id: string;
@@ -29,14 +30,20 @@ const staticPrices: Record<string, string> = {
     'gpt-4.1-nano': '$0.10/M input, $0.40/M output',
     'gpt-4o': '$2.50/M input, $10.00/M output',
     'gpt-4o-mini': '$0.15/M input, $0.60/M output',
-    'gemini-2.5-flash-lite': 'Low-cost Flash Lite',
-    'gemini-2.5-flash': 'Low-cost Flash',
+    'flash_lite_latest': `Resolves to ${MODEL_INTENT_FALLBACKS.flash_lite_latest} if discovery is unavailable`,
+    'flash_latest': `Resolves to ${MODEL_INTENT_FALLBACKS.flash_latest} if discovery is unavailable`,
+    'pro_latest': `Resolves to ${MODEL_INTENT_FALLBACKS.pro_latest} if discovery is unavailable`,
+    'gemini-3.1-flash-lite': 'Low-cost Flash Lite',
+    'gemini-3.1-flash': 'Low-cost Flash',
 };
 
 const fallbackModels: Record<AIProviderId, ModelOption[]> = {
     google: [
-        { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', provider: 'google', priceLabel: 'Low-cost Flash Lite' },
-        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'google', priceLabel: 'Low-cost Flash' },
+        { id: 'flash_lite_latest', name: MODEL_INTENT_LABELS.flash_lite_latest, provider: 'google', priceLabel: staticPrices.flash_lite_latest },
+        { id: 'flash_latest', name: MODEL_INTENT_LABELS.flash_latest, provider: 'google', priceLabel: staticPrices.flash_latest },
+        { id: 'pro_latest', name: MODEL_INTENT_LABELS.pro_latest, provider: 'google', priceLabel: staticPrices.pro_latest },
+        { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', provider: 'google', priceLabel: 'Low-cost Flash Lite' },
+        { id: 'gemini-3.1-flash', name: 'Gemini 3.1 Flash', provider: 'google', priceLabel: 'Low-cost Flash' },
     ],
     openai: [
         { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'openai', priceLabel: staticPrices['gpt-4.1'] },
@@ -173,7 +180,12 @@ async function fetchGoogleModels(): Promise<ModelFetchResult> {
             };
         });
 
-    return { models };
+    return {
+        models: [
+            ...fallbackModels.google.slice(0, 3),
+            ...models,
+        ],
+    };
 }
 
 async function fetchOpenAIModels(): Promise<ModelFetchResult> {

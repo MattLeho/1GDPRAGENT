@@ -208,14 +208,14 @@ CREATE TABLE IF NOT EXISTS model_preferences (
     id INTEGER PRIMARY KEY DEFAULT 1,
     workflow_backend TEXT NOT NULL DEFAULT 'built_in',
     provider TEXT NOT NULL DEFAULT 'google',
-    model TEXT NOT NULL DEFAULT 'gemini-2.5-flash',
+    model TEXT NOT NULL DEFAULT 'flash_latest',
     workflow_models JSONB NOT NULL DEFAULT '{
-        "default": {"provider": "google", "model": "gemini-2.5-flash"},
-        "rlm": {"provider": "google", "model": "gemini-2.5-flash"},
-        "drafting": {"provider": "google", "model": "gemini-2.5-flash"},
-        "extraction": {"provider": "google", "model": "gemini-2.5-flash-lite"},
-        "graph": {"provider": "google", "model": "gemini-2.5-flash"},
-        "policy": {"provider": "google", "model": "gemini-2.5-flash"}
+        "default": {"provider": "google", "model": "flash_latest"},
+        "rlm": {"provider": "google", "model": "flash_latest"},
+        "drafting": {"provider": "google", "model": "flash_latest"},
+        "extraction": {"provider": "google", "model": "flash_lite_latest"},
+        "graph": {"provider": "google", "model": "flash_latest"},
+        "policy": {"provider": "google", "model": "flash_latest"}
     }'::jsonb,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     CONSTRAINT single_model_preferences_row CHECK (id = 1)
@@ -226,17 +226,35 @@ VALUES (
     1,
     'built_in',
     'google',
-    'gemini-2.5-flash',
+    'flash_latest',
     '{
-        "default": {"provider": "google", "model": "gemini-2.5-flash"},
-        "rlm": {"provider": "google", "model": "gemini-2.5-flash"},
-        "drafting": {"provider": "google", "model": "gemini-2.5-flash"},
-        "extraction": {"provider": "google", "model": "gemini-2.5-flash-lite"},
-        "graph": {"provider": "google", "model": "gemini-2.5-flash"},
-        "policy": {"provider": "google", "model": "gemini-2.5-flash"}
+        "default": {"provider": "google", "model": "flash_latest"},
+        "rlm": {"provider": "google", "model": "flash_latest"},
+        "drafting": {"provider": "google", "model": "flash_latest"},
+        "extraction": {"provider": "google", "model": "flash_lite_latest"},
+        "graph": {"provider": "google", "model": "flash_latest"},
+        "policy": {"provider": "google", "model": "flash_latest"}
     }'::jsonb
 )
 ON CONFLICT (id) DO NOTHING;
+
+-- 17. DATA_ARTIFACTS (request-scoped visualizable outputs)
+CREATE TABLE IF NOT EXISTS data_artifacts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    request_id UUID REFERENCES requests(id) ON DELETE CASCADE,
+    file_id UUID REFERENCES received_data(id) ON DELETE CASCADE,
+    artifact_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    confidence NUMERIC DEFAULT 1.0,
+    source_span TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_data_artifacts_request_id ON data_artifacts(request_id);
+CREATE INDEX IF NOT EXISTS idx_data_artifacts_file_id ON data_artifacts(file_id);
+CREATE INDEX IF NOT EXISTS idx_data_artifacts_type ON data_artifacts(artifact_type);
 
 -- Create access_requests view for compatibility
 CREATE OR REPLACE VIEW access_requests AS

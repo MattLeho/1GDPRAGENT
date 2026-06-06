@@ -131,7 +131,7 @@ async function callGemini(query: string, context: string): Promise<string> {
         const ai = new GoogleGenAI({ apiKey });
         const model = preferences.provider === 'google'
             ? preferences.model
-            : process.env.GEMINI_MODEL_GRAPH || process.env.GEMINI_MODEL_FLASH || 'gemini-2.5-flash';
+            : process.env.GEMINI_MODEL_GRAPH || process.env.GEMINI_MODEL_FLASH || 'gemini-3.1-flash';
 
         const response = await ai.models.generateContent({
             model,

@@ -153,7 +153,7 @@ Respond in JSON format:
 }`;
 
         const response = await ai.models.generateContent({
-            model: policyModel.provider === 'google' ? policyModel.model : 'gemini-2.5-flash',
+            model: policyModel.provider === 'google' ? policyModel.model : 'gemini-3.1-flash',
             contents: prompt,
         });
 
