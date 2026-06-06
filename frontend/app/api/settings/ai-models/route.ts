@@ -29,14 +29,14 @@ const staticPrices: Record<string, string> = {
     'gpt-4.1-nano': '$0.10/M input, $0.40/M output',
     'gpt-4o': '$2.50/M input, $10.00/M output',
     'gpt-4o-mini': '$0.15/M input, $0.60/M output',
-    'gemini-3-flash-preview': 'Check Google pricing',
-    'gemini-3-pro-preview': 'Check Google pricing',
+    'gemini-2.5-flash-lite': 'Low-cost Flash Lite',
+    'gemini-2.5-flash': 'Low-cost Flash',
 };
 
 const fallbackModels: Record<AIProviderId, ModelOption[]> = {
     google: [
-        { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', provider: 'google', priceLabel: 'Check Google pricing' },
-        { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', provider: 'google', priceLabel: 'Check Google pricing' },
+        { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', provider: 'google', priceLabel: 'Low-cost Flash Lite' },
+        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'google', priceLabel: 'Low-cost Flash' },
     ],
     openai: [
         { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'openai', priceLabel: staticPrices['gpt-4.1'] },

@@ -5,6 +5,7 @@ interface ModelPreferencesBody {
     workflowBackend?: unknown;
     provider?: unknown;
     model?: unknown;
+    workflowModels?: unknown;
 }
 
 export async function GET() {
@@ -20,6 +21,7 @@ export async function POST(request: Request) {
             workflowBackend: body.workflowBackend,
             provider: body.provider,
             model: body.model,
+            workflowModels: body.workflowModels,
         });
 
         return NextResponse.json({ success: true, preferences });

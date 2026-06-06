@@ -208,13 +208,34 @@ CREATE TABLE IF NOT EXISTS model_preferences (
     id INTEGER PRIMARY KEY DEFAULT 1,
     workflow_backend TEXT NOT NULL DEFAULT 'built_in',
     provider TEXT NOT NULL DEFAULT 'google',
-    model TEXT NOT NULL DEFAULT 'gemini-3-flash-preview',
+    model TEXT NOT NULL DEFAULT 'gemini-2.5-flash',
+    workflow_models JSONB NOT NULL DEFAULT '{
+        "default": {"provider": "google", "model": "gemini-2.5-flash"},
+        "rlm": {"provider": "google", "model": "gemini-2.5-flash"},
+        "drafting": {"provider": "google", "model": "gemini-2.5-flash"},
+        "extraction": {"provider": "google", "model": "gemini-2.5-flash-lite"},
+        "graph": {"provider": "google", "model": "gemini-2.5-flash"},
+        "policy": {"provider": "google", "model": "gemini-2.5-flash"}
+    }'::jsonb,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     CONSTRAINT single_model_preferences_row CHECK (id = 1)
 );
 
-INSERT INTO model_preferences (id, workflow_backend, provider, model)
-VALUES (1, 'built_in', 'google', 'gemini-3-flash-preview')
+INSERT INTO model_preferences (id, workflow_backend, provider, model, workflow_models)
+VALUES (
+    1,
+    'built_in',
+    'google',
+    'gemini-2.5-flash',
+    '{
+        "default": {"provider": "google", "model": "gemini-2.5-flash"},
+        "rlm": {"provider": "google", "model": "gemini-2.5-flash"},
+        "drafting": {"provider": "google", "model": "gemini-2.5-flash"},
+        "extraction": {"provider": "google", "model": "gemini-2.5-flash-lite"},
+        "graph": {"provider": "google", "model": "gemini-2.5-flash"},
+        "policy": {"provider": "google", "model": "gemini-2.5-flash"}
+    }'::jsonb
+)
 ON CONFLICT (id) DO NOTHING;
 
 -- Create access_requests view for compatibility

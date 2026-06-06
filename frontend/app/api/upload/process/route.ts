@@ -2,13 +2,77 @@ import { NextResponse, NextRequest } from 'next/server';
 import { pool } from '@/lib/db';
 import { readFile } from 'fs/promises';
 import { GoogleGenAI } from '@google/genai';
+import { getAICredential } from '@/lib/ai-credentials';
+import { getWorkflowModelPreference } from '@/lib/model-preferences';
 
-// Initialize Gemini with the correct API key
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '' });
+const DEFAULT_PROCESS_DELAY_MS = 750;
+const DEFAULT_RATE_LIMIT_DELAY_MS = 10000;
+
+function getProcessDelayMs(): number {
+    const configured = Number(process.env.UPLOAD_PROCESS_DELAY_MS);
+    if (!Number.isFinite(configured)) {
+        return DEFAULT_PROCESS_DELAY_MS;
+    }
+
+    return Math.min(Math.max(configured, 0), 60000);
+}
+
+function getRateLimitDelayMs(): number {
+    const configured = Number(process.env.UPLOAD_SCAN_RATE_LIMIT_DELAY_MS);
+    if (!Number.isFinite(configured)) {
+        return DEFAULT_RATE_LIMIT_DELAY_MS;
+    }
+
+    return Math.min(Math.max(configured, 1000), 120000);
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRateLimitError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /429|rate limit|quota|resource exhausted/i.test(message);
+}
+
+async function createGoogleClient(): Promise<GoogleGenAI> {
+    const apiKey = await getAICredential('google') ||
+        process.env.GEMINI_API_KEY ||
+        process.env.GOOGLE_API_KEY ||
+        '';
+
+    return new GoogleGenAI({ apiKey });
+}
+
+async function generateContentWithBackoff(
+    client: GoogleGenAI,
+    request: Parameters<GoogleGenAI['models']['generateContent']>[0],
+) {
+    try {
+        await sleep(getProcessDelayMs());
+        return await client.models.generateContent(request);
+    } catch (error) {
+        if (!isRateLimitError(error)) {
+            throw error;
+        }
+
+        await sleep(getRateLimitDelayMs());
+        return client.models.generateContent(request);
+    }
+}
+
+async function getGoogleWorkflowModel(purpose: 'extraction' | 'graph'): Promise<string> {
+    const preference = await getWorkflowModelPreference(purpose);
+    if (preference.provider === 'google') {
+        return preference.model;
+    }
+
+    return purpose === 'extraction'
+        ? process.env.GEMINI_MODEL_EXTRACTION || process.env.GEMINI_MODEL_FLASH_LITE || 'gemini-2.5-flash-lite'
+        : process.env.GEMINI_MODEL_GRAPH || process.env.GEMINI_MODEL_FLASH || 'gemini-2.5-flash';
+}
 
 // Models — Gemini 3 Flash (fast tasks) + Gemini 3.1 Pro (intelligent tasks)
-const GEMINI_FLASH = process.env.GEMINI_MODEL_FLASH || 'gemini-3-flash-preview';
-const GEMINI_PRO = process.env.GEMINI_MODEL_PRO || 'gemini-3.1-pro-preview';
 
 interface ProcessingResult {
     success: boolean;
@@ -134,10 +198,12 @@ Format the output as clean markdown with:
 Begin transcription:`;
 
         const mimeType = (file.file_type as string) || 'audio/mpeg';
+        const client = await createGoogleClient();
+        const extractionModel = await getGoogleWorkflowModel('extraction');
 
         // Using the new @google/genai SDK API
-        const result = await genAI.models.generateContent({
-            model: GEMINI_FLASH,
+        const result = await generateContentWithBackoff(client, {
+            model: extractionModel,
             contents: [
                 {
                     role: 'user',
@@ -161,8 +227,8 @@ Begin transcription:`;
         // Generate AI summary
         await updateFileStatus(fileId, 'processing', 'analyze', 80);
 
-        const summaryResult = await genAI.models.generateContent({
-            model: GEMINI_FLASH,
+        const summaryResult = await generateContentWithBackoff(client, {
+            model: extractionModel,
             contents: `You are a GDPR Data Protection expert. Analyze and summarize this transcript from a file included in a user's GDPR data access request.
 
 Provide a structured summary in **Markdown** with:
@@ -224,9 +290,11 @@ async function processDocument(fileId: string, file: Record<string, unknown>): P
         await updateFileStatus(fileId, 'processing', 'extract', 40);
 
         const mimeType = (file.file_type as string) || 'application/pdf';
+        const client = await createGoogleClient();
+        const extractionModel = await getGoogleWorkflowModel('extraction');
 
-        const result = await genAI.models.generateContent({
-            model: GEMINI_FLASH,
+        const result = await generateContentWithBackoff(client, {
+            model: extractionModel,
             contents: [
                 {
                     role: 'user',
@@ -256,8 +324,8 @@ IMPORTANT INSTRUCTIONS:
         const extractedText = result.text || '';
 
         // Generate summary
-        const summaryResult = await genAI.models.generateContent({
-            model: GEMINI_FLASH,
+        const summaryResult = await generateContentWithBackoff(client, {
+            model: extractionModel,
             contents: `You are a GDPR Data Protection expert. Summarize this document from a user's GDPR data access request.
 
 Provide a structured summary in **Markdown** with:
@@ -353,9 +421,11 @@ async function processSpreadsheet(fileId: string, file: Record<string, unknown>)
         await updateFileStatus(fileId, 'processing', 'parse', 40);
 
         const mimeType = (file.file_type as string) || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        const client = await createGoogleClient();
+        const extractionModel = await getGoogleWorkflowModel('extraction');
 
-        const result = await genAI.models.generateContent({
-            model: GEMINI_FLASH,
+        const result = await generateContentWithBackoff(client, {
+            model: extractionModel,
             contents: [
                 {
                     role: 'user',
@@ -376,8 +446,8 @@ async function processSpreadsheet(fileId: string, file: Record<string, unknown>)
 
         const extractedContent = result.text || '';
 
-        const summaryResult = await genAI.models.generateContent({
-            model: GEMINI_FLASH,
+        const summaryResult = await generateContentWithBackoff(client, {
+            model: extractionModel,
             contents: `You are a GDPR Data Protection expert. Summarize this spreadsheet data from a user's GDPR data access request.
 
 Provide a structured summary in **Markdown** with:
@@ -439,9 +509,11 @@ async function processImage(fileId: string, file: Record<string, unknown>): Prom
         await updateFileStatus(fileId, 'processing', 'ocr', 50);
 
         const mimeType = (file.file_type as string) || 'image/jpeg';
+        const client = await createGoogleClient();
+        const extractionModel = await getGoogleWorkflowModel('extraction');
 
-        const result = await genAI.models.generateContent({
-            model: GEMINI_FLASH,
+        const result = await generateContentWithBackoff(client, {
+            model: extractionModel,
             contents: [
                 {
                     role: 'user',
@@ -503,9 +575,11 @@ async function processDataFile(fileId: string, file: Record<string, unknown>): P
         const fileContent = await readFile(filePath, 'utf-8');
 
         await updateFileStatus(fileId, 'processing', 'analyze', 50);
+        const client = await createGoogleClient();
+        const extractionModel = await getGoogleWorkflowModel('extraction');
 
-        const result = await genAI.models.generateContent({
-            model: GEMINI_FLASH,
+        const result = await generateContentWithBackoff(client, {
+            model: extractionModel,
             contents: `Analyze this data file and convert to a readable markdown format. Summarize the key data structures and important values:\n\n${fileContent.substring(0, 50000)}`,
         });
 
@@ -622,7 +696,7 @@ async function ingestToGraph(
         const N8N_WEBHOOK_INGEST = process.env.N8N_WEBHOOK_INGEST_DATA || 'http://localhost:5678/webhook-test/ingest-data';
         const intelligenceUrl = process.env.INTELLIGENCE_URL || 'http://localhost:8001';
 
-        // First, extract entities from the content using Gemini Pro (intelligent model for accuracy)
+        // First, extract entities using the graph workflow model. Defaults to Flash, not Pro.
         const extractionPrompt = `You are a GDPR Data Protection and Knowledge Graph expert. Your task is to analyze this document — which is part of a user's GDPR data access request to the company "${companyName || 'Unknown'}" — and extract structured data for a privacy knowledge graph.
 
 The knowledge graph tracks:
@@ -673,8 +747,10 @@ Output as JSON with this structure:
 Document Content:
 ${content.substring(0, 20000)}`;
 
-        const extractResult = await genAI.models.generateContent({
-            model: GEMINI_PRO,
+        const client = await createGoogleClient();
+        const graphModel = await getGoogleWorkflowModel('graph');
+        const extractResult = await generateContentWithBackoff(client, {
+            model: graphModel,
             contents: extractionPrompt,
         });
 

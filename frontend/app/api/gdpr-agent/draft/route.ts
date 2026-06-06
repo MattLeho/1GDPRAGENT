@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAICredential } from '@/lib/ai-credentials';
-import { getModelPreferences } from '@/lib/model-preferences';
+import { getWorkflowModelPreference } from '@/lib/model-preferences';
 
 const GDPR_AGENT_URL = process.env.GDPR_AGENT_URL || 'http://localhost:8000';
 
@@ -103,7 +103,7 @@ async function fallbackDraft(
         // Dynamic import to avoid issues if not installed
         const { GoogleGenAI } = await import('@google/genai');
 
-        const preferences = await getModelPreferences();
+        const preferences = await getWorkflowModelPreference('drafting');
         const apiKey = await getAICredential('google') ||
             process.env.GOOGLE_API_KEY ||
             process.env.GEMINI_API_KEY;
@@ -139,7 +139,7 @@ Requirements:
 Format as a complete letter.`;
 
         const response = await ai.models.generateContent({
-            model: preferences.provider === 'google' ? preferences.model : 'gemini-3-flash-preview',
+            model: preferences.provider === 'google' ? preferences.model : 'gemini-2.5-flash',
             contents: prompt,
         });
 

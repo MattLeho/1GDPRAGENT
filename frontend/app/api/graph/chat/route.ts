@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { runCypher } from '@/lib/graph';
 import { getAICredential } from '@/lib/ai-credentials';
-import { getModelPreferences } from '@/lib/model-preferences';
+import { getWorkflowModelPreference } from '@/lib/model-preferences';
 
 /**
  * Graph Chat API - Answers questions about the knowledge graph using Gemini
@@ -116,7 +116,7 @@ function buildContextFromResults(results: unknown[], query: string): string {
 }
 
 async function callGemini(query: string, context: string): Promise<string> {
-    const preferences = await getModelPreferences();
+    const preferences = await getWorkflowModelPreference('graph');
     const apiKey = await getAICredential('google') ||
         process.env.GEMINI_API_KEY ||
         process.env.GOOGLE_API_KEY;
@@ -131,7 +131,7 @@ async function callGemini(query: string, context: string): Promise<string> {
         const ai = new GoogleGenAI({ apiKey });
         const model = preferences.provider === 'google'
             ? preferences.model
-            : process.env.GEMINI_MODEL_FLASH || 'gemini-3-flash-preview';
+            : process.env.GEMINI_MODEL_GRAPH || process.env.GEMINI_MODEL_FLASH || 'gemini-2.5-flash';
 
         const response = await ai.models.generateContent({
             model,

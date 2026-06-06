@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAICredential } from '@/lib/ai-credentials';
+import { getWorkflowModelPreference } from '@/lib/model-preferences';
 
 const GDPR_AGENT_URL = process.env.GDPR_AGENT_URL || 'http://localhost:8000';
 
@@ -123,6 +124,7 @@ async function fallbackAnalyzePolicy(url: string, company: string) {
         // Step 2: Use Gemini to extract and analyze
         const { GoogleGenAI } = await import('@google/genai');
         const ai = new GoogleGenAI({ apiKey });
+        const policyModel = await getWorkflowModelPreference('policy');
 
         const prompt = `You are a GDPR compliance expert. Analyze this privacy policy for ${company}.
 
@@ -151,7 +153,7 @@ Respond in JSON format:
 }`;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
+            model: policyModel.provider === 'google' ? policyModel.model : 'gemini-2.5-flash',
             contents: prompt,
         });
 

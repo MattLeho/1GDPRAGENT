@@ -1,4 +1,4 @@
-import { getModelPreferences } from '@/lib/model-preferences';
+import { getWorkflowModelPreference } from '@/lib/model-preferences';
 import { executeTool } from './rlm/tools';
 import {
     generateRLMResponse,
@@ -58,7 +58,7 @@ export class RLMAgent {
         let iterations = 0;
 
         try {
-            const preferences = await getModelPreferences();
+            const preferences = await getWorkflowModelPreference('rlm');
             const messages = this.buildMessages(conversationHistory, userMessage);
             const supportsTools = providerSupportsToolCalling(preferences.provider);
 

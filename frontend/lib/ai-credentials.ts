@@ -63,7 +63,12 @@ export function normalizeAIProvider(provider: unknown): AIProviderId | null {
 function getEncryptionKey(): string {
     const key = process.env.CREDENTIALS_ENCRYPTION_KEY || process.env.ENCRYPTION_KEY;
     if (!key) {
-        throw new Error('CREDENTIALS_ENCRYPTION_KEY or ENCRYPTION_KEY must be set');
+        if (process.env.NODE_ENV === 'production') {
+            throw new Error('CREDENTIALS_ENCRYPTION_KEY or ENCRYPTION_KEY must be set');
+        }
+
+        console.warn('[AI Credentials] Using local development encryption fallback. Set CREDENTIALS_ENCRYPTION_KEY before production.');
+        return 'gdpr-agent-local-development-credential-key';
     }
     return key;
 }

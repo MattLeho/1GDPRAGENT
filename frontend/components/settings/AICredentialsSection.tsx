@@ -76,7 +76,7 @@ const aiProviders: AIProvider[] = [
         name: 'Google AI (Gemini)',
         description: 'Powers transcription, analysis, and knowledge extraction',
         docsUrl: 'https://aistudio.google.com/apikey',
-        models: 'gemini-3-flash, gemini-3-pro',
+        models: 'gemini-2.5-flash-lite, gemini-2.5-flash',
         icon: Sparkles,
         color: 'text-blue-500',
     },
@@ -141,6 +141,29 @@ const modelProviders = [
     { value: 'nvidia', label: 'NVIDIA' },
 ];
 
+const modelPurposes = [
+    { value: 'default', label: 'Default / RLM Agent', description: 'General assistant and fallback built-in workflow model.' },
+    { value: 'drafting', label: 'Request Drafting', description: 'GDPR email drafting and correspondence generation.' },
+    { value: 'extraction', label: 'File Extraction', description: 'OCR, transcription, document parsing, and summaries.' },
+    { value: 'graph', label: 'Knowledge Graph', description: 'Graph entity/relationship extraction and graph chat.' },
+    { value: 'policy', label: 'Policy Analysis', description: 'Privacy policy and vendor analysis.' },
+] as const;
+
+type ModelPurpose = typeof modelPurposes[number]['value'];
+
+interface WorkflowModelChoice {
+    provider: string;
+    model: string;
+}
+
+const defaultWorkflowModels: Record<ModelPurpose, WorkflowModelChoice> = {
+    default: { provider: 'google', model: 'gemini-2.5-flash' },
+    drafting: { provider: 'google', model: 'gemini-2.5-flash' },
+    extraction: { provider: 'google', model: 'gemini-2.5-flash-lite' },
+    graph: { provider: 'google', model: 'gemini-2.5-flash' },
+    policy: { provider: 'google', model: 'gemini-2.5-flash' },
+};
+
 interface ModelOption {
     id: string;
     name: string;
@@ -156,8 +179,8 @@ export function AICredentialsSection() {
     const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
     const [envKeys, setEnvKeys] = useState<Record<string, boolean>>({});
     const [workflowBackend, setWorkflowBackend] = useState('built_in');
-    const [selectedProvider, setSelectedProvider] = useState('google');
-    const [selectedModel, setSelectedModel] = useState('gemini-3-flash-preview');
+    const [activePurpose, setActivePurpose] = useState<ModelPurpose>('default');
+    const [workflowModels, setWorkflowModels] = useState<Record<ModelPurpose, WorkflowModelChoice>>(defaultWorkflowModels);
     const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
     const [modelSearch, setModelSearch] = useState('');
     const [isFetchingModels, setIsFetchingModels] = useState(false);
@@ -175,6 +198,9 @@ export function AICredentialsSection() {
             nvidiaApiKey: '',
         },
     });
+
+    const selectedProvider = workflowModels[activePurpose]?.provider || 'google';
+    const selectedModel = workflowModels[activePurpose]?.model || defaultWorkflowModels[activePurpose].model;
 
     // Load existing settings
     useEffect(() => {
@@ -200,8 +226,14 @@ export function AICredentialsSection() {
                 if (res.ok) {
                     const data = await res.json();
                     setWorkflowBackend(data.workflowBackend || 'built_in');
-                    setSelectedProvider(data.provider || 'google');
-                    setSelectedModel(data.model || 'gemini-3-flash-preview');
+                    setWorkflowModels({
+                        ...defaultWorkflowModels,
+                        ...(data.workflowModels || {}),
+                        default: {
+                            provider: data.provider || data.workflowModels?.default?.provider || 'google',
+                            model: data.model || data.workflowModels?.default?.model || 'gemini-2.5-flash',
+                        },
+                    });
                 }
             } catch (e) {
                 console.error('Failed to load model preferences', e);
@@ -229,11 +261,20 @@ export function AICredentialsSection() {
                 if (isCurrentRequest) {
                     setModelOptions(models);
                     setModelFetchWarning(data.fallback ? data.message || 'Showing fallback models.' : null);
-                    setSelectedModel(current =>
-                        models.some((model: ModelOption) => model.id === current)
-                            ? current
-                            : models[0]?.id || current
-                    );
+                    setWorkflowModels(current => {
+                        const choice = current[activePurpose] || defaultWorkflowModels[activePurpose];
+                        if (models.some((model: ModelOption) => model.id === choice.model)) {
+                            return current;
+                        }
+
+                        return {
+                            ...current,
+                            [activePurpose]: {
+                                ...choice,
+                                model: models[0]?.id || choice.model,
+                            },
+                        };
+                    });
                 }
             } catch (e) {
                 console.error('Failed to load models', e);
@@ -254,7 +295,7 @@ export function AICredentialsSection() {
         return () => {
             isCurrentRequest = false;
         };
-    }, [selectedProvider]);
+    }, [activePurpose, selectedProvider]);
 
     const handleSave = async (data: AICredentialsForm) => {
         setIsLoading(true);
@@ -273,10 +314,10 @@ export function AICredentialsSection() {
                 toast.success('AI settings saved successfully');
             } else {
                 const error = await res.json();
-                toast.error(error.message || 'Failed to save credentials');
+                toast.error(error.message || error.error || 'Failed to save credentials');
             }
-        } catch {
-            toast.error('Failed to save credentials');
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Failed to save credentials');
         } finally {
             setIsLoading(false);
         }
@@ -287,19 +328,31 @@ export function AICredentialsSection() {
     };
 
     const savePreferences = async () => {
+        const defaultChoice = workflowModels.default;
         const res = await fetch('/api/settings/model-preferences', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 workflowBackend,
-                provider: selectedProvider,
-                model: selectedModel,
+                provider: defaultChoice.provider,
+                model: defaultChoice.model,
+                workflowModels,
             }),
         });
 
         if (!res.ok) {
             throw new Error('Failed to save model preferences');
         }
+    };
+
+    const updateActiveModelChoice = (updates: Partial<WorkflowModelChoice>) => {
+        setWorkflowModels(current => ({
+            ...current,
+            [activePurpose]: {
+                ...(current[activePurpose] || defaultWorkflowModels[activePurpose]),
+                ...updates,
+            },
+        }));
     };
 
     const filteredModels = modelOptions.filter(model => {
@@ -438,14 +491,32 @@ export function AICredentialsSection() {
                                         Preferred Model
                                     </p>
                                     <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
-                                        Select the provider and model for built-in workflows and the RLM agent. Pricing is shown when the provider exposes it.
+                                        Pick separate models for each workflow. Extraction defaults to Flash Lite because it is a low-reasoning, high-throughput task.
                                     </p>
                                 </div>
-                                <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+                                <div className="grid gap-3 md:grid-cols-[220px_220px_1fr]">
+                                    <Select
+                                        value={activePurpose}
+                                        onValueChange={(value) => {
+                                            setActivePurpose(value as ModelPurpose);
+                                            setModelSearch('');
+                                        }}
+                                    >
+                                        <SelectTrigger className="bg-white dark:bg-zinc-900">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {modelPurposes.map(purpose => (
+                                                <SelectItem key={purpose.value} value={purpose.value}>
+                                                    {purpose.label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
                                     <Select
                                         value={selectedProvider}
                                         onValueChange={(value) => {
-                                            setSelectedProvider(value);
+                                            updateActiveModelChoice({ provider: value });
                                             setModelSearch('');
                                         }}
                                     >
@@ -474,7 +545,7 @@ export function AICredentialsSection() {
                                     <div className="space-y-2" aria-live="polite">
                                         <Select
                                             value={selectedModel}
-                                            onValueChange={setSelectedModel}
+                                            onValueChange={(model) => updateActiveModelChoice({ model })}
                                             disabled={isFetchingModels || filteredModels.length === 0}
                                         >
                                             <SelectTrigger
@@ -519,6 +590,9 @@ export function AICredentialsSection() {
                                                 No models match your search for this provider.
                                             </p>
                                         )}
+                                        <p className="text-xs text-muted-foreground">
+                                            {modelPurposes.find(purpose => purpose.value === activePurpose)?.description}
+                                        </p>
                                     </div>
                                 </GsapReveal>
                             </div>

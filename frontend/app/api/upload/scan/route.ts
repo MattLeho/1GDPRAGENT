@@ -3,11 +3,63 @@ import { pool } from '@/lib/db';
 import { readFile } from 'fs/promises';
 import { GoogleGenAI } from '@google/genai';
 import { runCypher } from '@/lib/graph';
+import { getAICredential } from '@/lib/ai-credentials';
+import { getWorkflowModelPreference } from '@/lib/model-preferences';
 
-// Initialize Gemini
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '' });
-const GEMINI_FLASH = process.env.GEMINI_MODEL_FLASH || 'gemini-3-flash-preview';
-const GEMINI_PRO = process.env.GEMINI_MODEL_PRO || 'gemini-3.1-pro-preview';
+const DEFAULT_SCAN_DELAY_MS = 1500;
+const DEFAULT_RATE_LIMIT_DELAY_MS = 10000;
+
+function getScanDelayMs(): number {
+    const configured = Number(process.env.UPLOAD_SCAN_DELAY_MS);
+    if (!Number.isFinite(configured)) {
+        return DEFAULT_SCAN_DELAY_MS;
+    }
+
+    return Math.min(Math.max(configured, 0), 60000);
+}
+
+function getRateLimitDelayMs(): number {
+    const configured = Number(process.env.UPLOAD_SCAN_RATE_LIMIT_DELAY_MS);
+    if (!Number.isFinite(configured)) {
+        return DEFAULT_RATE_LIMIT_DELAY_MS;
+    }
+
+    return Math.min(Math.max(configured, 1000), 120000);
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRateLimitError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /429|rate limit|quota|resource exhausted/i.test(message);
+}
+
+async function createGoogleClient(): Promise<GoogleGenAI> {
+    const apiKey = await getAICredential('google') ||
+        process.env.GEMINI_API_KEY ||
+        process.env.GOOGLE_API_KEY ||
+        '';
+
+    return new GoogleGenAI({ apiKey });
+}
+
+async function generateContentWithBackoff(
+    client: GoogleGenAI,
+    request: Parameters<GoogleGenAI['models']['generateContent']>[0],
+) {
+    try {
+        return await client.models.generateContent(request);
+    } catch (error) {
+        if (!isRateLimitError(error)) {
+            throw error;
+        }
+
+        await sleep(getRateLimitDelayMs());
+        return client.models.generateContent(request);
+    }
+}
 
 /**
  * POST /api/upload/scan - Scan for unprocessed files and process them
@@ -39,8 +91,10 @@ export async function POST() {
         // 2. Process each unprocessed file
         for (const file of unprocessedResult.rows) {
             try {
+                await sleep(getScanDelayMs());
                 const content = await extractContent(file);
                 if (content) {
+                    await sleep(getScanDelayMs());
                     // Generate AI summary
                     const summary = await generateSummary(content, file.file_name);
 
@@ -81,6 +135,7 @@ export async function POST() {
         // 4. Ingest each to the knowledge graph
         for (const file of unIngestedResult.rows) {
             try {
+                await sleep(getScanDelayMs());
                 const content = file.markdown_content || file.extracted_text || file.transcript || '';
                 if (!content) continue;
 
@@ -140,9 +195,11 @@ async function extractContent(file: Record<string, any>): Promise<string | null>
             // Use Gemini to extract text from documents
             const base64Data = fileBuffer.toString('base64');
             const mimeType = getMimeType(file.file_name || '');
+            const client = await createGoogleClient();
+            const extractionModel = await getWorkflowModelPreference('extraction');
 
-            const response = await genAI.models.generateContent({
-                model: GEMINI_FLASH,
+            const response = await generateContentWithBackoff(client, {
+                model: extractionModel.provider === 'google' ? extractionModel.model : 'gemini-2.5-flash-lite',
                 contents: [{
                     role: 'user',
                     parts: [
@@ -157,9 +214,11 @@ async function extractContent(file: Record<string, any>): Promise<string | null>
             // OCR with Gemini Vision
             const base64Data = fileBuffer.toString('base64');
             const mimeType = getMimeType(file.file_name || '');
+            const client = await createGoogleClient();
+            const extractionModel = await getWorkflowModelPreference('extraction');
 
-            const response = await genAI.models.generateContent({
-                model: GEMINI_FLASH,
+            const response = await generateContentWithBackoff(client, {
+                model: extractionModel.provider === 'google' ? extractionModel.model : 'gemini-2.5-flash-lite',
                 contents: [{
                     role: 'user',
                     parts: [
@@ -174,9 +233,11 @@ async function extractContent(file: Record<string, any>): Promise<string | null>
             // Transcribe audio/video
             const base64Data = fileBuffer.toString('base64');
             const mimeType = getMimeType(file.file_name || '');
+            const client = await createGoogleClient();
+            const extractionModel = await getWorkflowModelPreference('extraction');
 
-            const response = await genAI.models.generateContent({
-                model: GEMINI_FLASH,
+            const response = await generateContentWithBackoff(client, {
+                model: extractionModel.provider === 'google' ? extractionModel.model : 'gemini-2.5-flash-lite',
                 contents: [{
                     role: 'user',
                     parts: [
@@ -210,8 +271,10 @@ async function extractContent(file: Record<string, any>): Promise<string | null>
  */
 async function generateSummary(content: string, fileName: string): Promise<string> {
     try {
-        const response = await genAI.models.generateContent({
-            model: GEMINI_FLASH,
+        const client = await createGoogleClient();
+        const extractionModel = await getWorkflowModelPreference('extraction');
+        const response = await generateContentWithBackoff(client, {
+            model: extractionModel.provider === 'google' ? extractionModel.model : 'gemini-2.5-flash-lite',
             contents: `Summarize this document in 2-3 concise sentences. Focus on what personal data or GDPR-relevant information it contains.\n\nFile: ${fileName}\n\nContent:\n${content.substring(0, 10000)}`,
             config: { maxOutputTokens: 200 },
         });
@@ -230,7 +293,7 @@ async function ingestToGraphDirect(
     requestId: string | null,
     companyName: string
 ): Promise<{ success: boolean; entities: any }> {
-    // Extract entities using Gemini Pro
+    // Extract entities using the graph workflow model; defaults to Flash, not Pro.
     const prompt = `You are a GDPR Knowledge Graph expert. Extract structured entities and relationships from this document for a privacy knowledge graph.
 
 Extract:
@@ -254,8 +317,10 @@ Output ONLY valid JSON:
 Company: ${companyName}
 Content: ${content.substring(0, 15000)}`;
 
-    const response = await genAI.models.generateContent({
-        model: GEMINI_PRO,
+    const client = await createGoogleClient();
+    const graphModel = await getWorkflowModelPreference('graph');
+    const response = await generateContentWithBackoff(client, {
+        model: graphModel.provider === 'google' ? graphModel.model : 'gemini-2.5-flash',
         contents: prompt,
     });
 

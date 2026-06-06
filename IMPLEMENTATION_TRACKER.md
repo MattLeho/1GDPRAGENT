@@ -1,6 +1,6 @@
 # Implementation Tracker
 
-Updated: 2026-06-05
+Updated: 2026-06-06
 
 ## Current Focus
 
@@ -11,6 +11,8 @@ Updated: 2026-06-05
 - [x] Keep N8N available as an optional workflow backend.
 - [ ] Restore knowledge graph ingestion, chat, and identity features.
 - [x] Add multi-provider model selection with model search and pricing hints.
+- [x] Add upload scan throttling/backoff to reduce provider rate-limit hits.
+- [x] Add per-workflow model selection with Flash Lite extraction defaults.
 
 ## Audit Follow-Ups
 
@@ -58,9 +60,12 @@ Audit follow-up notes:
 - [x] Add NVIDIA model discovery.
 - [x] Add searchable model selector in settings.
 - [x] Store preferred provider and model in app settings.
+- [x] Store per-workflow model choices for default/RLM, drafting, extraction, graph, and policy.
+- [x] Make extraction default to Flash Lite and graph/policy/drafting default to Flash instead of Pro.
 - [x] Normalize provider aliases and credential environment fallbacks.
 - [x] Add bounded model discovery timeouts and explicit fallback responses.
 - [x] Keep selector state valid when provider model lists change.
+- [x] Allow local-development credential saving without a manually configured encryption key.
 - [ ] Replace static OpenAI/Google pricing hints with a versioned or live pricing source.
 - [ ] Add clear/delete/rotate controls for stored provider credentials.
 - [ ] Expose clean runtime provider adapters for non-Google generation and tool-calling.
@@ -75,6 +80,7 @@ Audit follow-up notes:
 - [x] Add double-click neighbor expansion.
 - [x] Ensure identity saving reliably writes to Neo4j.
 - [x] Connect file ingestion to graph ingestion.
+- [x] Route graph chat and graph extraction through the graph model preference.
 - [x] Add MAKGED validation before risky graph writes.
 - [ ] Add GIVE-style inference nodes and dashboard alerts.
 
