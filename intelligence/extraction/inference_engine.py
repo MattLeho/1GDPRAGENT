@@ -169,6 +169,8 @@ class InferenceEngine:
                     source_chunk=triple.source_chunk,
                     source_text=triple.source_text,
                     inferred=triple.inferred,
+                    assertion_id=triple.assertion_id,
+                    source_assertion_ids=triple.source_assertion_ids,
                 ))
             else:
                 result.append(triple)
@@ -288,9 +290,11 @@ class InferenceEngine:
         
         # Build predicate lookup
         predicates = {}
+        source_triples = {}
         for triple in triples:
             key = (triple.subject.lower(), triple.object.lower())
             predicates[key] = triple.predicate
+            source_triples[key] = triple
         
         # Find transitive relationships
         for subj in graph:
@@ -322,6 +326,10 @@ class InferenceEngine:
                             source_chunk=None,
                             source_text=None,
                             inferred=True,
+                            source_assertion_ids=tuple(filter(None, (
+                                source_triples.get((subj, mid)).assertion_id if source_triples.get((subj, mid)) else None,
+                                source_triples.get((mid, obj)).assertion_id if source_triples.get((mid, obj)) else None,
+                            ))),
                         ))
         
         return new_triples
@@ -388,6 +396,7 @@ Only return relationships you're reasonably confident exist. Use UPPERCASE_SNAKE
                             source_chunk=None,
                             source_text=None,
                             inferred=True,
+                            source_assertion_ids=tuple(t.assertion_id for t in triples if t.assertion_id),
                         ))
             
             return new_triples
@@ -463,6 +472,7 @@ Use UPPERCASE_SNAKE_CASE for predicates (max 3 words). Only include high-confide
                                 source_chunk=None,
                                 source_text=None,
                                 inferred=True,
+                                source_assertion_ids=tuple(t.assertion_id for t in triples if t.assertion_id),
                             ))
                             
             except Exception:
@@ -518,6 +528,7 @@ Use UPPERCASE_SNAKE_CASE for predicates (max 3 words). Only include high-confide
                         source_chunk=None,
                         source_text=None,
                         inferred=True,
+                        source_assertion_ids=tuple(t.assertion_id for t in triples if t.assertion_id and (t.subject in (entity1,entity2) or t.object in (entity1,entity2))),
                     ))
         
         return new_triples
@@ -565,7 +576,7 @@ Use UPPERCASE_SNAKE_CASE for predicates (max 3 words). Only include high-confide
 async def infer_relationships(
     triples: list[SPOTriple],
     gemini_client=None,
-    use_llm: bool = True,
+    use_llm: bool = False,
 ) -> list[SPOTriple]:
     """
     Quick relationship inference with default settings.

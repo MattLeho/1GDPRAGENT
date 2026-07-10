@@ -9,39 +9,8 @@ interface WorkflowLogParams {
     details?: Record<string, unknown>;
 }
 
-let workflowLogsTableReady = false;
-
-export async function ensureWorkflowLogsTable() {
-    if (workflowLogsTableReady) {
-        return;
-    }
-
-    await db.query(`
-        CREATE TABLE IF NOT EXISTS workflow_logs (
-            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            request_id UUID REFERENCES requests(id) ON DELETE CASCADE,
-            workflow_name TEXT NOT NULL,
-            workflow_type TEXT,
-            status TEXT DEFAULT 'started',
-            details JSONB,
-            started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            completed_at TIMESTAMP WITH TIME ZONE,
-            error_message TEXT
-        )
-    `);
-
-    await db.query(`
-        CREATE INDEX IF NOT EXISTS idx_workflow_logs_request_id
-        ON workflow_logs(request_id)
-    `);
-
-    workflowLogsTableReady = true;
-}
-
 export async function startWorkflowLog(params: WorkflowLogParams): Promise<string | null> {
     try {
-        await ensureWorkflowLogsTable();
-
         const result = await db.query<{ id: string }>(`
             INSERT INTO workflow_logs (
                 request_id, workflow_name, workflow_type, status, details, started_at
@@ -71,7 +40,6 @@ export async function completeWorkflowLog(
     }
 
     try {
-        await ensureWorkflowLogsTable();
         await db.query(`
             UPDATE workflow_logs
             SET status = 'completed',
@@ -96,7 +64,6 @@ export async function failWorkflowLog(
     const message = error instanceof Error ? error.message : String(error || 'Unknown error');
 
     try {
-        await ensureWorkflowLogsTable();
         await db.query(`
             UPDATE workflow_logs
             SET status = 'error',

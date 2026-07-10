@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
             MATCH (n)
             ${whereClause}
             RETURN 
-                id(n) as id,
+                n.node_id as id,
                 labels(n) as labels,
                 properties(n) as props
             ORDER BY n.discoveredAt DESC

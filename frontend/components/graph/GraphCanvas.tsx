@@ -171,9 +171,7 @@ export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0 }: Gra
             if (!filters.showONSIT || !filters.showGDPR) {
                 params.set('layer', filters.showONSIT ? 'onsit' : filters.showGDPR ? 'gdpr' : 'all');
             }
-            if (!filters.showInferences) {
-                params.set('showInferences', 'false');
-            }
+            params.set('showInferences', String(filters.showInferences));
             if (filters.searchQuery.trim()) {
                 params.set('search', filters.searchQuery.trim());
             }
@@ -437,9 +435,7 @@ export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0 }: Gra
             const params = new URLSearchParams();
             params.set('centerNodeId', node.id);
             params.set('limit', '150');
-            if (!filters.showInferences) {
-                params.set('showInferences', 'false');
-            }
+            params.set('showInferences', String(filters.showInferences));
 
             const response = await fetch(`/api/graph?${params.toString()}`);
             if (!response.ok) {

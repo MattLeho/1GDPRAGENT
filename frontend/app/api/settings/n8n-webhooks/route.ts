@@ -111,18 +111,6 @@ export async function POST(request: Request) {
     try {
         const body = await request.json();
 
-        // Ensure table exists
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS n8n_webhooks (
-                id SERIAL PRIMARY KEY,
-                webhook_name VARCHAR(100) UNIQUE NOT NULL,
-                webhook_url TEXT NOT NULL,
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        `);
-
         const savedUrls: Record<string, boolean> = {};
 
         for (const { id } of webhookMappings) {

@@ -690,7 +690,7 @@ async function updateFileStatus(
 }
 
 /**
- * Send processed content to KG Ingestor N8N workflow for graph ingestion
+ * Submit model output to the canonical evidence ledger as review candidates.
  */
 async function ingestToGraph(
     fileId: string,
@@ -699,7 +699,6 @@ async function ingestToGraph(
     companyName: string
 ): Promise<{ success: boolean; error?: string }> {
     try {
-        const N8N_WEBHOOK_INGEST = process.env.N8N_WEBHOOK_INGEST_DATA || 'http://localhost:5678/webhook-test/ingest-data';
         const intelligenceUrl = process.env.INTELLIGENCE_URL || 'http://localhost:8001';
 
         // First, extract entities using the graph workflow model. Defaults to Flash, not Pro.
@@ -797,6 +796,7 @@ ${content.substring(0, 20000)}`;
                     extracted_data: ingestPayload.extracted_data,
                     categories: ingestPayload.categories,
                     source: ingestPayload.source,
+                    source_artifact: { legacy_file_id: fileId, exact_text: content.substring(0, 50000) },
                 }),
                 signal: AbortSignal.timeout(120000),
             });
@@ -812,24 +812,13 @@ ${content.substring(0, 20000)}`;
             ingestionError = `Intelligence ingestor unavailable: ${String(error)}`;
         }
 
-        if (!ingestionSucceeded) {
-            console.warn('[Graph ingestion] Falling back to N8N:', ingestionError);
-        }
+        if (!ingestionSucceeded) throw new Error(ingestionError || 'Canonical evidence ingestion failed');
 
-        const response = ingestionSucceeded ? null : await fetch(N8N_WEBHOOK_INGEST, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(ingestPayload),
-        });
-
-        if (response && !response.ok) {
-            throw new Error(`${ingestionError}; N8N webhook returned ${response.status}`);
-        }
-
-        // Update database to mark as ingested
+        // Candidate assertions are not graph truth. The legacy flag stays false
+        // until accepted assertions are projected by the intelligence service.
         await pool.query(
             `UPDATE received_data 
-             SET graph_ingested = true, 
+             SET graph_ingested = false,
                  entities_extracted = $1
              WHERE id = $2`,
             [JSON.stringify(extractedJson), fileId]
@@ -901,7 +890,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
             return NextResponse.json({
                 success: true,
                 fileId,
-                message: 'Content ingested to knowledge graph'
+                message: 'Content recorded as evidence-backed assertion candidates for review'
             });
         } else {
             await updateFileStatus(fileId, 'error', 'ingest', 85, result.error);

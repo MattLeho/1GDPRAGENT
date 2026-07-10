@@ -16,70 +16,9 @@ import { Pool } from 'pg';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// Initialize request_threads table
-async function initTable() {
-    const client = await pool.connect();
-    try {
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS request_threads (
-                id SERIAL PRIMARY KEY,
-                company VARCHAR(255) NOT NULL,
-                domain VARCHAR(255),
-                thread_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
-                
-                -- Policy Analysis
-                policy_url TEXT,
-                policy_markdown TEXT,
-                policy_summary TEXT,
-                dpo_email VARCHAR(255),
-                compliance_score INTEGER,
-                
-                -- Request Draft
-                request_type VARCHAR(50),
-                draft_subject TEXT,
-                draft_body TEXT,
-                drafted_at TIMESTAMP,
-                
-                -- Email Sending
-                sent_at TIMESTAMP,
-                sent_via VARCHAR(50) DEFAULT 'n8n',
-                email_status VARCHAR(50),
-                
-                -- Response Tracking
-                response_received_at TIMESTAMP,
-                response_content TEXT,
-                response_summary TEXT,
-                
-                -- Follow-up
-                follow_up_needed BOOLEAN DEFAULT false,
-                follow_up_reason TEXT,
-                follow_up_sent_at TIMESTAMP,
-                
-                -- Metadata
-                status VARCHAR(50) DEFAULT 'initialized',
-                created_at TIMESTAMP DEFAULT NOW(),
-                updated_at TIMESTAMP DEFAULT NOW(),
-                
-                -- AI Context
-                conversation_history JSONB DEFAULT '[]'::jsonb,
-                
-                UNIQUE(company, domain)
-            );
-            
-            CREATE INDEX IF NOT EXISTS idx_threads_company ON request_threads(company);
-            CREATE INDEX IF NOT EXISTS idx_threads_thread_id ON request_threads(thread_id);
-            CREATE INDEX IF NOT EXISTS idx_threads_status ON request_threads(status);
-        `);
-    } finally {
-        client.release();
-    }
-}
-
 // GET: Fetch thread for a company
 export async function GET(request: NextRequest) {
     try {
-        await initTable();
-
         const { searchParams } = new URL(request.url);
         const company = searchParams.get('company');
         const threadId = searchParams.get('threadId');
@@ -134,8 +73,6 @@ export async function GET(request: NextRequest) {
 // POST: Create or update thread
 export async function POST(request: NextRequest) {
     try {
-        await initTable();
-
         const body = await request.json();
         const { company, domain, action, data } = body;
 

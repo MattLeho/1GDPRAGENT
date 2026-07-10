@@ -284,7 +284,15 @@ class GroundedExtractor:
                     # Fallback: find text position
                     start = text.find(ext.extraction_text)
                     if start < 0:
-                        start = 0
+                        # An unresolvable quotation is not grounded evidence.
+                        continue
+                    end = start + len(ext.extraction_text)
+
+                if text[start:end] != ext.extraction_text:
+                    actual_start = text.find(ext.extraction_text)
+                    if actual_start < 0:
+                        continue
+                    start = actual_start
                     end = start + len(ext.extraction_text)
                 
                 entities.append(GroundedEntity(
@@ -330,7 +338,7 @@ For each extraction, provide:
 - class: One of [{classes_text}]
 - text: The exact text span from the source (copy exactly)
 - attributes: Relevant attributes as key-value pairs
-- start_offset: Character position where the text starts (estimate if unsure)
+- start_offset: Character position where the copied text starts; do not estimate
 
 Return a JSON array of extractions. Example format:
 [
@@ -359,19 +367,12 @@ Return a JSON array of extractions. Example format:
                 if not ext_class or not ext_text:
                     continue
                 
-                # Try to find actual position in text
-                start = item.get("start_offset", 0)
-                if isinstance(start, str):
-                    try:
-                        start = int(start)
-                    except ValueError:
-                        start = 0
-                
-                # Verify/correct position by finding text
+                # A model-provided offset is only a hint. The exact quotation
+                # must resolve against the original source or it is discarded.
                 actual_start = text.find(ext_text)
-                if actual_start >= 0:
-                    start = actual_start
-                
+                if actual_start < 0:
+                    continue
+                start = actual_start
                 end = start + len(ext_text)
                 
                 # Map to EntityClass enum

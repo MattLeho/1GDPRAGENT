@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
 import { readFile } from 'fs/promises';
 import { GoogleGenAI } from '@google/genai';
-import { runCypher } from '@/lib/graph';
 import { getAICredential } from '@/lib/ai-credentials';
 import { getWorkflowModelPreference } from '@/lib/model-preferences';
 import { replaceArtifactsForFile } from '@/lib/data-artifacts';
@@ -129,9 +128,14 @@ export async function POST() {
             SELECT rd.*, r.company_name 
             FROM received_data rd
             LEFT JOIN requests r ON rd.request_id = r.id
-            WHERE rd.graph_ingested IS NOT TRUE
-              AND rd.status = 'completed'
+            WHERE rd.status = 'completed'
               AND (rd.extracted_text IS NOT NULL OR rd.transcript IS NOT NULL OR rd.markdown_content IS NOT NULL)
+              AND NOT EXISTS (
+                  SELECT 1 FROM analysis_runs ar
+                  WHERE ar.run_type = 'legacy_kg_ingestion_adapter'
+                    AND ar.status = 'completed'
+                    AND ar.configuration->>'legacy_file_id' = rd.id::text
+              )
         `);
 
         // 4. Ingest each to the knowledge graph
@@ -147,7 +151,7 @@ export async function POST() {
                 if (ingestionResult.success) {
                     await pool.query(`
                         UPDATE received_data 
-                        SET graph_ingested = true,
+                        SET graph_ingested = false,
                             entities_extracted = $1,
                             status = 'completed',
                             processing_stage = 'completed',
@@ -165,7 +169,7 @@ export async function POST() {
 
         return NextResponse.json({
             success: true,
-            message: `Scanned ${results.scanned} files: processed ${results.processed}, ingested ${results.ingested} to graph`,
+            message: `Scanned ${results.scanned} files: processed ${results.processed}, submitted ${results.ingested} evidence batches for review`,
             ...results,
         });
     } catch (error) {
@@ -287,7 +291,7 @@ async function generateSummary(content: string, fileName: string): Promise<strin
 }
 
 /**
- * Extract entities and ingest directly to Neo4j (bypasses N8N webhook)
+ * Submit extraction to the canonical intelligence evidence pipeline.
  */
 async function ingestToGraphDirect(
     fileId: string,
@@ -295,214 +299,23 @@ async function ingestToGraphDirect(
     requestId: string | null,
     companyName: string
 ): Promise<{ success: boolean; entities: any }> {
-    // Extract entities using the graph workflow model; defaults to Flash, not Pro.
-    const prompt = `You are a GDPR Knowledge Graph expert. Extract structured entities and relationships from this document for a privacy knowledge graph.
-
-Extract:
-1. Personal data types (names, emails, IDs, etc.)
-2. Companies/organizations
-3. Processing activities
-4. Legal bases
-5. Third parties
-6. Relationships between entities
-
-Output ONLY valid JSON:
-{
-  "entities": [
-    { "type": "PERSON|EMAIL|COMPANY|DATA_TYPE|LEGAL_BASIS|PROCESSING|THIRD_PARTY", "value": "...", "category": "IDENTITY|CONTACT|FINANCIAL|LEGAL|TECHNICAL", "riskLevel": "HIGH|MEDIUM|LOW" }
-  ],
-  "relationships": [
-    { "subject": "...", "predicate": "HAS_DATA|PROCESSES|SHARES_WITH|LEGAL_BASIS_FOR", "object": "..." }
-  ]
-}
-
-Company: ${companyName}
-Content: ${content.substring(0, 15000)}`;
-
-    const client = await createGoogleClient();
-    const graphModel = await getWorkflowModelPreference('graph');
-    const response = await generateContentWithBackoff(client, {
-        model: graphModel.provider === 'google' ? graphModel.model : 'gemini-3.1-flash',
-        contents: prompt,
+    const intelligenceUrl = process.env.INTELLIGENCE_URL || 'http://localhost:8001';
+    const response = await fetch(`${intelligenceUrl}/ingest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            company_name: companyName,
+            request_id: requestId,
+            source: 'file_upload',
+            extracted_data: [],
+            categories: {},
+            source_artifact: { legacy_file_id: fileId, exact_text: content.substring(0, 50000) },
+        }),
+        signal: AbortSignal.timeout(60000),
     });
-
-    const responseText = response.text || '{}';
-    const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, responseText];
-    let parsed: any = { entities: [], relationships: [] };
-    try {
-        parsed = JSON.parse(jsonMatch[1] || responseText);
-    } catch { /* use defaults */ }
-
-    const entities = parsed.entities || parsed.extractedData || [];
-    const relationships = parsed.relationships || [];
-
-    // Write directly to Neo4j
-    for (const entity of entities) {
-        try {
-            await runCypher(
-                `MERGE (e:Entity {value: $value})
-                 SET e.type = $type, e.category = $category, e.riskLevel = $riskLevel,
-                     e.source = 'file_upload',
-                     e.fileId = $fileId,
-                     e.requestId = $requestId,
-                     e.companyName = $companyName,
-                     e.sourceProvider = 'google',
-                     e.confidence = $confidence,
-                     e.evidenceJson = $evidenceJson,
-                     e.updatedAt = datetime()`,
-                {
-                    value: entity.value,
-                    type: entity.type,
-                    category: entity.category || 'OTHER',
-                    riskLevel: entity.riskLevel || 'MEDIUM',
-                    fileId,
-                    requestId,
-                    companyName,
-                    confidence: entity.confidence || 'MEDIUM',
-                    evidenceJson: JSON.stringify({ fileId, companyName, source: 'file_upload' }),
-                }
-            );
-        } catch (err) {
-            console.error('Entity write error:', err);
-        }
-    }
-
-    for (const rel of relationships) {
-        try {
-            const validation = await validateRelationshipWithMakged(rel, content);
-            if (validation.decision !== 'ACCEPT') {
-                await createInferenceReviewAlert(fileId, rel, validation, companyName);
-                continue;
-            }
-
-            await runCypher(
-                `MATCH (s:Entity {value: $subject})
-                 MERGE (o:Entity {value: $object})
-                 MERGE (s)-[r:RELATES_TO {predicate: $predicate}]->(o)
-                 SET r.source = 'file_upload',
-                     r.fileId = $fileId,
-                     r.requestId = $requestId,
-                     r.companyName = $companyName,
-                     r.sourceProvider = 'google',
-                     r.confidence = $confidence,
-                     r.evidenceJson = $evidenceJson,
-                     r.makgedStatus = 'accepted',
-                     r.makgedVotes = $votes,
-                     r.updatedAt = datetime()`,
-                {
-                    subject: rel.subject,
-                    object: rel.object,
-                    predicate: rel.predicate,
-                    fileId,
-                    requestId,
-                    companyName,
-                    confidence: rel.confidence || 'MEDIUM',
-                    evidenceJson: JSON.stringify({ fileId, companyName, source: 'file_upload' }),
-                    votes: JSON.stringify(validation.votes || {}),
-                }
-            );
-        } catch (err) {
-            console.error('Relationship write error:', err);
-        }
-    }
-
-    // Also create a link to the company and request if available
-    if (companyName && companyName !== 'Unknown Company') {
-        try {
-            await runCypher(
-                `MERGE (c:Company {name: $companyName})
-                 SET c.updatedAt = datetime()`,
-                { companyName }
-            );
-            for (const entity of entities) {
-                if (entity.type === 'PERSON' || entity.type === 'EMAIL' || entity.category === 'IDENTITY') {
-                    await runCypher(
-                        `MATCH (c:Company {name: $companyName}), (e:Entity {value: $value})
-                         MERGE (c)-[:HOLDS_DATA]->(e)`,
-                        { companyName, value: entity.value }
-                    );
-                }
-            }
-        } catch (err) {
-            console.error('Company link error:', err);
-        }
-    }
-
-    return { success: true, entities: parsed };
-}
-
-async function validateRelationshipWithMakged(
-    rel: Record<string, unknown>,
-    context: string
-): Promise<{ decision: string; votes?: Record<string, unknown>; reason?: string }> {
-    const subject = rel.subject ? String(rel.subject) : '';
-    const predicate = rel.predicate ? String(rel.predicate) : '';
-    const object = rel.object ? String(rel.object) : '';
-
-    if (!subject || !predicate || !object) {
-        return { decision: 'NEEDS_REVIEW', reason: 'Incomplete relationship' };
-    }
-
-    try {
-        const intelligenceUrl = process.env.INTELLIGENCE_URL || 'http://localhost:8001';
-        const response = await fetch(`${intelligenceUrl}/validate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                triple: { subject, predicate, object },
-                context: context.substring(0, 5000),
-                max_rounds: 1,
-            }),
-            signal: AbortSignal.timeout(60000),
-        });
-
-        if (!response.ok) {
-            return { decision: 'NEEDS_REVIEW', reason: `MAKGED returned ${response.status}` };
-        }
-
-        const result = await response.json();
-        return {
-            decision: result.decision || 'NEEDS_REVIEW',
-            votes: result.votes,
-        };
-    } catch (error) {
-        return { decision: 'NEEDS_REVIEW', reason: String(error) };
-    }
-}
-
-async function createInferenceReviewAlert(
-    fileId: string,
-    rel: Record<string, unknown>,
-    validation: { decision: string; votes?: Record<string, unknown>; reason?: string },
-    companyName: string
-): Promise<void> {
-    await runCypher(
-        `MERGE (i:Inference {
-             sourceValue: $subject,
-             predicate: $predicate,
-             targetValue: $object,
-             fileId: $fileId
-         })
-         SET i.source = 'inference',
-             i.riskLevel = 'high',
-             i.risk_level = 'high',
-             i.alertType = 'makged_review',
-             i.decision = $decision,
-             i.reason = $reason,
-             i.companyName = $companyName,
-             i.votesJson = $votes,
-             i.updatedAt = datetime()`,
-        {
-            subject: String(rel.subject || ''),
-            predicate: String(rel.predicate || ''),
-            object: String(rel.object || ''),
-            fileId,
-            decision: validation.decision,
-            reason: validation.reason || 'MAKGED did not accept inferred relationship',
-            companyName,
-            votes: JSON.stringify(validation.votes || {}),
-        }
-    );
+    if (!response.ok) throw new Error(`Canonical evidence ingestion returned ${response.status}`);
+    const result = await response.json();
+    return { success: result.success === true, entities: result };
 }
 
 function getMimeType(filename: string): string {

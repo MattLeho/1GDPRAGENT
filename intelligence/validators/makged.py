@@ -251,26 +251,15 @@ class MAKGEDValidator:
             
             current_round += 1
         
-        # Generate Cypher if accepted
-        cypher = None
-        if decision == Decision.ACCEPT:
-            rel = triple.relation.upper().replace(" ", "_")
-            # Sanitize for Cypher
-            import re
-            rel = re.sub(r'[^A-Z_]', '_', rel)
-            cypher = (
-                f"MERGE (h {{value: '{triple.head.replace(chr(39), chr(39)+chr(39))}'}}) "
-                f"MERGE (t {{value: '{triple.tail.replace(chr(39), chr(39)+chr(39))}'}}) "
-                f"MERGE (h)-[:{rel}]->(t)"
-            )
-        
         return ValidationResult(
             success=True,
             triple=triple,
             decision=decision,
             votes=votes,
             rounds=current_round,
-            cypher_statement=cypher,
+            # MAKGED validates interpretation only. It never manufactures the
+            # missing locator or emits executable graph mutations.
+            cypher_statement=None,
             agent_responses=agent_responses,
         )
     

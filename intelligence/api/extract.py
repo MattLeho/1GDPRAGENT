@@ -12,9 +12,11 @@ import asyncio
 import os
 import json
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from evidence.ledger import EvidenceLedger
 
 
 router = APIRouter(prefix="/extract", tags=["File Extraction"])
@@ -59,6 +61,7 @@ class ExtractionResponse(BaseModel):
     entity_count: int = 0
     classes_found: list[str] = []
     error: Optional[str] = None
+    analysis_run_id: Optional[str] = None
 
 
 # =============================================================================
@@ -194,20 +197,27 @@ async def extract_from_file_content(body: FileExtractionRequest):
     This endpoint processes text extracted from uploaded files
     through the LangExtract pipeline for structured GDPR extraction.
     """
+    ledger=EvidenceLedger()
+    try: request_id=UUID(body.request_id) if body.request_id else None
+    except ValueError: request_id=None
+    run_id=await ledger.create_analysis_run("grounded_extraction","task1-langextract-v1",request_id=request_id,configuration={"file_id":body.file_id,"file_name":body.file_name,"extraction_passes":body.extraction_passes})
     lx = _get_langextract()
     if lx is None:
+        await ledger.postgres.execute("UPDATE analysis_runs SET status='failed',completed_at=NOW(),error='langextract unavailable' WHERE id=$1",run_id)
         raise HTTPException(
             status_code=503,
             detail="langextract library not installed. Run: pip install langextract",
         )
 
     if not body.content or len(body.content.strip()) < 10:
+        await ledger.postgres.execute("UPDATE analysis_runs SET status='completed',completed_at=NOW() WHERE id=$1",run_id)
         return ExtractionResponse(
             success=True,
             file_name=body.file_name,
             entities=[],
             entity_count=0,
             classes_found=[],
+            analysis_run_id=str(run_id),
         )
 
     # Build context-aware prompt
@@ -249,8 +259,14 @@ async def extract_from_file_content(body: FileExtractionRequest):
                 else:
                     start = source_text.find(ext.extraction_text)
                     if start < 0:
-                        start = 0
+                        continue
                     end = start + len(ext.extraction_text)
+
+                if source_text[start:end] != ext.extraction_text:
+                    start=source_text.find(ext.extraction_text)
+                    if start<0:
+                        continue
+                    end=start+len(ext.extraction_text)
 
                 entities.append(ExtractionEntity(
                     entity_class=ext.extraction_class,
@@ -263,19 +279,26 @@ async def extract_from_file_content(body: FileExtractionRequest):
 
         classes_found = list(set(e.entity_class for e in entities))
 
+        await ledger.postgres.execute("UPDATE analysis_runs SET status='completed',completed_at=NOW() WHERE id=$1",run_id)
+        if entities and body.file_id:
+            from agents.kg_ingestor import KGIngestorAgent,IngestRequest
+            await KGIngestorAgent().ingest(IngestRequest(company_name=body.company_name or "Unknown",request_id=body.request_id or body.file_id,extracted_data=[{"type":item.entity_class,"value":item.text,"category":item.entity_class,"confidence":item.confidence} for item in entities],source="grounded_extraction",source_artifact={"legacy_file_id":body.file_id,"exact_text":body.content[:50000]}))
         return ExtractionResponse(
             success=True,
             file_name=body.file_name,
             entities=entities,
             entity_count=len(entities),
             classes_found=classes_found,
+            analysis_run_id=str(run_id),
         )
 
     except Exception as e:
+        await ledger.postgres.execute("UPDATE analysis_runs SET status='failed',completed_at=NOW(),error=$2 WHERE id=$1",run_id,str(e))
         return ExtractionResponse(
             success=False,
             file_name=body.file_name,
             error=str(e),
+            analysis_run_id=str(run_id),
         )
 
 

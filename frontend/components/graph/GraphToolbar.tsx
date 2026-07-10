@@ -410,7 +410,7 @@ export function GraphToolbar({
 export const defaultGraphFilters: GraphFilters = {
     showONSIT: true,
     showGDPR: true,
-    showInferences: true,
+    showInferences: false,
     selectedTypes: [],
     riskLevel: 'all',
     searchQuery: '',

@@ -23,6 +23,9 @@ export function getDriver(): Driver {
 }
 
 export async function runCypher(query: string, params: Record<string, unknown> = {}) {
+    if (/\b(CREATE|MERGE|DELETE|DETACH|SET|REMOVE|DROP|LOAD\s+CSV|FOREACH)\b/i.test(query)) {
+        throw new Error('Direct Neo4j writes are disabled; use the canonical evidence projection service')
+    }
     const driver = getDriver()
     const session = driver.session()
 

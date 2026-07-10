@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from validators.makged import MAKGEDValidator, Triple
+from evidence.ledger import EvidenceLedger
 
 
 router = APIRouter(prefix="/validate", tags=["Validation"])
@@ -60,6 +61,7 @@ class ValidateResponse(BaseModel):
     triple: dict
     cypher_statement: Optional[str] = None
     agent_responses: dict = {}
+    analysis_run_id: str
 
 
 @router.post("", response_model=ValidateResponse)
@@ -81,6 +83,8 @@ async def validate_triple(body: ValidateRequestBody):
         tail=body.triple.object or body.triple.tail or "Unknown",
     )
     
+    ledger=EvidenceLedger()
+    run_id=await ledger.create_analysis_run("makged_validation","task1-makged-v1",configuration={"max_rounds":body.max_rounds})
     validator = MAKGEDValidator(max_rounds=body.max_rounds)
     
     try:
@@ -88,6 +92,7 @@ async def validate_triple(body: ValidateRequestBody):
             triple=triple,
             source_text=body.context,
         )
+        await ledger.postgres.execute("UPDATE analysis_runs SET status='completed',completed_at=NOW() WHERE id=$1",run_id)
         
         return ValidateResponse(
             success=result.success,
@@ -101,8 +106,10 @@ async def validate_triple(body: ValidateRequestBody):
             },
             cypher_statement=result.cypher_statement,
             agent_responses=result.agent_responses,
+            analysis_run_id=str(run_id),
         )
     except Exception as e:
+        await ledger.postgres.execute("UPDATE analysis_runs SET status='failed',completed_at=NOW(),error=$2 WHERE id=$1",run_id,str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -113,6 +120,8 @@ async def validate_triples_batch(triples: list[ValidateRequestBody]):
     
     Processes triples sequentially and returns all results.
     """
+    ledger=EvidenceLedger()
+    run_id=await ledger.create_analysis_run("makged_batch_validation","task1-makged-v1",configuration={"count":len(triples)})
     results = []
     
     for body in triples:
@@ -150,4 +159,5 @@ async def validate_triples_batch(triples: list[ValidateRequestBody]):
                 },
             })
     
-    return {"results": results, "total": len(results)}
+    await ledger.postgres.execute("UPDATE analysis_runs SET status='completed',completed_at=NOW() WHERE id=$1",run_id)
+    return {"results": results, "total": len(results), "analysis_run_id": str(run_id)}

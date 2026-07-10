@@ -69,18 +69,6 @@ function checkEnvKeys(): Record<string, boolean> {
     );
 }
 
-async function ensureAICredentialsTable() {
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS ai_credentials (
-            id SERIAL PRIMARY KEY,
-            provider VARCHAR(50) UNIQUE NOT NULL,
-            api_key_encrypted TEXT,
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-        )
-    `);
-}
-
 function fieldForProvider(provider: unknown): string | null {
     const normalizedProvider = normalizeAIProvider(provider);
     return normalizedProvider ? AI_PROVIDER_FORM_FIELDS[normalizedProvider] : null;
@@ -92,8 +80,6 @@ function fieldForProvider(provider: unknown): string | null {
 
 export async function GET() {
     try {
-        await ensureAICredentialsTable();
-
         // Check if table exists and has data
         const result = await pool.query(`
             SELECT provider, api_key_encrypted IS NOT NULL as has_key
@@ -149,9 +135,6 @@ const credentialFields: Array<{ provider: AIProviderId; field: keyof AICredentia
 export async function POST(request: Request) {
     try {
         const body: AICredentialsBody = await request.json();
-
-        // Ensure table exists
-        await ensureAICredentialsTable();
 
         const savedKeys = emptyProviderKeyState();
 

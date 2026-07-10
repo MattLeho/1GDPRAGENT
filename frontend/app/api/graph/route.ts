@@ -51,7 +51,7 @@ function parsePaginationParams(request: NextRequest): PaginationParams {
         limit: Math.min(parseInt(searchParams.get('limit') || '100'), 500),
         skip: parseInt(searchParams.get('skip') || '0'),
         layer: (searchParams.get('layer') as 'onsit' | 'gdpr' | 'all') || 'all',
-        showInferences: searchParams.get('showInferences') !== 'false',
+        showInferences: searchParams.get('showInferences') === 'true',
         search: (searchParams.get('search') || '').trim().toLowerCase(),
         types: (searchParams.get('types') || '')
             .split(',')
@@ -73,31 +73,30 @@ export async function GET(request: NextRequest) {
         session = driver.session();
 
         if (centerNodeId) {
-            if (!/^\d+$/.test(centerNodeId)) {
+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(centerNodeId)) {
                 return NextResponse.json(
-                    { nodes: [], links: [], error: 'centerNodeId must be a numeric Neo4j id' },
+                    { nodes: [], links: [], error: 'centerNodeId must be a stable node UUID' },
                     { status: 400 }
                 );
             }
 
             const neighborResult = await session.run(`
-                MATCH (center)
-                WHERE id(center) = toInteger($centerNodeId)
+                MATCH (center:GraphNode {node_id: $centerNodeId})
                 OPTIONAL MATCH (center)-[outRel]->(outNode)
                 OPTIONAL MATCH (inNode)-[inRel]->(center)
                 WITH [node IN collect(DISTINCT center) + collect(DISTINCT outNode) + collect(DISTINCT inNode) WHERE node IS NOT NULL] as rawNodes
                 UNWIND rawNodes as n
-                RETURN DISTINCT id(n) as id, labels(n) as labels, properties(n) as props
-                ORDER BY id(n)
+                RETURN DISTINCT n.node_id as id, labels(n) as labels, properties(n) as props
+                ORDER BY n.node_id
                 LIMIT $limit
             `, { centerNodeId, limit });
 
-            const nodeIds = neighborResult.records.map(record => record.get('id').toNumber());
+            const nodeIds = neighborResult.records.map(record => String(record.get('id')));
             const linksResult = nodeIds.length
                 ? await session.run(`
                     MATCH (a)-[r]->(b)
-                    WHERE id(a) IN $nodeIds AND id(b) IN $nodeIds ${showInferences ? '' : 'AND (r.inferred IS NULL OR r.inferred = false)'}
-                    RETURN id(a) as source, id(b) as target, type(r) as type, r.inferred as inferred
+                    WHERE a.node_id IN $nodeIds AND b.node_id IN $nodeIds ${showInferences ? '' : "AND coalesce(r.epistemic_basis, '') <> 'model_hypothesis' AND (r.inferred IS NULL OR r.inferred = false)"}
+                    RETURN a.node_id as source, b.node_id as target, type(r) as type, r.inferred as inferred
                     LIMIT 2000
                 `, { nodeIds })
                 : { records: [] };
@@ -115,6 +114,7 @@ export async function GET(request: NextRequest) {
 
         // Build safe filter clauses. Values are parameterized; label filtering uses labels(n).
         const nodeFilters: string[] = [];
+        nodeFilters.push(`coalesce(n.retired, false) = false`);
         const params: Record<string, unknown> = {
             skip,
             limit: limit + 1,
@@ -123,7 +123,7 @@ export async function GET(request: NextRequest) {
         if (layer === 'onsit') {
             nodeFilters.push(`(n.source = 'onsit' OR n:ONSITFinding OR n:Email OR n:Username OR n:Domain)`);
         } else if (layer === 'gdpr') {
-            nodeFilters.push(`(n.source = 'gdpr' OR n:User OR n:Company OR n:DataPoint)`);
+            nodeFilters.push(`(n.source = 'gdpr' OR n:Subject OR n:ControllerProfile OR n:Organisation OR n:DataPoint)`);
         }
 
         if (types.length > 0) {
@@ -145,16 +145,16 @@ export async function GET(request: NextRequest) {
 
         // First get total count
         const countResult = await session.run(`
-            MATCH (n) ${nodeFilter}
+            MATCH (n:GraphNode) ${nodeFilter}
             RETURN count(n) as total
         `, params);
         const total = countResult.records[0]?.get('total')?.toNumber() || 0;
 
         // Fetch nodes with pagination
         const nodesResult = await session.run(`
-            MATCH (n) ${nodeFilter}
-            RETURN id(n) as id, labels(n) as labels, properties(n) as props
-            ORDER BY id(n)
+            MATCH (n:GraphNode) ${nodeFilter}
+            RETURN n.node_id as id, labels(n) as labels, properties(n) as props
+            ORDER BY n.node_id
             SKIP $skip
             LIMIT $limit
         `, params); // +1 to check if there's more
@@ -164,11 +164,11 @@ export async function GET(request: NextRequest) {
         const nodeRecords = hasMore ? nodesResult.records.slice(0, limit) : nodesResult.records;
 
         // Fetch relationships for the nodes
-        const nodeIds = nodeRecords.map(r => r.get('id').toNumber());
+        const nodeIds = nodeRecords.map(r => String(r.get('id')));
         const linksResult = await session.run(`
             MATCH (a)-[r]->(b)
-            WHERE id(a) IN $nodeIds AND id(b) IN $nodeIds ${showInferences ? '' : 'AND (r.inferred IS NULL OR r.inferred = false)'}
-            RETURN id(a) as source, id(b) as target, type(r) as type, r.inferred as inferred
+            WHERE a.node_id IN $nodeIds AND b.node_id IN $nodeIds ${showInferences ? '' : "AND coalesce(r.epistemic_basis, '') <> 'model_hypothesis' AND (r.inferred IS NULL OR r.inferred = false)"}
+            RETURN a.node_id as source, b.node_id as target, type(r) as type, r.inferred as inferred
             LIMIT 2000
         `, { nodeIds });
 

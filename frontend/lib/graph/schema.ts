@@ -1,3 +1,5 @@
+import { onsitNodeTypes, personalDataNodeTypes } from './ontology'
+
 export type GraphSource = 'onsit' | 'gdpr' | 'manual' | 'inference' | 'file_upload'
 export type GraphRiskLevel = 'low' | 'medium' | 'high' | 'critical'
 
@@ -23,47 +25,23 @@ const labelMap: Record<string, string> = {
     publicdocument: 'PublicDocument',
     cryptowallet: 'CryptoWallet',
     crypto_wallet: 'CryptoWallet',
-    user: 'User',
-    persona: 'Persona',
-    company: 'Company',
+    user: 'Subject',
+    subject: 'Subject',
+    persona: 'Subject',
+    company: 'Organisation',
+    organisation: 'Organisation',
+    controllerprofile: 'ControllerProfile',
     account: 'Account',
     attribute: 'Attribute',
     datapoint: 'DataPoint',
     data_point: 'DataPoint',
-    entity: 'Entity',
-    inference: 'Inference',
+    entity: 'DataPoint',
+    inference: 'Claim',
 }
 
 export const graphNodeTypeOrder = [
-    'User',
-    'Persona',
-    'Company',
-    'Account',
-    'Attribute',
-    'DataPoint',
-    'Inference',
-    'Entity',
-    'Email',
-    'Username',
-    'Phone',
-    'Name',
-    'Identifier',
-    'Domain',
-    'IP',
-    'IPAddress',
-    'ASN',
-    'CIDR',
-    'SocialProfile',
-    'Individual',
-    'Organization',
-    'Website',
-    'BreachRecord',
-    'Credential',
-    'PublicDocument',
-    'CryptoWallet',
-    'Transaction',
-    'NFT',
-    'ONSITFinding',
+    ...personalDataNodeTypes.filter(type => type !== 'GraphNode'),
+    ...onsitNodeTypes,
 ]
 
 export function sanitizeNeo4jLabel(label: string): string {
@@ -73,7 +51,10 @@ export function sanitizeNeo4jLabel(label: string): string {
 }
 
 export function mapTypeToLabel(type: string = 'Entity'): string {
-    return sanitizeNeo4jLabel(labelMap[type.toLowerCase()] || type)
+    const mapped = labelMap[type.toLowerCase()] || type
+    return [...personalDataNodeTypes, ...onsitNodeTypes].includes(mapped)
+        ? sanitizeNeo4jLabel(mapped)
+        : 'DataPoint'
 }
 
 export function sanitizeRelationshipType(type: string = 'RELATES_TO'): string {

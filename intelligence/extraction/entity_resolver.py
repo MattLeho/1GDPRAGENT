@@ -110,33 +110,11 @@ class EntityResolver:
         if not valid_triples:
             return []
         
-        # 1. Extract all unique entities
-        all_entities = set()
-        for triple in valid_triples:
-            all_entities.add(triple.subject.lower())
-            all_entities.add(triple.object.lower())
-        
-        # 2. Group similar entities
-        entity_groups = self._group_similar_entities(all_entities)
-        
-        # 3. For each group, choose canonical form
-        entity_mapping = self._select_canonical_forms(entity_groups, valid_triples)
-        
-        # 4. Second pass: root word relationships
-        entity_mapping = self._apply_root_word_matching(entity_mapping, all_entities)
-        
-        # 5. Optional LLM resolution for remaining ambiguities
-        if use_llm and self.client:
-            ambiguous_groups = [
-                variants for normalized, variants in entity_groups.items()
-                if len(variants) > 2  # Only resolve highly ambiguous groups
-            ]
-            if ambiguous_groups:
-                llm_mappings = await self._resolve_with_llm(ambiguous_groups)
-                entity_mapping.update(llm_mappings)
-        
-        # 6. Apply standardization to triples
-        return self._apply_standardization(valid_triples, entity_mapping)
+        # Similar spelling, root words, or an LLM suggestion cannot establish
+        # identity. Typed deterministic canonical keys are resolved later by
+        # graph.ontology.canonical_entity_key; ambiguous equivalence remains a
+        # review candidate rather than rewriting source triples.
+        return valid_triples
     
     def _group_similar_entities(
         self,
@@ -410,6 +388,8 @@ Example: {{"Google LLC": ["google", "google llc", "google inc."]}}"""
                     source_chunk=triple.source_chunk,
                     source_text=triple.source_text,
                     inferred=triple.inferred,
+                    assertion_id=triple.assertion_id,
+                    source_assertion_ids=triple.source_assertion_ids,
                 ))
             else:
                 standardized.append(triple)

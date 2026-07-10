@@ -95,6 +95,8 @@ class SPOTriple(BaseModel):
         default=False,
         description="True if relationship was inferred, not directly extracted"
     )
+    assertion_id: Optional[str] = Field(default=None, description="Ledger assertion backing a source triple")
+    source_assertion_ids: tuple[str, ...] = Field(default=(), description="Source assertions used to generate this hypothesis")
     
     @field_validator("predicate")
     @classmethod
@@ -301,9 +303,11 @@ class ChunkingConfig(BaseModel):
 class InferenceConfig(BaseModel):
     """Configuration for relationship inference."""
     
-    use_llm_for_inference: bool = Field(default=True)
-    apply_transitive: bool = Field(default=True)
-    use_lexical_similarity: bool = Field(default=True)
+    # Hypothesis generation is opt-in. None of these mechanisms establish
+    # accepted evidence or entity identity.
+    use_llm_for_inference: bool = Field(default=False)
+    apply_transitive: bool = Field(default=False)
+    use_lexical_similarity: bool = Field(default=False)
     max_predicate_words: int = Field(default=3, ge=1, le=5)
     similarity_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
 
@@ -321,7 +325,7 @@ class PipelineConfig(BaseModel):
     
     # Validation settings
     enable_standardization: bool = Field(default=True)
-    enable_inference: bool = Field(default=True)
+    enable_inference: bool = Field(default=False)
     enable_validation: bool = Field(default=True)
     
     # Performance

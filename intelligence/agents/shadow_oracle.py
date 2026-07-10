@@ -89,10 +89,12 @@ class ShadowOracleAgent:
         # Query 1: Get user's companies and data
         try:
             companies_query = """
-            MATCH (u:User {uid: $user_id})-[:HAS_ACCOUNT]->(a:Account)-[:HELD_BY]->(c:Company)
-            OPTIONAL MATCH (c)-[:COLLECTS]->(d:DataPoint)
-            RETURN c.name as company, collect(DISTINCT d.category) as data_categories,
-                   count(d) as data_points
+            MATCH (s:Subject {canonical_key: $user_id})-[r]->(n:GraphNode)
+            WHERE coalesce(r.epistemic_basis, '') <> 'model_hypothesis'
+              AND (n:Organisation OR n:ControllerProfile OR n:DataPoint)
+            RETURN coalesce(n.value,n.canonical_key) as company,
+                   collect(DISTINCT head([label IN labels(n) WHERE label <> 'GraphNode'])) as data_categories,
+                   count(n) as data_points
             LIMIT 10
             """
             results = await self.neo4j.query(companies_query, {"user_id": user_id})
@@ -109,9 +111,10 @@ class ShadowOracleAgent:
         # Query 2: Get shared attributes (emails, phones, etc.)
         try:
             attributes_query = """
-            MATCH (u:User {uid: $user_id})-[:HAS_ACCOUNT]->(a:Account)-[:LINKED_TO]->(attr:Attribute)
-            RETURN attr.type as type, attr.value as value, 
-                   collect(DISTINCT a.platform) as platforms
+            MATCH (s:Subject {canonical_key: $user_id})-[r]->(attr:Identifier)
+            WHERE coalesce(r.epistemic_basis, '') <> 'model_hypothesis'
+            RETURN 'Identifier' as type, coalesce(attr.value,attr.canonical_key) as value,
+                   collect(DISTINCT type(r)) as platforms
             LIMIT 20
             """
             results = await self.neo4j.query(attributes_query, {"user_id": user_id})
@@ -130,8 +133,8 @@ class ShadowOracleAgent:
         if keywords:
             try:
                 keyword_query = """
-                MATCH (n)
-                WHERE any(prop in keys(n) WHERE 
+                MATCH (subject:Subject)-[r]->(n:GraphNode)
+                WHERE coalesce(r.epistemic_basis, '') <> 'model_hypothesis' AND any(prop in keys(n) WHERE 
                     toString(n[prop]) CONTAINS $keyword)
                 RETURN labels(n) as labels, properties(n) as props
                 LIMIT 5

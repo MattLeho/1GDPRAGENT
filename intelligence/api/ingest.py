@@ -22,6 +22,7 @@ class IngestRequestBody(BaseModel):
     extracted_data: list[dict] = Field(default_factory=list, description="Extracted entities")
     categories: dict = Field(default_factory=dict, description="Categorized data")
     source: str = Field(default="manual", description="Data source")
+    source_artifact: dict = Field(default_factory=dict, description="Legacy file reference or source occurrence metadata")
     
     class Config:
         json_schema_extra = {
@@ -50,6 +51,7 @@ class IngestResponse(BaseModel):
     statements_executed: int
     statements_errored: int
     errors: list[str] = []
+    candidate_assertion_ids: list[str] = []
 
 
 class IngestAsyncResponse(BaseModel):
@@ -77,6 +79,7 @@ async def ingest_data(body: IngestRequestBody):
         extracted_data=body.extracted_data,
         categories=body.categories,
         source=body.source,
+        source_artifact=body.source_artifact,
     )
     
     try:
@@ -89,6 +92,7 @@ async def ingest_data(body: IngestRequestBody):
             statements_executed=result.statements_executed,
             statements_errored=result.statements_errored,
             errors=result.errors,
+            candidate_assertion_ids=result.candidate_assertion_ids,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -117,6 +121,7 @@ async def ingest_data_async(
             "extracted_data": body.extracted_data,
             "categories": body.categories,
             "source": body.source,
+            "source_artifact": body.source_artifact,
         }],
     )
     

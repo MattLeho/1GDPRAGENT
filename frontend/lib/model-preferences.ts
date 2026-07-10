@@ -59,36 +59,6 @@ const DEFAULT_PREFERENCES: ModelPreferences = {
     workflowModels: DEFAULT_WORKFLOW_MODELS,
 };
 
-async function ensurePreferencesTable() {
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS model_preferences (
-            id INTEGER PRIMARY KEY DEFAULT 1,
-            workflow_backend TEXT NOT NULL DEFAULT 'built_in',
-            provider TEXT NOT NULL DEFAULT 'google',
-            model TEXT NOT NULL DEFAULT 'flash_latest',
-            workflow_models JSONB NOT NULL DEFAULT '{}'::jsonb,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            CONSTRAINT single_model_preferences_row CHECK (id = 1)
-        )
-    `);
-
-    await pool.query(`
-        ALTER TABLE model_preferences
-        ADD COLUMN IF NOT EXISTS workflow_models JSONB NOT NULL DEFAULT '{}'::jsonb
-    `);
-
-    await pool.query(`
-        INSERT INTO model_preferences (id, workflow_backend, provider, model, workflow_models)
-        VALUES (1, $1, $2, $3, $4::jsonb)
-        ON CONFLICT (id) DO NOTHING
-    `, [
-        DEFAULT_PREFERENCES.workflowBackend,
-        DEFAULT_PREFERENCES.provider,
-        DEFAULT_PREFERENCES.model,
-        JSON.stringify(DEFAULT_PREFERENCES.workflowModels),
-    ]);
-}
-
 function normalizeWorkflowBackend(value: unknown): WorkflowBackend {
     if (value === 'n8n' || value === 'hybrid' || value === 'built_in') {
         return value;
@@ -139,7 +109,6 @@ function normalizeWorkflowModels(value: unknown): Record<ModelPurpose, WorkflowM
 
 export async function getModelPreferences(): Promise<ModelPreferences> {
     try {
-        await ensurePreferencesTable();
         const result = await pool.query(`
             SELECT workflow_backend, provider, model, workflow_models
             FROM model_preferences
@@ -166,8 +135,6 @@ export async function getModelPreferences(): Promise<ModelPreferences> {
 }
 
 export async function saveModelPreferences(preferences: ModelPreferencesInput): Promise<ModelPreferences> {
-    await ensurePreferencesTable();
-
     const provider = normalizeAIProvider(preferences.provider) || DEFAULT_PREFERENCES.provider;
     const normalized: ModelPreferences = {
         workflowBackend: normalizeWorkflowBackend(preferences.workflowBackend),

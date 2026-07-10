@@ -20,43 +20,47 @@ export async function POST(request: Request) {
 
         // First, fetch relevant graph data based on query keywords
         const lowerQuery = query.toLowerCase();
-        let cypherQuery = 'MATCH (n) RETURN n LIMIT 50';
+        let cypherQuery = "MATCH (n:GraphNode) WHERE coalesce(n.retired,false)=false AND coalesce(n.source,'')<>'inference' RETURN n LIMIT 50";
         let cypherParams: Record<string, unknown> = {};
 
         // Use more specific queries based on what's being asked
         if (lowerQuery.includes('email')) {
             cypherQuery = `
-                MATCH (p:Persona)-[r:USES_EMAIL]->(e:Email)
-                OPTIONAL MATCH (a:Account)-[:REGISTERED_WITH]->(e)
-                RETURN p, r, e, a LIMIT 50
+                MATCH (s:Subject)-[r]->(e:GraphNode)
+                WHERE (e:Identifier OR e:Email) AND coalesce(r.epistemic_basis,'') <> 'model_hypothesis'
+                RETURN s, r, e LIMIT 50
             `;
         } else if (lowerQuery.includes('company') || lowerQuery.includes('companies')) {
             cypherQuery = `
-                MATCH (c:Company)
-                OPTIONAL MATCH (a:Account)-[:HELD_BY]->(c)
-                RETURN c, a LIMIT 50
+                MATCH (c:GraphNode)
+                WHERE c:Organisation OR c:ControllerProfile
+                OPTIONAL MATCH (a:Account)-[r:HELD_BY]->(c)
+                WHERE r IS NULL OR coalesce(r.epistemic_basis,'') <> 'model_hypothesis'
+                RETURN c, a, r LIMIT 50
             `;
         } else if (lowerQuery.includes('amazon') || lowerQuery.includes('google') || lowerQuery.includes('facebook')) {
             const company = lowerQuery.includes('amazon') ? 'Amazon' :
                 lowerQuery.includes('google') ? 'Google' : 'Facebook';
             cypherQuery = `
-                MATCH (c:Company {name: $company})
-                OPTIONAL MATCH (a:Account)-[:HELD_BY]->(c)
-                OPTIONAL MATCH (a)-[:REGISTERED_WITH]->(e:Email)
-                RETURN c, a, e LIMIT 50
+                MATCH (c:GraphNode)
+                WHERE (c:Organisation OR c:ControllerProfile) AND toLower(coalesce(c.value,c.canonical_key,'')) CONTAINS toLower($company)
+                OPTIONAL MATCH (a:Account)-[r:HELD_BY]->(c)
+                WHERE r IS NULL OR coalesce(r.epistemic_basis,'') <> 'model_hypothesis'
+                RETURN c, a, r LIMIT 50
             `;
             cypherParams = { company };
         } else if (lowerQuery.includes('phone')) {
             cypherQuery = `
-                MATCH (p:Persona)-[r:HAS_PHONE]->(ph:Phone)
-                OPTIONAL MATCH (a:Account)-[:VERIFIED_BY]->(ph)
-                RETURN p, r, ph, a LIMIT 50
+                MATCH (s:Subject)-[r]->(ph:GraphNode)
+                WHERE (ph:Identifier OR ph:Phone) AND coalesce(r.epistemic_basis,'') <> 'model_hypothesis'
+                RETURN s, r, ph LIMIT 50
             `;
         } else if (lowerQuery.includes('account')) {
             cypherQuery = `
-                MATCH (p:Persona)-[:OWNS_ACCOUNT]->(a:Account)
-                OPTIONAL MATCH (a)-[:HELD_BY]->(c:Company)
-                RETURN p, a, c LIMIT 50
+                MATCH (s:Subject)-[r]->(a:Account)
+                WHERE coalesce(r.epistemic_basis,'') <> 'model_hypothesis'
+                OPTIONAL MATCH (a)-[held:HELD_BY]->(c:Organisation)
+                RETURN s, r, a, held, c LIMIT 50
             `;
         }
 
@@ -64,7 +68,7 @@ export async function POST(request: Request) {
         const results = await runCypher(cypherQuery, cypherParams);
 
         // Build context from results
-        const context = buildContextFromResults(results, lowerQuery);
+        const context = buildContextFromResults(results);
 
         // Call Gemini to generate a natural language response
         const geminiResponse = await callGemini(query, context);
@@ -83,13 +87,13 @@ export async function POST(request: Request) {
     }
 }
 
-function buildContextFromResults(results: unknown[], query: string): string {
+function buildContextFromResults(results: unknown[]): string {
     if (!results || results.length === 0) {
         return "The knowledge graph is empty or no relevant data was found.";
     }
 
     const nodes: Set<string> = new Set();
-    const relationships: string[] = [];
+    const relationships: Set<string> = new Set();
 
     for (const record of results) {
         const rec = record as { keys: string[]; get: (key: string) => unknown };
@@ -97,12 +101,14 @@ function buildContextFromResults(results: unknown[], query: string): string {
             for (const key of rec.keys) {
                 const value = rec.get(key);
                 if (value && typeof value === 'object') {
-                    const node = value as { properties?: Record<string, unknown>; labels?: string[] };
+                    const node = value as { properties?: Record<string, unknown>; labels?: string[]; type?: string };
                     if (node.properties) {
                         const props = node.properties;
                         const label = node.labels?.[0] || 'Node';
                         const name = props.name || props.value || props.address || props.username || 'unknown';
                         nodes.add(`${label}: ${name}`);
+                    } else if (node.type) {
+                        relationships.add(node.type);
                     }
                 }
             }
@@ -111,6 +117,7 @@ function buildContextFromResults(results: unknown[], query: string): string {
 
     let context = `Found ${nodes.size} relevant items in the graph:\n`;
     context += Array.from(nodes).join('\n');
+    if (relationships.size) context += `\nRelationships: ${Array.from(relationships).join(', ')}`;
 
     return context;
 }

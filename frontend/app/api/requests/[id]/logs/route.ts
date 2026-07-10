@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
-import { ensureWorkflowLogsTable } from '@/lib/workflow-logs';
 
 interface Activity {
     id: string;
@@ -39,8 +38,6 @@ export async function GET(
 ) {
     try {
         const { id } = await params;
-        await ensureWorkflowLogsTable();
-
         // Get workflow logs
         const logsResult = await pool.query(
             `SELECT id, workflow_name, workflow_type, status, details, 

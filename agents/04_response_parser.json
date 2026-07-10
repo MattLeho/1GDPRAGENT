@@ -600,7 +600,7 @@
         {
             "parameters": {
                 "operation": "executeQuery",
-                "query": "INSERT INTO received_data (id, request_id, file_name, file_type, file_size_mb, analysis_summary, received_at)\nVALUES (\n  gen_random_uuid(),\n  '{{ $json.requestId }}'::uuid,\n  '{{ $json.fileName.replace(/'/g, \"''\") }}',\n  '{{ $json.detectedType }}',\n  {{ $json.fileSizeMB || 0 }},\n  '{{ ($json.analysis.summary || \"Analysis pending\").substring(0, 500).replace(/'/g, \"''\") }}',\n  NOW()\n)\nRETURNING id;",
+                "query": "INSERT INTO received_data (id, request_id, file_name, file_type, file_size_mb, ai_summary, date_received, graph_ingested)\nVALUES (\n  gen_random_uuid(),\n  '{{ $json.requestId }}'::uuid,\n  '{{ $json.fileName.replace(/'/g, \"''\") }}',\n  '{{ $json.detectedType }}',\n  {{ $json.fileSizeMB || 0 }},\n  '{{ ($json.analysis.summary || \"Analysis pending\").substring(0, 500).replace(/'/g, \"''\") }}',\n  NOW(),\n  FALSE\n)\nRETURNING id;",
                 "options": {}
             },
             "id": "save-to-db",

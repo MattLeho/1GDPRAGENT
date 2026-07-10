@@ -77,6 +77,7 @@ def ingest_to_graph_task(self, data: dict) -> dict:
         extracted_data=data.get("extracted_data", []),
         categories=data.get("categories", {}),
         source=data.get("source", "celery"),
+        source_artifact=data.get("source_artifact", {}),
     )
     
     result = run_async(agent.ingest(request))
@@ -89,6 +90,7 @@ def ingest_to_graph_task(self, data: dict) -> dict:
         "statements_executed": result.statements_executed,
         "statements_errored": result.statements_errored,
         "errors": result.errors,
+        "candidate_assertion_ids": result.candidate_assertion_ids,
     }
 
 
