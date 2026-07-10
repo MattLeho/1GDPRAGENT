@@ -1,60 +1,63 @@
-# 1GDPRAGENT: GDPR Automation System
+# 1GDPRAGENT
 
-A comprehensive, multi-agent AI system designed to automate the entire lifecycle of GDPR Data Subject Access Requests (DSARs) and data deletion requests. Built with an event-driven architecture using N8N, Next.js, PostgreSQL, Neo4j, and Google Gemini.
+1GDPRAGENT is a local-first system for:
 
-## 🌟 Overview
+> privacy-rights acquisition + provenance-preserving personal-data analysis + temporal evidence graph + human-controlled AI interpretation
 
-The **GDPR Automation App** empowers users to reclaim their data privacy by orchestrating specialized AI agents. It automates everything from reading complex privacy policies to drafting legally sound requests, monitoring email responses, parsing exported personal data, and building a secure, queryable "Shadow Profile" knowledge graph of a user's digital footprint.
+It helps a person request data from organisations, preserve the returned source material, inspect what a controller appears to record or infer, and explore evidence-backed relationships without treating model output as psychological truth.
 
-## 🏗️ Architecture
+## Trusted evidence architecture
 
-The system uses a decoupled architecture where a Next.js frontend triggers specialized N8N AI agent workflows via webhooks. Data is stored securely in PostgreSQL (relational data/drafts) and Neo4j (graph connections for data points).
+PostgreSQL is the canonical evidence ledger. Immutable content bytes, source occurrences, mechanically resolvable locators, versioned analysis runs, and lifecycle-controlled assertions are recorded before accepted conclusions can be projected to Neo4j.
 
-### Core Components
-- **Next.js Frontend:** User interface for initiating requests and querying the Shadow Profile Oracle.
-- **N8N Workflow Engine:** Orchestrates AI agents and handles scheduling, IMAP/SMTP integrations, and data parsing.
-- **Google Gemini (PaLM):** The core intelligence layer driving all agents (policy analysis, drafting, classification, and graph extraction).
-- **PostgreSQL:** Stores user profiles, credentials (encrypted), and request states.
-- **Neo4j:** Stores the "Knowledge Graph" of companies, accounts, and extracted personal data points.
+```text
+SourceArtifact
+  -> extraction
+  -> Assertion candidates
+  -> locator/provenance verification
+  -> deterministic, MAKGED, or human review
+  -> accepted Assertions
+  -> GraphProjectionService
+  -> Neo4j
+```
 
-## 🤖 AI Agent Ecosystem
+Model suggestions remain `candidate` assertions with `epistemic_basis=model_hypothesis`. Confidence does not promote them. MAKGED can assess an interpretation, but it cannot create missing evidence. The graph UI hides hypothesis relationships by default and uses stable UUID `node_id` values rather than Neo4j internal IDs.
 
-The application is powered by a suite of 8 specialized AI agents working together:
+The ontology keeps these layers distinct:
 
-1. **Policy Analyzer (`01_policy_analyzer.json`)**
-   - Scrapes and analyzes a company's privacy policy to extract the DPO email, request methods, and data retention policies.
+- the person (`Subject`);
+- a controller's representation of the person (`ControllerProfile`);
+- observed activity and controller-assigned attributes;
+- deterministic derivations;
+- model hypotheses and human-confirmed claims;
+- ONSIT public-source findings, which use an explicitly separate label set.
 
-2. **Request Drafter (`02_request_drafter.json`)**
-   - Generates formal, legally compliant GDPR (Article 15/17) or CCPA request emails tailored to the specific company.
+## Services
 
-3. **Email Automator (`03a_email_sender.json` & `03b_inbox_monitor.json`)**
-   - Sends the approved request via SMTP and actively monitors the inbox via IMAP to classify incoming responses (e.g., Acknowledgment, Data Attached, Rejection).
+- Next.js UI: <http://localhost:3001>
+- Intelligence and canonical graph projection API: <http://localhost:8001>
+- PostgreSQL: `localhost:15432`
+- Neo4j Browser: <http://localhost:7474>
+- n8n (optional workflow backend): <http://localhost:5678>
+- Qdrant: <http://localhost:6333>
+- Redis: `localhost:6379`
 
-4. **Response Parser (`04_response_parser.json`)**
-   - Processes data files received from companies (PDFs, ZIPs, CSVs, JSON).
-   - Extracts structured personal information and assigns privacy risk levels (LOW/MEDIUM/HIGH).
+DSAR/request management, email workflows, built-in/N8N/hybrid selection, provider credentials, ONSIT, grounded extraction, MAKGED, and the existing graph experience remain available. N8N graph templates are compatibility adapters: they submit to the canonical evidence service and do not generate or execute graph-write Cypher.
 
-5. **Knowledge Graph Ingestor (`05_kg_ingestor.json`)**
-   - Converts the extracted personal data into graph nodes and relationships (triples).
-   - Links shared identifiers (e.g., email, phone number) across different companies to map the user's digital footprint.
+## Start and migrate
 
-6. **Shadow Profile Oracle (`06_shadow_oracle.json`)**
-   - A conversational agent that answers natural language questions about the user's data (e.g., "What companies have my location data?").
-   - Translates questions into Cypher queries against the Neo4j database to provide evidence-backed answers.
+1. Copy `.env.example` to an untracked `.env` and set the required local secrets.
+2. Run `docker compose up -d` (or `start-app.bat` / `start-app.sh`).
+3. Open <http://localhost:3001>.
 
-7. **Integrity Council (MAKGED) (`07_integrity_council.json`)**
-   - An internal validation system using a multi-agent debate framework (Forward, Backward, and Judge agents).
-   - Debates and verifies proposed Knowledge Graph entries against source texts to prevent AI hallucinations.
+The one-shot `migrate` service must complete before application services start. It applies the ordered, checksum-protected migrations in `database/migrations/` and records them in `gdpr_schema_migrations`. To run migrations explicitly, use `docker compose run --rm migrate` or the `init-db` helper. Normal startup never drops request or evidence data.
 
-## 🚀 Getting Started
+`02_DATABASE_SCHEMA.sql`, `docker/init/01_schema.sql`, root `migrations/`, and `App_Context_and_Plan_ORIGINAL/` are compatibility or historical references, not operational architecture.
 
-Please refer to the detailed documentation located in the `App_Context_and_Plan/` directory:
-- **[N8N Agent Import & Setup Instructions](App_Context_and_Plan_ORIGINAL/README.md):** Step-by-step guide to importing workflows and configuring credentials (Gemini, PostgreSQL, Neo4j, SMTP/IMAP).
-- **[Detailed Agent Specs](AgentDescriptions.md):** Deep dive into the input/output schemas and prompts for each agent.
-- **[Database Setup](.agent/workflows/database-setup.md):** Instructions for starting and managing the required databases.
+## Verification
 
-## 🔒 Privacy & Security
+Task 1 is verified with disposable PostgreSQL migration tests, real Neo4j projection/backfill tests, locator and assertion invariant tests, TypeScript checking, linting, a production build, and live Compose health checks. See:
 
-- **Local Execution:** Designed to be run locally (or self-hosted) so personal data exports never leave your control.
-- **Encryption:** Identity fields and sensitive data can be encrypted in transit and at rest.
-- **No Third-Party DBs:** All parsed GDPR data is stored in your local PostgreSQL and Neo4j instances.
+- [Evidence and graph architecture](Technical%20Documentation/Evidence%20and%20Graph%20Architecture.md)
+- [Task 1 implementation ledger](Technical%20Documentation/Task%201%20Implementation%20Ledger.md)
+- [Task 1 acceptance audit](Technical%20Documentation/Task%201%20Acceptance%20Audit.md)

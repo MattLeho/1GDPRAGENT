@@ -1,8 +1,17 @@
 # Implementation Tracker
 
-Updated: 2026-06-06
+Updated: 2026-07-10
 
 ## Current Focus
+
+- [x] Task 1: establish canonical checksum-protected migrations and one-shot startup migration service.
+- [x] Task 1: implement AnalysisRun, ExportSnapshot, ContentBlob, SourceArtifact, EvidenceLocator, Assertion, and provenance joins.
+- [x] Task 1: enforce immutable assertion semantics, verified model provenance, supersession, and versioned data artifacts.
+- [x] Task 1: replace drifting graph labels with a documented shared ontology and stable UUID node IDs.
+- [x] Task 1: route personal graph writes through the Python GraphProjectionService.
+- [x] Task 1: demote inference and legacy N8N KG output to assertion candidates.
+- [x] Task 1: add disposable PostgreSQL and live Neo4j integration tests.
+- [x] Task 1: pass the line-by-line acceptance audit, type checking, linting, production build, and live Compose verification.
 
 - [x] Review `Audit.md` and `fixes.md`.
 - [x] Review original planning docs in `App_Context_and_Plan/`.
@@ -19,7 +28,7 @@ Updated: 2026-06-06
 - [ ] Reduce frontend lint warnings.
 - [x] Rename `frontend/middleware.ts` to the newer Next.js proxy convention.
 - [x] Add health checks for n8n and Celery.
-- [ ] Consolidate migrations into a single startup source of truth.
+- [x] Consolidate migrations into `database/migrations/` with history, checksums, advisory locking, and startup gating.
 - [ ] Add API route tests for auth, uploads, chat, graph, and workflow settings.
 
 Audit follow-up notes:
@@ -27,7 +36,7 @@ Audit follow-up notes:
 - Lint warning reduction started: removed unused imports/catch bindings and typed request detail chat/log state. Targeted lint on `RequestDetailSheet` now has one remaining React compiler advisory (`set-state-in-effect`).
 - Proxy convention complete: `frontend/proxy.ts` now exports `proxy`; `frontend/middleware.ts` has been removed.
 - Health checks complete: n8n uses `/healthz/readiness`; Celery uses `celery inspect ping` against the in-container worker hostname.
-- Migration source-of-truth assessment: schema currently exists in `docker/init/01_schema.sql`, `02_DATABASE_SCHEMA.sql`, `migrations/*.sql`, `database/migrations/*.sql`, and route-level inline DDL. Consolidation needs an owner decision before moving startup DDL.
+- Migration consolidation complete: `database/migrations/` and `database/migrate.py` are operational authority; legacy schema locations are clearly marked compatibility references and runtime DDL has been removed.
 - API route test assessment: no frontend route test runner or `test` script is configured yet. Target coverage should include auth, upload/process/scan, graph/chat/nodes, and workflow settings routes.
 
 ## Workflow Backend
