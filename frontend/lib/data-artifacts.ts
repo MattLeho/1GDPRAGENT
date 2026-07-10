@@ -20,6 +20,11 @@ export interface DataArtifact {
     payload: Record<string, unknown>;
     confidence?: number;
     source_span?: string | null;
+    analysis_run_id?: string;
+    artifact_version?: number;
+    supersedes_artifact_id?: string | null;
+    derivation_method?: string;
+    derivation_version?: string;
 }
 
 export interface ArtifactSourceFile {
@@ -43,62 +48,64 @@ const commonDatePattern = /\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b/g;
 const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const ipPattern = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 
-export async function ensureDataArtifactsTable() {
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS data_artifacts (
-            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            request_id UUID REFERENCES requests(id) ON DELETE CASCADE,
-            file_id UUID REFERENCES received_data(id) ON DELETE CASCADE,
-            artifact_type TEXT NOT NULL,
-            title TEXT NOT NULL,
-            payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-            confidence NUMERIC DEFAULT 1.0,
-            source_span TEXT,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        )
-    `);
-
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_data_artifacts_request_id ON data_artifacts(request_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_data_artifacts_file_id ON data_artifacts(file_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_data_artifacts_type ON data_artifacts(artifact_type)`);
-}
-
 export async function replaceArtifactsForFile(file: ArtifactSourceFile, content: string): Promise<DataArtifact[]> {
     if (!file.request_id || !file.id) {
         return [];
     }
 
-    await ensureDataArtifactsTable();
     const artifacts = generateArtifacts(file, content);
-
-    await pool.query('DELETE FROM data_artifacts WHERE file_id = $1', [file.id]);
-
-    for (const artifact of artifacts) {
-        await pool.query(
-            `INSERT INTO data_artifacts
-             (request_id, file_id, artifact_type, title, payload, confidence, source_span, updated_at)
-             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, NOW())`,
-            [
-                artifact.request_id,
-                artifact.file_id,
-                artifact.artifact_type,
-                artifact.title,
-                JSON.stringify(artifact.payload),
-                artifact.confidence ?? 1,
-                artifact.source_span || null,
-            ],
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [file.id]);
+        const runResult = await client.query(
+            `INSERT INTO analysis_runs
+             (run_type, request_id, status, pipeline_version, configuration, started_at, completed_at)
+             VALUES ('data_artifact_generation', $1, 'completed', $2, $3::jsonb, NOW(), NOW())
+             RETURNING id`,
+            [file.request_id, 'task1-artifacts-v1', JSON.stringify({ fileId: file.id })],
         );
-    }
+        const analysisRunId = runResult.rows[0].id as string;
+        const persisted: DataArtifact[] = [];
 
-    return artifacts;
+        for (const artifact of artifacts) {
+            const previous = await client.query(
+                `SELECT id, artifact_version FROM data_artifacts
+                 WHERE file_id=$1 AND artifact_type=$2 AND title=$3
+                 ORDER BY artifact_version DESC LIMIT 1 FOR UPDATE`,
+                [file.id, artifact.artifact_type, artifact.title],
+            );
+            const prior = previous.rows[0];
+            const version = Number(prior?.artifact_version || 0) + 1;
+            const inserted = await client.query(
+                `INSERT INTO data_artifacts
+                 (request_id,file_id,artifact_type,title,payload,confidence,source_span,analysis_run_id,
+                  artifact_version,supersedes_artifact_id,derivation_method,derivation_version,updated_at)
+                 VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,'deterministic_artifact_generator',$11,NOW())
+                 RETURNING id`,
+                [artifact.request_id,artifact.file_id,artifact.artifact_type,artifact.title,
+                 JSON.stringify(artifact.payload),artifact.confidence ?? 1,artifact.source_span || null,
+                 analysisRunId,version,prior?.id || null,'task1-artifacts-v1'],
+            );
+            persisted.push({ ...artifact, id: inserted.rows[0].id, analysis_run_id: analysisRunId,
+                artifact_version: version, supersedes_artifact_id: prior?.id || null,
+                derivation_method: 'deterministic_artifact_generator', derivation_version: 'task1-artifacts-v1' });
+        }
+        await client.query('COMMIT');
+        return persisted;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
 }
 
 export async function getArtifactsForRequest(requestId: string): Promise<DataArtifact[]> {
-    await ensureDataArtifactsTable();
     const result = await pool.query(
-        `SELECT id, request_id, file_id, artifact_type, title, payload, confidence, source_span
-         FROM data_artifacts
+        `SELECT id, request_id, file_id, artifact_type, title, payload, confidence, source_span,
+                analysis_run_id, artifact_version, supersedes_artifact_id, derivation_method, derivation_version
+         FROM current_data_artifacts
          WHERE request_id = $1
          ORDER BY created_at ASC`,
         [requestId],

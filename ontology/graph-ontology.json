@@ -1,0 +1,25 @@
+{
+  "version": "1.0.0",
+  "personal_data_labels": [
+    "GraphNode", "Subject", "ControllerProfile", "Organisation", "Account",
+    "Identifier", "DataDomain", "DataPoint", "Topic", "TemporalState",
+    "ProjectEpisode", "ProcessingActivity", "Purpose", "LegalBasis", "Capability",
+    "CapabilityExposureState", "PolicyInstrument", "Claim", "SourceArtifact",
+    "Dataset", "Request"
+  ],
+  "onsit_labels": [
+    "ONSITFinding", "Email", "Username", "Phone", "Name", "Domain", "IPAddress",
+    "ASN", "CIDR", "SocialProfile", "Individual", "Organization", "Website",
+    "BreachRecord", "Credential", "PublicDocument", "CryptoWallet", "Transaction", "NFT"
+  ],
+  "relationships": [
+    "HAS_OBSERVED_SIGNAL", "ASSIGNED_ATTRIBUTE", "MAINTAINS_PROFILE", "HAS_IDENTIFIER",
+    "HAS_ACCOUNT", "HELD_BY", "DESCRIBES", "SUPPORTED_BY", "HAS_PURPOSE",
+    "HAS_LEGAL_BASIS", "ENABLES_CAPABILITY", "HAS_EXPOSURE_STATE", "SUPERSEDES",
+    "DERIVED_FROM", "RELATES_TO", "HUMAN_ASSERTED"
+  ],
+  "semantic_separation": {
+    "Subject": ["ControllerProfile", "SystemHypothesis"],
+    "ControllerProfile": ["Subject", "SystemHypothesis"]
+  }
+}

@@ -74,4 +74,6 @@ pyvis>=0.3.2                    # Interactive HTML graph visualization
 
 # Structured extraction (optional - supports fallback to Gemini)
 langextract>=1.1.1              # Google LangExtract for grounded extraction
+Pillow>=10.0.0                  # Mechanical image-region evidence resolution
+mutagen>=1.47.0                 # Mechanical media duration verification
 

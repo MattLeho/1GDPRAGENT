@@ -16,6 +16,7 @@ from api.validate import router as validate_router
 from api.query import router as query_router
 from api.onsit import router as onsit_router
 from api.extract import router as extract_router
+from api.evidence import router as evidence_router
 
 
 settings = get_settings()
@@ -28,6 +29,11 @@ async def lifespan(app: FastAPI):
     print(f"[{settings.service_name}] Starting up...")
     print(f"[{settings.service_name}] Gemini API configured: {'Yes' if settings.google_api_key else 'No'}")
     print(f"[{settings.service_name}] Redis URL: {settings.redis_url}")
+    try:
+        from graph.projection import GraphProjectionService
+        await GraphProjectionService().backfill_legacy_node_ids()
+    except Exception as exc:
+        print(f"[{settings.service_name}] Graph schema/backfill deferred: {exc}")
     
     yield
     
@@ -62,6 +68,7 @@ app.include_router(validate_router, tags=["Validation"])
 app.include_router(query_router, tags=["Query"])
 app.include_router(onsit_router, tags=["ONSIT Discovery"])
 app.include_router(extract_router, tags=["File Extraction"])
+app.include_router(evidence_router, tags=["Evidence"])
 
 
 @app.get("/")

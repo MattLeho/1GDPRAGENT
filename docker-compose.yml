@@ -23,6 +23,22 @@ services:
       timeout: 5s
       retries: 5
 
+  migrate:
+    build: ./intelligence
+    container_name: gdpr_migrate
+    restart: "no"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gdpr_local}
+      - MIGRATIONS_DIR=/database/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./database:/database:ro
+    command: python /database/migrate.py
+    networks:
+      - gdpr-net
+
   # ═══════════════════════════════════════════════════════════════════════════
   # N8N - Workflow Automation
   # ═══════════════════════════════════════════════════════════════════════════
@@ -47,8 +63,8 @@ services:
     ports:
       - "${N8N_HOST_PORT:-5678}:5678"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - n8n_data:/home/node/.n8n
     networks:
@@ -152,8 +168,8 @@ services:
     ports:
       - "${INTELLIGENCE_HOST_PORT:-8001}:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       neo4j:
         condition: service_healthy
       qdrant:
@@ -162,6 +178,11 @@ services:
         condition: service_healthy
     volumes:
       - ./intelligence:/app
+      - ./database:/database:ro
+      - ./ontology:/ontology:ro
+      - ./tests:/tests:ro
+      - ./:/workspace:ro
+      - ./frontend/uploads:/source-uploads:ro
       - intelligence_cache:/app/.cache
     command: sh -c "pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     networks:
@@ -198,6 +219,7 @@ services:
         condition: service_started
     volumes:
       - ./intelligence:/app
+      - ./frontend/uploads:/source-uploads:ro
       - intelligence_cache:/app/.cache
     command: sh -c "pip install -r requirements.txt && celery -A tasks worker -l INFO -c 4"
     networks:
@@ -264,11 +286,12 @@ services:
       - QDRANT_API_KEY=${QDRANT_API_KEY:-}
     volumes:
       - ./frontend:/app
+      - ./ontology:/ontology:ro
       - nextjs_node_modules:/app/node_modules
     command: sh -c "npm install && npm run dev"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       neo4j:
