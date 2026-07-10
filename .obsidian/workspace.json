@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "README.md",
+                "file": "NEW APP CONTEXT AND PLAN/Task 2- Task Execution Router, built-in workflow parity and settings rebuild.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "README"
+              "title": "Task 2- Task Execution Router, built-in workflow parity and settings rebuild"
             }
           }
         ]
@@ -78,7 +78,8 @@
       }
     ],
     "direction": "horizontal",
-    "width": 607.5
+    "width": 208.5,
+    "collapsed": true
   },
   "right": {
     "id": "d1e19763d6efc31f",
@@ -94,7 +95,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "README.md",
+                "file": "NEW APP CONTEXT AND PLAN/Task 2- Task Execution Router, built-in workflow parity and settings rebuild.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +105,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Backlinks for README"
+              "title": "Backlinks for Task 2- Task Execution Router, built-in workflow parity and settings rebuild"
             }
           },
           {
@@ -113,12 +114,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "README.md",
+                "file": "NEW APP CONTEXT AND PLAN/Task 2- Task Execution Router, built-in workflow parity and settings rebuild.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Outgoing links from README"
+              "title": "Outgoing links from Task 2- Task Execution Router, built-in workflow parity and settings rebuild"
             }
           },
           {
@@ -156,13 +157,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "README.md",
+                "file": "NEW APP CONTEXT AND PLAN/Task 2- Task Execution Router, built-in workflow parity and settings rebuild.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Outline of README"
+              "title": "Outline of Task 2- Task Execution Router, built-in workflow parity and settings rebuild"
             }
           }
         ]
@@ -185,23 +186,30 @@
   },
   "active": "5f073d1032116b53",
   "lastOpenFiles": [
+    "frontend/lib/connectors/email.ts",
+    "frontend/lib/connectors",
+    "frontend/lib/secure-credentials.ts",
+    "frontend/_tmp_21912_2d9a16a93047ca4a67753c4fef0385db",
+    "frontend/app/api/execution/route.ts",
+    "frontend/app/api/execution",
+    "frontend/app/api/settings/engine-health/[engineId]/route.ts",
+    "frontend/app/api/settings/engine-health/[engineId]",
+    "frontend/app/api/settings/engine-health",
+    "frontend/app/api/settings/execution-audit/route.ts",
+    "frontend/app/api/settings/execution-audit",
+    "NEW APP CONTEXT AND PLAN/Personal Insights Product Context.md",
+    "NEW APP CONTEXT AND PLAN/Task 2- Task Execution Router, built-in workflow parity and settings rebuild.md",
+    "Technical Documentation/Task 1 Acceptance Audit.md",
+    "Technical Documentation/Task 1 Implementation Ledger.md",
+    "README.md",
+    "Technical Documentation/Evidence and Graph Architecture.md",
+    "migrations/README.md",
+    "database/migrations/README.md",
     "NEW APP CONTEXT AND PLAN/Task 5- live data connectors and conservative retention and deletion policies.md",
-    "Technical Documentation",
-    "tests/__pycache__/test_audit_static.cpython-311.pyc",
-    "tests/__pycache__",
-    "frontend/next-env.d.ts",
-    "intelligence/api/__pycache__/extract.cpython-311.pyc",
-    "intelligence/onsit/enrichers/__pycache__/username.cpython-311.pyc",
-    "intelligence/onsit/enrichers/__pycache__/breach.cpython-311.pyc",
-    "intelligence/onsit/enrichers/__pycache__/breach.cpython-311.pyc.131953837166016",
-    "intelligence/onsit/enrichers/__pycache__/email.cpython-311.pyc",
-    "intelligence/onsit/enrichers/__pycache__/domain.cpython-311.pyc",
     "NEW APP CONTEXT AND PLAN/Task 4- Personal Insights, temporal exploration, contextual correlations and media intelligence.md",
     "NEW APP CONTEXT AND PLAN/Task 6- capability, purpose drift, linkability, active DSAR testing and the actual product UI.md",
     "NEW APP CONTEXT AND PLAN/Task 3- build the local-first ingestion and temporal analysis engine able to ingest large amounts of data.md",
-    "NEW APP CONTEXT AND PLAN/Task 2- Task Execution Router, built-in workflow parity and settings rebuild.md",
     "NEW APP CONTEXT AND PLAN/Task 1- rebuild the evidence and graph foundation.md",
-    "NEW APP CONTEXT AND PLAN/New Insights Dashboard.md",
     "NEW APP CONTEXT AND PLAN/Philosophy Audit from ChatGPT.md"
   ]
 }
