@@ -21,7 +21,7 @@
 ## Final verification record
 
 - Canonical migrations: 11 versions applied; a second live run was a successful no-op.
-- Automated tests: `26 passed, 1 warning in 17.96s`.
+- Automated tests: final rerun `26 passed, 1 warning in 11.46s`.
 - Python compilation, TypeScript type checking, full frontend lint, production build, and Compose configuration all passed.
 - Full Compose rebuild/start passed. PostgreSQL, Neo4j, Redis, Qdrant, intelligence, Celery, n8n, and Next.js were healthy; migration exited 0.
 - Runtime checks returned HTTP 200 for intelligence health, frontend login, Neo4j HTTP, and n8n readiness.

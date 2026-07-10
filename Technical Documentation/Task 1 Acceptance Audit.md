@@ -124,7 +124,7 @@ All required acceptance tests use synthetic data:
 - retained artifact history and latest-version view;
 - static guards against runtime DDL, destructive artifact replacement, schema drift, and stale ports.
 
-Exact result: `26 passed, 1 warning in 17.96s`. The warning is the existing Pydantic class-based configuration deprecation and is not a test failure.
+Final rerun result: `26 passed, 1 warning in 11.46s`. The warning is the existing Pydantic class-based configuration deprecation and is not a test failure.
 
 Additional verification:
 
