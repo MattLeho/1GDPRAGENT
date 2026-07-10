@@ -124,7 +124,7 @@ All required acceptance tests use synthetic data:
 - retained artifact history and latest-version view;
 - static guards against runtime DDL, destructive artifact replacement, schema drift, and stale ports.
 
-Final rerun result: `26 passed, 1 warning in 11.46s`. The warning is the existing Pydantic class-based configuration deprecation and is not a test failure.
+Post-connection-audit final result: `28 passed, 1 warning in 14.64s`. The warning is the existing Pydantic class-based configuration deprecation and is not a test failure.
 
 Additional verification:
 
@@ -163,3 +163,11 @@ The following work is intentionally outside Task 1 and was not started:
 - Legacy compatibility columns and adapters remain where useful. They are non-authoritative and may be removed only after dependent deployments are confirmed migrated.
 
 These are deployment/backfill risks, not missing Task 1 architecture. Unknown, unresolved, and candidate states remain valid outputs; no source evidence or graph truth is fabricated to eliminate them.
+
+## Post-completion connection audit
+
+On 2026-07-10, a user-reported Neo4j connection error exposed two graph-read defects. The application was reaching Neo4j, but driver 6 encoded ordinary JavaScript pagination numbers as floating-point values, which Neo4j rejected for `SKIP`/`LIMIT`. The graph route now validates pagination and passes explicit Neo4j integers. Successful responses explicitly report `dbStatus=connected`, so an empty database is distinguished from a failed connection.
+
+The same audit found stale invented fallback counts in the graph statistics route. They were removed: failures now return an explicit unavailable/error state with zero counts, while successful statistics include only active `GraphNode` data and exclude model-hypothesis/inferred relationships by default. A regression test covers integer pagination and non-fabrication.
+
+The audit also retired the unused `frontend/scripts/seed-graph.ts`. That script described destructive cleanup and fabricated `User`/`Persona` nodes outside the assertion ledger, so retaining it would contradict the single projection path even though the runtime write guard already made it non-functional.

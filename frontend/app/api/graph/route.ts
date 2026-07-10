@@ -1,4 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server';
+import neo4j from 'neo4j-driver';
 import { getDriver } from '@/lib/graph';
 import { getGraphNodeLabel, pickGraphNodeType } from '@/lib/graph/schema';
 
@@ -43,13 +44,25 @@ interface PaginationParams {
     centerNodeId: string | null;
 }
 
+function parseBoundedInteger(
+    value: string | null,
+    fallback: number,
+    minimum: number,
+    maximum: number
+): number {
+    if (value === null || value.trim() === '') return fallback;
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed)) return fallback;
+    return Math.min(Math.max(parsed, minimum), maximum);
+}
+
 function parsePaginationParams(request: NextRequest): PaginationParams {
     const searchParams = request.nextUrl.searchParams;
     const riskLevel = searchParams.get('riskLevel') || 'all';
 
     return {
-        limit: Math.min(parseInt(searchParams.get('limit') || '100'), 500),
-        skip: parseInt(searchParams.get('skip') || '0'),
+        limit: parseBoundedInteger(searchParams.get('limit'), 100, 1, 500),
+        skip: parseBoundedInteger(searchParams.get('skip'), 0, 0, Number.MAX_SAFE_INTEGER),
         layer: (searchParams.get('layer') as 'onsit' | 'gdpr' | 'all') || 'all',
         showInferences: searchParams.get('showInferences') === 'true',
         search: (searchParams.get('search') || '').trim().toLowerCase(),
@@ -89,7 +102,7 @@ export async function GET(request: NextRequest) {
                 RETURN DISTINCT n.node_id as id, labels(n) as labels, properties(n) as props
                 ORDER BY n.node_id
                 LIMIT $limit
-            `, { centerNodeId, limit });
+            `, { centerNodeId, limit: neo4j.int(limit) });
 
             const nodeIds = neighborResult.records.map(record => String(record.get('id')));
             const linksResult = nodeIds.length
@@ -109,6 +122,7 @@ export async function GET(request: NextRequest) {
                     nextCursor: null,
                     total: neighborResult.records.length,
                 },
+                dbStatus: 'connected',
             });
         }
 
@@ -116,8 +130,8 @@ export async function GET(request: NextRequest) {
         const nodeFilters: string[] = [];
         nodeFilters.push(`coalesce(n.retired, false) = false`);
         const params: Record<string, unknown> = {
-            skip,
-            limit: limit + 1,
+            skip: neo4j.int(skip),
+            limit: neo4j.int(limit + 1),
         };
 
         if (layer === 'onsit') {
@@ -185,11 +199,16 @@ export async function GET(request: NextRequest) {
                 nextCursor,
                 total,
             },
+            dbStatus: 'connected',
         });
     } catch (error) {
         console.error('Failed to fetch graph data:', error);
 
-        // Return empty graph with error indicator - NO dummy data
+        const neo4jError = error as { code?: string; message?: string };
+        const errorText = `${neo4jError.code || ''} ${neo4jError.message || ''}`;
+        const disconnected = /ServiceUnavailable|SessionExpired|Security\.Unauthorized|ECONNREFUSED|connection/i.test(errorText);
+
+        // Return an explicit unknown/error state. Never substitute synthetic graph data.
         return NextResponse.json({
             nodes: [],
             links: [],
@@ -198,8 +217,10 @@ export async function GET(request: NextRequest) {
                 nextCursor: null,
                 total: 0,
             },
-            error: 'Database connection failed. Please ensure Neo4j is running.',
-            dbStatus: 'disconnected',
+            error: disconnected
+                ? 'Could not connect to Neo4j. Check that the service and credentials are available.'
+                : 'Neo4j was reached, but the graph query failed.',
+            dbStatus: disconnected ? 'disconnected' : 'error',
         });
     } finally {
         await session?.close();

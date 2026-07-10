@@ -16,21 +16,27 @@ export async function GET() {
     try {
         // Count nodes by type
         const nodeCountResult = await session.run(`
-            MATCH (n)
-            RETURN labels(n)[0] as type, count(n) as count
+            MATCH (n:GraphNode)
+            WHERE coalesce(n.retired, false) = false
+            RETURN coalesce(head([label IN labels(n) WHERE label <> 'GraphNode']), 'GraphNode') as type,
+                   count(n) as count
         `);
 
         // Count relationships
         const relCountResult = await session.run(`
-            MATCH ()-[r]->()
+            MATCH (:GraphNode)-[r]->(:GraphNode)
+            WHERE coalesce(r.epistemic_basis, '') <> 'model_hypothesis'
+              AND (r.inferred IS NULL OR r.inferred = false)
             RETURN count(r) as total
         `);
 
-        // Count high-risk connections (inferences with high confidence)
+        // Risk is an explicit source property, not a confidence-based inference.
         const riskResult = await session.run(`
-            MATCH (n:Inference)
-            WHERE n.risk_level = 'high' OR n.confidence_score > 0.8
-            RETURN count(n) as count
+            MATCH (:GraphNode)-[r]->(:GraphNode)
+            WHERE toLower(coalesce(r.risk_level, '')) IN ['high', 'critical']
+              AND coalesce(r.epistemic_basis, '') <> 'model_hypothesis'
+              AND (r.inferred IS NULL OR r.inferred = false)
+            RETURN count(r) as count
         `);
 
         const nodesByType: Record<string, number> = {};
@@ -52,23 +58,20 @@ export async function GET() {
             nodesByType,
             highRiskConnections,
             lastUpdated: new Date().toISOString(),
+            dbStatus: 'connected',
         });
     } catch (error) {
         console.error('Failed to fetch graph stats:', error);
 
-        // Return fallback stats
+        // Unknown data is represented as unavailable/zero, never as invented graph facts.
         return NextResponse.json({
-            totalNodes: 9,
-            totalRelationships: 10,
-            nodesByType: {
-                User: 1,
-                Persona: 2,
-                Company: 2,
-                Account: 2,
-                Attribute: 2,
-            },
+            totalNodes: 0,
+            totalRelationships: 0,
+            nodesByType: {},
             highRiskConnections: 0,
             lastUpdated: new Date().toISOString(),
+            dbStatus: 'error',
+            error: 'Graph statistics are currently unavailable.',
         });
     } finally {
         await session.close();

@@ -15,13 +15,15 @@
 | Hypothesis-only inference | inference defaults, extraction storage, KG adapter | Implemented | default-off and projection rejection tests | Existing model outputs become candidates | None |
 | Version data artifacts | migration 003/005, `data-artifacts.ts` | Implemented | version retention/latest view/delete rejection tests | Existing artifact rows receive legacy AnalysisRuns | None |
 | Consolidated projection path | `GraphProjectionService`, evidence API, Next/N8N adapters | Implemented | projection idempotency and mutation guards | ONSIT handled as explicit separate labels through same service | None |
+| Retire legacy sample graph seeding | removed `frontend/scripts/seed-graph.ts` | Implemented | no-legacy-seed regression guard | Fake `User`/`Persona` writes cannot bypass the assertion ledger | None |
 | Preserve useful application functions | compatibility routes and N8N adapters | Implemented | build/typecheck/lint plus runtime health | DSAR/email/provider/ONSIT/graph UI kept | None |
+| Neo4j read connectivity and empty-state accuracy | graph API route, graph statistics route | Implemented | integer-pagination/non-fabrication regression; live empty-database API checks | Empty Neo4j is reported as connected with zero real records; no fallback graph facts | None |
 | Documentation and audit | README, implementation tracker, architecture guide, ledger, acceptance audit | Implemented | line-by-line acceptance audit; final repository/runtime verification | Updated alongside implementation; operational risks recorded separately | None |
 
 ## Final verification record
 
 - Canonical migrations: 11 versions applied; a second live run was a successful no-op.
-- Automated tests: final rerun `26 passed, 1 warning in 11.46s`.
+- Automated tests: post-connection-audit final result `28 passed, 1 warning in 14.64s`.
 - Python compilation, TypeScript type checking, full frontend lint, production build, and Compose configuration all passed.
 - Full Compose rebuild/start passed. PostgreSQL, Neo4j, Redis, Qdrant, intelligence, Celery, n8n, and Next.js were healthy; migration exited 0.
 - Runtime checks returned HTTP 200 for intelligence health, frontend login, Neo4j HTTP, and n8n readiness.

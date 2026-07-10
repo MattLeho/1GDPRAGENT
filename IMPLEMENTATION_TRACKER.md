@@ -12,6 +12,7 @@ Updated: 2026-07-10
 - [x] Task 1: demote inference and legacy N8N KG output to assertion candidates.
 - [x] Task 1: add disposable PostgreSQL and live Neo4j integration tests.
 - [x] Task 1: pass the line-by-line acceptance audit, type checking, linting, production build, and live Compose verification.
+- [x] Task 1 follow-up: fix Neo4j driver-6 integer pagination, distinguish an empty connected graph, and remove fabricated graph-statistic fallbacks.
 
 - [x] Review `Audit.md` and `fixes.md`.
 - [x] Review original planning docs in `App_Context_and_Plan/`.

@@ -118,6 +118,28 @@ def test_data_artifacts_are_versioned_not_replaced():
         assert field in source
 
 
+def test_graph_api_uses_neo4j_integers_and_never_fabricates_fallback_data():
+    graph_route = read('frontend/app/api/graph/route.ts')
+    stats_route = read('frontend/app/api/graph/stats/route.ts')
+
+    assert 'limit: neo4j.int(limit + 1)' in graph_route
+    assert 'skip: neo4j.int(skip)' in graph_route
+    assert 'limit: neo4j.int(limit)' in graph_route
+    assert "dbStatus: 'connected'" in graph_route
+
+    assert 'totalNodes: 9' not in stats_route
+    assert 'totalRelationships: 10' not in stats_route
+    assert 'nodesByType: {}' in stats_route
+    assert "epistemic_basis, '') <> 'model_hypothesis'" in stats_route
+
+
+def test_frontend_contains_no_legacy_direct_graph_seed_writer():
+    seed_writer = ROOT / 'frontend/scripts/seed-graph.ts'
+    assert not seed_writer.exists(), (
+        'Legacy sample graph seeding bypasses assertions and GraphProjectionService.'
+    )
+
+
 def test_example_env_does_not_contain_live_looking_secrets():
     example = read(".env.example")
 
