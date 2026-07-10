@@ -49,8 +49,8 @@ The application is powered by a suite of 8 specialized AI agents working togethe
 ## 🚀 Getting Started
 
 Please refer to the detailed documentation located in the `App_Context_and_Plan/` directory:
-- **[N8N Agent Import & Setup Instructions](App_Context_and_Plan/README.md):** Step-by-step guide to importing workflows and configuring credentials (Gemini, PostgreSQL, Neo4j, SMTP/IMAP).
-- **[Detailed Agent Specs](App_Context_and_Plan/AgentDescriptions.md):** Deep dive into the input/output schemas and prompts for each agent.
+- **[N8N Agent Import & Setup Instructions](App_Context_and_Plan_ORIGINAL/README.md):** Step-by-step guide to importing workflows and configuring credentials (Gemini, PostgreSQL, Neo4j, SMTP/IMAP).
+- **[Detailed Agent Specs](AgentDescriptions.md):** Deep dive into the input/output schemas and prompts for each agent.
 - **[Database Setup](.agent/workflows/database-setup.md):** Instructions for starting and managing the required databases.
 
 ## 🔒 Privacy & Security

@@ -1,0 +1,207 @@
+{
+  "main": {
+    "id": "8b6fac3e8575f769",
+    "type": "split",
+    "children": [
+      {
+        "id": "8329b739da417f78",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "5f073d1032116b53",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "README.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "README"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "7b4c2c81ef5f8626",
+    "type": "split",
+    "children": [
+      {
+        "id": "58c0822aec65d8e0",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "68d60ae358667cc8",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "5262812a952167b1",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "1dea5572e1ee0266",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 607.5
+  },
+  "right": {
+    "id": "d1e19763d6efc31f",
+    "type": "split",
+    "children": [
+      {
+        "id": "f20db4b54c69c8bd",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a31bb039ccc60461",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "README.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for README"
+            }
+          },
+          {
+            "id": "f7877a8a21d1c09f",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "README.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from README"
+            }
+          },
+          {
+            "id": "0161956cd0c97960",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "46439f92248af499",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "d425f9f2f59ece99",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "README.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of README"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "5f073d1032116b53",
+  "lastOpenFiles": [
+    "NEW APP CONTEXT AND PLAN/Task 5- live data connectors and conservative retention and deletion policies.md",
+    "Technical Documentation",
+    "tests/__pycache__/test_audit_static.cpython-311.pyc",
+    "tests/__pycache__",
+    "frontend/next-env.d.ts",
+    "intelligence/api/__pycache__/extract.cpython-311.pyc",
+    "intelligence/onsit/enrichers/__pycache__/username.cpython-311.pyc",
+    "intelligence/onsit/enrichers/__pycache__/breach.cpython-311.pyc",
+    "intelligence/onsit/enrichers/__pycache__/breach.cpython-311.pyc.131953837166016",
+    "intelligence/onsit/enrichers/__pycache__/email.cpython-311.pyc",
+    "intelligence/onsit/enrichers/__pycache__/domain.cpython-311.pyc",
+    "NEW APP CONTEXT AND PLAN/Task 4- Personal Insights, temporal exploration, contextual correlations and media intelligence.md",
+    "NEW APP CONTEXT AND PLAN/Task 6- capability, purpose drift, linkability, active DSAR testing and the actual product UI.md",
+    "NEW APP CONTEXT AND PLAN/Task 3- build the local-first ingestion and temporal analysis engine able to ingest large amounts of data.md",
+    "NEW APP CONTEXT AND PLAN/Task 2- Task Execution Router, built-in workflow parity and settings rebuild.md",
+    "NEW APP CONTEXT AND PLAN/Task 1- rebuild the evidence and graph foundation.md",
+    "NEW APP CONTEXT AND PLAN/New Insights Dashboard.md",
+    "NEW APP CONTEXT AND PLAN/Philosophy Audit from ChatGPT.md"
+  ]
+}
