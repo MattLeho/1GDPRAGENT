@@ -2,7 +2,7 @@ from pathlib import Path
 import re
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path('/workspace') if Path('/workspace/docker-compose.yml').exists() else Path(__file__).resolve().parents[1]
 
 
 def read(relative_path: str) -> str:
@@ -64,8 +64,8 @@ def test_compose_defines_n8n_and_celery_healthchecks():
     )
 
 
-def test_initial_schema_defines_tables_used_by_routes_and_migrations():
-    schema = read("docker/init/01_schema.sql")
+def test_canonical_migration_defines_tables_used_by_routes():
+    schema = read("database/migrations/001_legacy_application_schema.sql")
 
     assert re.search(r"CREATE TABLE IF NOT EXISTS\s+vendor_lists\b", schema, re.I), (
         "ONSIT vendor routes and migration 006 use vendor_lists, but the "
@@ -73,8 +73,8 @@ def test_initial_schema_defines_tables_used_by_routes_and_migrations():
     )
 
 
-def test_request_routes_use_columns_present_in_initial_schema():
-    schema = read("docker/init/01_schema.sql")
+def test_request_routes_use_columns_present_in_canonical_schema():
+    schema = read("database/migrations/001_legacy_application_schema.sql")
     send_bulk = read("frontend/app/api/onsit/send-bulk-emails/route.ts")
 
     assert "company_name" in send_bulk, (
@@ -87,8 +87,8 @@ def test_request_routes_use_columns_present_in_initial_schema():
     )
 
 
-def test_chat_route_matches_initial_chat_message_schema():
-    schema = read("docker/init/01_schema.sql")
+def test_chat_route_matches_canonical_chat_message_schema():
+    schema = read("database/migrations/001_legacy_application_schema.sql")
     chat_route = read("frontend/app/api/request-threads/[id]/chat/route.ts")
 
     schema_uses_sender_message = "sender TEXT NOT NULL" in schema and "message TEXT NOT NULL" in schema
@@ -98,6 +98,24 @@ def test_chat_route_matches_initial_chat_message_schema():
         "request_chat_messages must use sender/message consistently between "
         "the init schema and chat route."
     )
+
+
+def test_application_code_contains_no_runtime_ddl():
+    roots=[ROOT/'frontend',ROOT/'intelligence']
+    pattern=re.compile(r'CREATE TABLE|ALTER TABLE|DROP TABLE|DROP VIEW',re.I)
+    offenders=[]
+    for root in roots:
+        for path in root.rglob('*'):
+            if path.suffix in {'.ts','.tsx','.py'} and pattern.search(path.read_text(encoding='utf-8',errors='ignore')):
+                offenders.append(str(path.relative_to(ROOT)))
+    assert not offenders,f'Runtime DDL must be owned by database/migrations: {offenders}'
+
+
+def test_data_artifacts_are_versioned_not_replaced():
+    source=read('frontend/lib/data-artifacts.ts')
+    assert 'DELETE FROM data_artifacts' not in source
+    for field in ('analysis_run_id','artifact_version','supersedes_artifact_id','derivation_method','derivation_version'):
+        assert field in source
 
 
 def test_example_env_does_not_contain_live_looking_secrets():
