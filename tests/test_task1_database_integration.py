@@ -38,11 +38,13 @@ async def migrated_database():
         await connection.execute("CREATE TABLE data_artifacts(id uuid primary key default gen_random_uuid(),request_id uuid references requests(id),file_id uuid references received_data(id),artifact_type text not null,title text not null,payload jsonb not null default '{}'::jsonb,confidence numeric default 1,source_span text,created_at timestamptz default now(),updated_at timestamptz default now())")
         await connection.execute("CREATE TABLE request_chat_messages(id serial primary key,request_id uuid references requests(id),role varchar(20) not null,content text not null,timestamp timestamptz default now())")
         await connection.execute("CREATE TABLE n8n_webhooks(id serial primary key,webhook_name varchar(100) unique not null,webhook_url text not null,is_active boolean default true,created_at timestamptz default now(),updated_at timestamptz default now())")
+        await connection.execute("CREATE TABLE user_profiles(id serial primary key,username varchar(255) unique not null,email varchar(255),password_hash text,profile_picture_url text,created_at timestamptz default now(),updated_at timestamptz default now())")
         request_id=await connection.fetchval("INSERT INTO requests(company_name) VALUES('Synthetic Controller') RETURNING id")
         file_id=await connection.fetchval("INSERT INTO received_data(request_id,file_name) VALUES($1,'synthetic.json') RETURNING id",request_id)
         await connection.execute("INSERT INTO data_artifacts(request_id,file_id,artifact_type,title,payload) VALUES($1,$2,'metric','Legacy fixture','{\"legacy\":true}')",request_id,file_id)
         await connection.execute("INSERT INTO request_chat_messages(request_id,role,content) VALUES($1,'user','synthetic message')",request_id)
         await connection.execute("INSERT INTO n8n_webhooks(webhook_name,webhook_url) VALUES('kgIngestor','http://example.invalid')")
+        await connection.execute("INSERT INTO user_profiles(username,email,password_hash,profile_picture_url) VALUES('legacy-user','legacy@example.invalid','synthetic-hash','/synthetic.png')")
         await connection.close()
         await migrate(url,MIGRATIONS)
         yield url,request_id,file_id
@@ -63,7 +65,8 @@ async def test_migrations_are_idempotent_and_preserve_legacy_rows(migrated_datab
     assert await connection.fetchval("SELECT count(*) FROM data_artifacts WHERE file_id=$1 AND title='Legacy fixture' AND analysis_run_id IS NOT NULL AND artifact_version=1",file_id)==1
     assert await connection.fetchval("SELECT count(*) FROM request_chat_messages WHERE request_id=$1 AND sender='user' AND message='synthetic message'",request_id)==1
     assert await connection.fetchval("SELECT count(*) FROM n8n_webhooks WHERE webhook_name='kgIngestor' AND webhook_url='http://example.invalid'")==1
-    assert await connection.fetchval("SELECT count(*) FROM gdpr_schema_migrations")>=9
+    assert await connection.fetchval("SELECT count(*) FROM user_profiles WHERE username='legacy-user' AND legacy_integer_id=1 AND profile_picture_url='/synthetic.png'")==1
+    assert await connection.fetchval("SELECT count(*) FROM gdpr_schema_migrations")>=11
     await connection.close()
 
 

@@ -46,7 +46,8 @@ class GraphProjectionService:
             """SELECT a.* FROM assertions a WHERE a.id=$1::uuid AND a.status='accepted'
                AND NOT (a.epistemic_basis='model_hypothesis' AND NOT EXISTS(
                  SELECT 1 FROM assertion_evidence ae JOIN evidence_locators el ON el.id=ae.evidence_locator_id
-                 WHERE ae.assertion_id=a.id AND el.verified))""",str(assertion_id))
+                 WHERE ae.assertion_id=a.id AND el.verified
+                   AND el.verification_method IN ('exact_quote_match','structured_value_match','human_verified')))""",str(assertion_id))
         if not rows: raise ValueError("only accepted, provenance-valid assertions can be projected")
         assertion=dict(rows[0]); subject_label=assert_personal_label(assertion["subject_type"])
         subject_ref=assertion["subject_ref"]; subject_id=str(stable_node_id(subject_label,subject_ref))

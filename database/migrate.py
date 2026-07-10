@@ -13,7 +13,7 @@ from pathlib import Path
 import asyncpg
 
 
-MIGRATION_RE = re.compile(r"^(\d{3})_[a-z0-9_]+\.sql$")
+MIGRATION_RE = re.compile(r"^(\d{3}[a-z]?)_[a-z0-9_]+\.sql$")
 LOCK_KEY = 0x3147445052414745  # stable application-specific advisory lock
 
 
