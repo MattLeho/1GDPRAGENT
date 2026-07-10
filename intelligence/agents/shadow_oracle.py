@@ -134,7 +134,7 @@ class ShadowOracleAgent:
             try:
                 keyword_query = """
                 MATCH (subject:Subject)-[r]->(n:GraphNode)
-                WHERE coalesce(r.epistemic_basis, '') <> 'model_hypothesis' AND any(prop in keys(n) WHERE 
+                WHERE coalesce(r.epistemic_basis, '') <> 'model_hypothesis' AND any(prop in keys(n) WHERE
                     toString(n[prop]) CONTAINS $keyword)
                 RETURN labels(n) as labels, properties(n) as props
                 LIMIT 5
