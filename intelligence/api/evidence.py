@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -46,6 +47,12 @@ class OnsitBulkRequest(BaseModel):
     action: str
     finding_ids: list[UUID]=Field(min_length=1,max_length=100)
     payload: dict[str,Any]=Field(default_factory=dict)
+
+class SourceArtifactRequest(BaseModel):
+    file_path: str
+    request_id: UUID | None=None
+    declared_mime: str | None=None
+    source_organisation: str | None=None
 
 
 @router.post("/manual-node")
@@ -110,3 +117,15 @@ async def onsit_bulk(body: OnsitBulkRequest):
         affected=await GraphProjectionService().mutate_onsit(assertion_id,body.action,body.finding_ids,body.payload)
         return {"success":True,"action":body.action,"affected":affected,"requested":len(body.finding_ids),"assertion_id":assertion_id}
     except ValueError as exc: raise HTTPException(status_code=422,detail=str(exc)) from exc
+
+@router.post("/source-artifact")
+async def source_artifact(body: SourceArtifactRequest):
+    """Register a file occurrence through the Task 1 evidence ledger before analysis."""
+    path=Path(body.file_path).resolve()
+    if not path.is_file(): raise HTTPException(status_code=404,detail="Source file does not exist")
+    ledger=EvidenceLedger()
+    run_id=await ledger.create_analysis_run("source_acquisition","task2-source-v1",request_id=body.request_id,configuration={"source":"upload"})
+    snapshot_id=await ledger.create_export_snapshot(run_id,"manual_import",request_id=body.request_id,metadata={"file_name":path.name})
+    _,artifact_id=await ledger.record_source_artifact(snapshot_id,path.read_bytes(),storage_uri=path.as_uri(),original_path=str(path),file_name=path.name,declared_mime=body.declared_mime,extension=path.suffix.lower() or None,file_type_status="declared" if body.declared_mime else "unknown",source_organisation=body.source_organisation)
+    await ledger.postgres.execute("UPDATE analysis_runs SET status='completed',completed_at=NOW() WHERE id=$1",run_id)
+    return {"analysis_run_id":str(run_id),"export_snapshot_id":str(snapshot_id),"source_artifact_id":str(artifact_id)}

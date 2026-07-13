@@ -1,6 +1,7 @@
 import { pool } from '@/lib/db';
 import { getAICredential } from '@/lib/ai-credentials';
 import { generateRLMResponse } from '@/lib/rlm/provider-adapters';
+import { resolveModelForProvider } from '@/lib/model-intents';
 import {
     ENGINES_BY_ID, ENGINE_DEFINITIONS, TASKS_BY_KEY, type EngineDefinition,
     type ExecutionLocation, type ProcessingMode,
@@ -173,10 +174,14 @@ export async function executeTask(invocation: TaskInvocation): Promise<TaskResul
     const privacy = await getProcessingSettings();
     const runId = await ensureAnalysisRun(invocation);
     const primary = ENGINES_BY_ID.get(route.engine_id)!;
-    let candidates: Array<{ engine: EngineDefinition; model: string | null }> = [];
+    const candidates: Array<{ engine: EngineDefinition; model: string | null }> = [];
     if (privacy.processing_mode === 'local_first' && primary.execution_location === 'external') {
         const local = ENGINE_DEFINITIONS.find(engine => engine.execution_location === 'local' && engine.capabilities.includes(task.task_key) && task.supported_engine_types.includes(engine.engine_type));
         if (local) candidates.push({ engine: local, model: DEFAULT_MODEL[local.provider] || null });
+        // Retain the configured external candidate so a denied attempt is
+        // recorded as a privacy-policy block rather than disappearing as an
+        // unaudited "no route" result.
+        candidates.push({ engine: primary, model: route.model });
     } else {
         candidates.push({ engine: primary, model: route.model });
     }
@@ -195,7 +200,7 @@ export async function executeTask(invocation: TaskInvocation): Promise<TaskResul
         const blocked = external && (
             privacy.processing_mode === 'strict_local' ||
             (privacy.processing_mode === 'local_first' && (!privacy.external_fallback_enabled || !explicitlyFallback)) ||
-            (privacy.processing_mode === 'controlled_cloud' && privacy.approved_external_engines.length > 0 && !privacy.approved_external_engines.includes(candidate.engine.engine_id))
+            (privacy.processing_mode === 'controlled_cloud' && !privacy.approved_external_engines.includes(candidate.engine.engine_id))
         );
         if (blocked) {
             const recordId = await startExecutionRecord(invocation, runId, candidate.engine, candidate.model);
@@ -234,6 +239,16 @@ async function invokeAndAudit(invocation: TaskInvocation, runId: string, engine:
             new Promise((_,reject) => setTimeout(() => reject(new Error('Engine invocation timed out')),timeoutMs)),
         ]);
         await finishExecutionRecord(recordId,'completed',byteSize(output));
+        if (invocation.taskKey === 'speech.transcription' && invocation.sourceArtifactIds?.[0]) {
+            const transcript = output as { text?:unknown;language?:unknown;segments?:unknown;words?:unknown;confidence?:unknown;derivation_version?:unknown };
+            if (typeof transcript.text === 'string') {
+                await pool.query(`INSERT INTO transcript_artifacts(source_artifact_id,analysis_run_id,execution_record_id,engine_id,model,language,segments,words,confidence,transcript,derivation_version)
+                    VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11)`,
+                [invocation.sourceArtifactIds[0],runId,recordId,engine.engine_id,model,typeof transcript.language==='string'?transcript.language:null,
+                    JSON.stringify(transcript.segments||[]),JSON.stringify(transcript.words||[]),JSON.stringify(transcript.confidence||{}),transcript.text,
+                    typeof transcript.derivation_version==='string'?transcript.derivation_version:'task2-asr-v1']);
+            }
+        }
         return { ok:true,output,executionRecordId:recordId,engineId:engine.engine_id,model };
     } catch (error) {
         const structured = { code:'ENGINE_INVOCATION_FAILED',message:error instanceof Error ? error.message : String(error),retryable:true,engine_id:engine.engine_id };
@@ -247,7 +262,8 @@ async function invokeEngine(engine: EngineDefinition, taskKey: string, input: un
         if (taskKey === 'speech.transcription' || taskKey === 'speech.translation') throw new Error('General generation engines cannot perform speech recognition');
         const text = typeof input === 'string' ? input : (input as { text?: unknown })?.text;
         if (typeof text !== 'string') throw new Error(`${taskKey} requires extracted text, not binary media`);
-        const result = await generateRLMResponse({ provider:engine.provider,model:model || DEFAULT_MODEL[engine.provider],
+        const resolvedModel=await resolveModelForProvider(engine.provider,model || DEFAULT_MODEL[engine.provider]);
+        const result = await generateRLMResponse({ provider:engine.provider,model:resolvedModel,
             systemPrompt:String(configuration.systemPrompt || `Perform only the registered task ${taskKey}. Return a grounded result.`),
             messages:[{role:'user',content:text}],useTools:false,temperature:Number(configuration.temperature ?? 0.2) });
         return { text:result.content };
@@ -295,8 +311,23 @@ export async function getEngineHealth(engineId: string): Promise<{ status:'healt
                 : { status:'unavailable',message:`Ollama returned ${response.status}`,models:[] };
         } catch (error) { return { status:'unavailable',message:error instanceof Error ? error.message : String(error),models:[] }; }
     }
-    if (!await getAICredential(engine.provider)) return { status:'unconfigured',message:'No provider credential is configured',models:[] };
-    return { status:'unknown',message:'Credential configured; health is verified only by provider discovery or invocation',models:[] };
+    const credential=await getAICredential(engine.provider);
+    if (!credential) return { status:'unconfigured',message:'No provider credential is configured',models:[] };
+    const probes:Record<string,{url:string;headers:Record<string,string>}>= {
+        google:{url:`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(credential)}`,headers:{}},
+        openai:{url:'https://api.openai.com/v1/models',headers:{Authorization:`Bearer ${credential}`}},
+        openrouter:{url:'https://openrouter.ai/api/v1/models',headers:{Authorization:`Bearer ${credential}`}},
+        nvidia:{url:'https://integrate.api.nvidia.com/v1/models',headers:{Authorization:`Bearer ${credential}`}},
+        huggingface:{url:'https://huggingface.co/api/whoami-v2',headers:{Authorization:`Bearer ${credential}`}},
+    };
+    const probe=probes[engine.provider];
+    if(!probe)return {status:'unknown',message:'No non-invasive health probe is defined',models:[]};
+    try{
+        const response=await fetch(probe.url,{headers:probe.headers,signal:AbortSignal.timeout(5000),cache:'no-store'});
+        if(!response.ok)return{status:'unavailable',message:`Provider health probe returned ${response.status}`,models:[]};
+        const body=await response.json();const entries=Array.isArray(body.data)?body.data:Array.isArray(body.models)?body.models:[];
+        return{status:'healthy',message:'Provider model-discovery endpoint responded',models:entries.map((item:{id?:string;name?:string})=>item.id||item.name||'').filter(Boolean).slice(0,100)};
+    }catch(error){return{status:'unavailable',message:error instanceof Error?error.message:String(error),models:[]};}
 }
 
 function byteSize(value: unknown): number { return Buffer.byteLength(typeof value === 'string' ? value : JSON.stringify(value ?? null),'utf8'); }

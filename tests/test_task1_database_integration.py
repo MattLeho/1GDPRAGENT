@@ -84,6 +84,22 @@ async def test_blob_dedup_preserves_two_source_occurrences(migrated_database):
     await client.close()
 
 
+@pytest.mark.asyncio
+async def test_task2_routes_audit_and_per_workflow_preferences_extend_task1(migrated_database):
+    url,request_id,_=migrated_database
+    connection=await asyncpg.connect(url)
+    tables={row["tablename"] for row in await connection.fetch("SELECT tablename FROM pg_tables WHERE schemaname='public'")}
+    assert {"task_routes","processing_settings","workflow_preferences","execution_records","connector_credentials","transcript_artifacts","outbound_messages","inbox_checkpoints"} <= tables
+    await connection.execute("UPDATE workflow_preferences SET execution_mode='n8n',fallback_order='[\"n8n\"]' WHERE workflow_key='request.drafting'")
+    await connection.execute("UPDATE workflow_preferences SET execution_mode='built_in',fallback_order='[\"built_in\"]' WHERE workflow_key='email.sending'")
+    rows=await connection.fetch("SELECT workflow_key,execution_mode FROM workflow_preferences WHERE workflow_key IN ('request.drafting','email.sending') ORDER BY workflow_key")
+    assert {row["workflow_key"]:row["execution_mode"] for row in rows}=={"email.sending":"built_in","request.drafting":"n8n"}
+    run_id=await connection.fetchval("INSERT INTO analysis_runs(run_type,status,pipeline_version) VALUES('task2-test','running','task2-router-v1') RETURNING id")
+    record_id=await connection.fetchval("INSERT INTO execution_records(analysis_run_id,task_key,engine_id,provider,model,execution_location,status) VALUES($1,'request.drafting','openai_generation','openai','fixture','external','completed') RETURNING id",run_id)
+    assert await connection.fetchval("SELECT analysis_run_id=$2 AND execution_location='external' FROM execution_records WHERE id=$1",record_id,run_id)
+    await connection.close()
+
+
 async def _fixture_evidence(ledger,request_id):
     run=await ledger.create_analysis_run("fixture","1",request_id=request_id)
     snap=await ledger.create_export_snapshot(run,"manual_import",request_id=request_id)

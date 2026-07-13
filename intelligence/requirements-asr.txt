@@ -1,0 +1,3 @@
+# Optional local ASR profile. Base installs remain usable without downloading model weights.
+openai-whisper>=20250625
+# Install a hardware-compatible NeMo ASR build separately to enable parakeet_local.

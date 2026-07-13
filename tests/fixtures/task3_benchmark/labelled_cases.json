@@ -1,0 +1,69 @@
+[
+  {
+    "case_id": "schema-search-v1",
+    "task_key": "schema.interpretation",
+    "fixture_authorisation": "synthetic",
+    "bundle": {
+      "task_key": "schema.interpretation",
+      "analysis_run_id": "10000000-0000-0000-0000-000000000001",
+      "source_artifact_ids": ["20000000-0000-0000-0000-000000000001"],
+      "purpose": "Interpret an unknown synthetic search record shape",
+      "samples": [{"query": "privacy", "subject_id": "synthetic-person", "time": "2024-01-02T03:04:05Z"}],
+      "maximum_sample_bytes": 1024,
+      "omitted_record_count": 99,
+      "fingerprint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "expected_parser_spec": {
+      "event_type": "search.performed",
+      "object_selector": "/query",
+      "timestamp_selector": "/time"
+    },
+    "expected_locator_validity": true
+  },
+  {
+    "case_id": "adjudicate-email-v1",
+    "task_key": "semantic.adjudication",
+    "fixture_authorisation": "synthetic",
+    "bundle": {
+      "task_key": "semantic.adjudication",
+      "analysis_run_id": "10000000-0000-0000-0000-000000000002",
+      "source_artifact_ids": ["20000000-0000-0000-0000-000000000002"],
+      "purpose": "Adjudicate a bounded ambiguous synthetic feature candidate",
+      "samples": [{"candidate_type": "email", "value": "example@example.invalid"}],
+      "maximum_sample_bytes": 1024,
+      "omitted_record_count": 0
+    },
+    "expected_labels": ["DIRECT_IDENTIFIER"],
+    "expected_locator_validity": true
+  },
+  {
+    "case_id": "adjudicate-unknown-v1",
+    "task_key": "semantic.adjudication",
+    "fixture_authorisation": "synthetic",
+    "bundle": {
+      "task_key": "semantic.adjudication",
+      "analysis_run_id": "10000000-0000-0000-0000-000000000003",
+      "source_artifact_ids": ["20000000-0000-0000-0000-000000000003"],
+      "purpose": "Test correct abstention for an ungrounded synthetic token",
+      "samples": [{"candidate_type": "opaque_token", "value_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],
+      "maximum_sample_bytes": 1024,
+      "omitted_record_count": 4
+    },
+    "expected_abstain": true
+  },
+  {
+    "case_id": "topic-label-v1",
+    "task_key": "semantic.topic_labelling",
+    "fixture_authorisation": "synthetic",
+    "bundle": {
+      "task_key": "semantic.topic_labelling",
+      "analysis_run_id": "10000000-0000-0000-0000-000000000004",
+      "source_artifact_ids": ["20000000-0000-0000-0000-000000000004"],
+      "purpose": "Label a pre-detected synthetic topic cluster",
+      "samples": [{"terms": ["privacy", "data protection"], "event_count": 8}],
+      "maximum_sample_bytes": 1024,
+      "omitted_record_count": 12
+    },
+    "expected_labels": ["privacy"]
+  }
+]

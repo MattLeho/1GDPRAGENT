@@ -16,6 +16,7 @@ import {
     Sun,
     Moon,
     Search,
+    ChartNoAxesCombined,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -49,6 +50,11 @@ const sidebarItems = [
         name: 'Data Graph',
         href: '/dashboard/graph',
         icon: Share2,
+    },
+    {
+        name: 'Personal Insights',
+        href: '/dashboard/insights',
+        icon: ChartNoAxesCombined,
     },
     {
         name: 'ONSIT Discovery',

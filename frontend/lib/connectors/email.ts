@@ -69,14 +69,12 @@ export async function sendBuiltInEmail(input:{requestId?:string;to:string;subjec
     return{messageId,transport:'smtp'};
 }
 
-export async function monitorInboxBuiltIn():Promise<{checked:number;unseen:number;status:string}>{
-    const settings=await internalConnector(); if(settings.paused)return{checked:0,unseen:0,status:'paused'};
-    const output=await imapCommand(settings,['a1 SELECT INBOX','a2 UID SEARCH UNSEEN','a3 LOGOUT']);
-    const match=output.match(/\* SEARCH([^\r\n]*)/i); const unseen=(match?.[1].trim().split(/\s+/).filter(Boolean).length)||0;
-    await pool.query(`INSERT INTO inbox_checkpoints(connector_key,account_key,last_checked_at,status,metadata) VALUES('email',$1,NOW(),'healthy',$2::jsonb)
-        ON CONFLICT(connector_key,account_key) DO UPDATE SET last_checked_at=NOW(),status='healthy',metadata=EXCLUDED.metadata`,[settings.email,JSON.stringify({unseen})]);
-    await pool.query("UPDATE email_settings SET last_sync_at=NOW(),next_sync_at=NOW()+INTERVAL '15 minutes' WHERE id=$1",[settings.id]);
-    return{checked:1,unseen,status:'healthy'};
+export async function monitorInboxBuiltIn():Promise<{checked:number;unseen:number;matched:number;status:string}>{
+    // The pre-Task-5 monitor acknowledged UIDs before durable provenance and
+    // wrote protocol output straight into compatibility tables.  Fail closed
+    // until inbox monitoring is backed by the canonical SourceConnector
+    // queue/cursor and SourceArtifact/EvidenceLocator/ActivityEvent bridge.
+    throw new Error('Inbox monitoring requires the canonical email source connector; the legacy IMAP monitor is disabled');
 }
 
 function smtpFromImap(host:string):string{return host.replace(/^imap\./i,'smtp.');}
@@ -86,7 +84,7 @@ function cleanHeader(value:string):string{return value.replace(/[\r\n]+/g,' ');}
 async function smtpSend(settings:EmailConnectorSettings&{password:string},message:{to:string;subject:string;body:string;messageId:string}):Promise<void>{
     const socket=settings.smtp_secure?tls.connect({host:settings.smtp_host,port:settings.smtp_port,servername:settings.smtp_host,rejectUnauthorized:true}):net.connect({host:settings.smtp_host,port:settings.smtp_port});
     await protocol(socket,[
-        {expect:/^220/m,send:`EHLO gdpr-agent.local\r\n`},{expect:/^250[ -]/m,send:`AUTH LOGIN\r\n`},
+        {expect:/^220/m,send:`EHLO gdpr-agent.local\r\n`},{expect:/^250 /m,send:`AUTH LOGIN\r\n`},
         {expect:/^334/m,send:`${Buffer.from(settings.email).toString('base64')}\r\n`},{expect:/^334/m,send:`${Buffer.from(settings.password).toString('base64')}\r\n`},
         {expect:/^235/m,send:`MAIL FROM:<${cleanHeader(settings.email)}>\r\n`},{expect:/^250/m,send:`RCPT TO:<${cleanHeader(message.to)}>\r\n`},
         {expect:/^250/m,send:'DATA\r\n'},{expect:/^354/m,send:`From: ${cleanHeader(settings.email)}\r\nTo: ${cleanHeader(message.to)}\r\nSubject: ${cleanHeader(message.subject)}\r\nMessage-ID: ${message.messageId}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${message.body.replace(/^\./gm,'..')}\r\n.\r\n`},
@@ -101,8 +99,8 @@ async function imapCommand(settings:EmailConnectorSettings&{password:string},com
 }
 
 function protocol(socket:net.Socket|tls.TLSSocket,steps:Array<{expect:RegExp;send:string|null}>):Promise<string>{return new Promise((resolve,reject)=>{
-    let all='';let index=0;const timeout=setTimeout(()=>{socket.destroy();reject(new Error('Email connector timed out'));},20_000);
+    let all='';let pending='';let index=0;const timeout=setTimeout(()=>{socket.destroy();reject(new Error('Email connector timed out'));},20_000);
     socket.setEncoding('utf8');socket.on('error',error=>{clearTimeout(timeout);reject(error);});socket.on('data',chunk=>{all+=chunk;
-        while(index<steps.length&&steps[index].expect.test(all)){const step=steps[index++];if(step.send)socket.write(step.send);if(index===steps.length){clearTimeout(timeout);resolve(all);}}
+        pending+=chunk;while(index<steps.length&&steps[index].expect.test(pending)){const step=steps[index++];pending='';if(step.send)socket.write(step.send);if(index===steps.length){clearTimeout(timeout);resolve(all);}}
     });
   });}

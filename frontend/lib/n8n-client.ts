@@ -5,6 +5,8 @@
  * Configure webhook paths via environment variables.
  */
 
+import { getWebhookUrl } from '@/lib/n8n-webhooks';
+
 const N8N_INTERNAL_URL = process.env.N8N_INTERNAL_URL || 'http://n8n:5678';
 const N8N_PUBLIC_URL = process.env.N8N_PUBLIC_URL || 'http://localhost:5678';
 
@@ -16,6 +18,12 @@ const WEBHOOK_PATHS = {
     testImap: process.env.N8N_WEBHOOK_TEST_IMAP || 'test-imap',
     ingestData: process.env.N8N_WEBHOOK_INGEST_DATA || 'ingest-data',
     ingestIdentity: process.env.N8N_WEBHOOK_INGEST_IDENTITY || 'ingest-identity',
+    parseResponse: process.env.N8N_WEBHOOK_PARSE_RESPONSE || 'parse-response',
+    enhancedRag: process.env.N8N_WEBHOOK_ENHANCED_RAG || 'enhanced-rag',
+    transcription: process.env.N8N_WEBHOOK_FILE_TRANSCRIPTION || 'file-transcription',
+    vendorExtract: process.env.N8N_WEBHOOK_VENDOR_EXTRACT || 'vendor-extract',
+    policyScan: process.env.N8N_WEBHOOK_POLICY_SCAN || 'policy-scan',
+    validateTriple: process.env.N8N_WEBHOOK_VALIDATE_TRIPLE || 'validate-triple',
 };
 
 export type N8NWebhookType = keyof typeof WEBHOOK_PATHS;
@@ -37,8 +45,9 @@ export async function callN8NWebhook<T = unknown>(
 ): Promise<N8NResponse<T>> {
     const { timeout = 30000, usePublicUrl = false } = options;
     const baseUrl = usePublicUrl ? N8N_PUBLIC_URL : N8N_INTERNAL_URL;
-    const webhookPath = WEBHOOK_PATHS[webhookType];
-    const url = `${baseUrl}/webhook/${webhookPath}`;
+    const configuredUrl = await getWebhookUrl(webhookType);
+    const webhookPath = configuredUrl || WEBHOOK_PATHS[webhookType];
+    const url = /^https?:\/\//.test(webhookPath) ? webhookPath : `${baseUrl}/webhook/${webhookPath}`;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);

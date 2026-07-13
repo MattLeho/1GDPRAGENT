@@ -40,8 +40,8 @@ export const WORKFLOW_DEFINITIONS: readonly WorkflowDefinition[] = [
     workflow('response.classification','Response classification','Classify a matched controller reply.','Responses','frontend:task-router','parseResponse',['email.classification']),
     workflow('response.attachment_detection','Attachment and download detection','Detect attachments and protected download links.','Responses','frontend:built-in-response-detector','parseResponse'),
     workflow('response.parsing','Response parsing','Parse response files into the canonical evidence pipeline.','Responses','frontend:/api/upload/process','parseResponse',['document.text_extraction','schema.fingerprinting']),
-    workflow('file.ingestion','File ingestion','Create ContentBlob, SourceArtifact, EvidenceLocator, and candidates.','Evidence','python:/ingest','ingestData'),
-    workflow('identity.ingestion','Identity ingestion','Create human-confirmed identity assertions.','Evidence','python:/evidence/identity','ingestIdentity'),
+    workflow('file.ingestion','File ingestion','Create ContentBlob, SourceArtifact, EvidenceLocator, and candidates through the local bulk pipeline.','Evidence','python:/bulk-ingestion/process','ingestData',['schema.fingerprinting','schema.interpretation']),
+    workflow('identity.ingestion','Identity ingestion','Create human-confirmed identity assertions.','Evidence','frontend:/api/graph/upsert-identity','ingestIdentity'),
     workflow('grounded.extraction','Grounded extraction','Extract evidence-located assertion candidates.','Evidence','python:/extract','ingestData',['schema.fingerprinting','schema.interpretation']),
     workflow('graph.projection','Graph projection','Project verified assertions through GraphProjectionService.','Graph','python:GraphProjectionService','ingestData',['graph.projection']),
     workflow('graph.query','Graph query and hybrid retrieval','Read graph and grounded context.','Graph','python:/query','enhancedRag',['graph.explanation']),
@@ -49,6 +49,22 @@ export const WORKFLOW_DEFINITIONS: readonly WorkflowDefinition[] = [
     workflow('vendor.ocr','Vendor OCR','Extract vendor candidates from selected media.','ONSIT','frontend:/api/onsit/extract-vendors','vendorExtract',['image.ocr']),
     workflow('policy.scanning','Privacy-policy scanning','Scan and analyse a policy URL.','Policy','frontend:/api/gdpr-agent/analyze-policy','policyScan',['policy.extraction','policy.interpretation']),
     workflow('makged.validation','MAKGED validation','Validate interpretation candidates before projection.','Graph','python:/validate','validateTriple',['semantic.adjudication']),
+] as const;
+
+/** Single source of truth for every shipped N8N webhook adapter. */
+export const N8N_WEBHOOK_MAPPINGS = [
+    {id:'analyzePolicy',envVar:'N8N_WEBHOOK_ANALYZE_POLICY'},
+    {id:'draftRequest',envVar:'N8N_WEBHOOK_DRAFT_REQUEST'},
+    {id:'sendEmail',envVar:'N8N_WEBHOOK_SEND_EMAIL'},
+    {id:'testImap',envVar:'N8N_WEBHOOK_TEST_IMAP'},
+    {id:'parseResponse',envVar:'N8N_WEBHOOK_PARSE_RESPONSE'},
+    {id:'ingestData',envVar:'N8N_WEBHOOK_INGEST_DATA'},
+    {id:'ingestIdentity',envVar:'N8N_WEBHOOK_INGEST_IDENTITY'},
+    {id:'enhancedRag',envVar:'N8N_WEBHOOK_ENHANCED_RAG'},
+    {id:'transcription',envVar:'N8N_WEBHOOK_FILE_TRANSCRIPTION'},
+    {id:'vendorExtract',envVar:'N8N_WEBHOOK_VENDOR_EXTRACT'},
+    {id:'policyScan',envVar:'N8N_WEBHOOK_POLICY_SCAN'},
+    {id:'validateTriple',envVar:'N8N_WEBHOOK_VALIDATE_TRIPLE'},
 ] as const;
 
 export const WORKFLOWS_BY_KEY = new Map(WORKFLOW_DEFINITIONS.map(definition => [definition.workflow_key,definition]));

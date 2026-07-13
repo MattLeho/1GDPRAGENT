@@ -57,6 +57,22 @@ def health_check(self):
     return {"status": "ok", "task_id": self.request.id}
 
 
+@app.task(bind=True, name="intelligence.bulk_ingestion.process_file")
+def bulk_ingestion_process_file(self, data: dict) -> dict:
+    """Run the deterministic Task 3 pipeline with late acknowledgement/retry safety."""
+    from dataclasses import asdict
+    from uuid import UUID
+    from ingestion.bulk import BulkIngestionService
+    result=run_async(BulkIngestionService().process_file(
+        data["file_path"],analysis_run_id=UUID(data["analysis_run_id"]),
+        export_snapshot_id=UUID(data["export_snapshot_id"]),
+        declared_mime=data.get("declared_mime"),original_path=data.get("original_path"),
+        requested_tasks=tuple(data.get("requested_tasks") or ()),
+        received_data_id=UUID(data["received_data_id"]) if data.get("received_data_id") else None,
+    ))
+    return asdict(result)
+
+
 @app.task(bind=True, name="intelligence.ingest_to_graph")
 def ingest_to_graph_task(self, data: dict) -> dict:
     """

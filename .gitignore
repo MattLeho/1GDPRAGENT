@@ -10,6 +10,10 @@
 TalkTalkGDPR Request/
 frontend/uploads/
 uploads/
+data/blobs/
+data/event_lake/
+data/analysis/
+data/cache/
 *.mp3
 *.mp4
 *.mov

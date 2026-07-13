@@ -67,8 +67,7 @@ export function normalizeRLMProvider(provider: string): RLMProvider {
     ) {
         return provider;
     }
-
-    return 'google';
+    throw new RLMProviderError(`Unsupported provider: ${provider}`);
 }
 
 export function providerSupportsToolCalling(provider: string): boolean {

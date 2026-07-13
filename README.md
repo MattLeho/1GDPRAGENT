@@ -44,6 +44,22 @@ The ontology keeps these layers distinct:
 
 DSAR/request management, email workflows, built-in/N8N/hybrid selection, provider credentials, ONSIT, grounded extraction, MAKGED, and the existing graph experience remain available. N8N graph templates are compatibility adapters: they submit to the canonical evidence service and do not generate or execute graph-write Cypher.
 
+## Task execution and workflows
+
+Processing is routed per concrete task rather than through one global model. Local deterministic, ASR, OCR, Ollama, and approved remote-generation adapters declare capabilities, health, discovery, and invocation behavior. `strict_local`, `local_first`, and `controlled_cloud` policies are enforced before invocation, and `ExecutionRecord` answers which external engine processed which source artefacts under which `AnalysisRun`.
+
+Workflow execution is selected independently for drafting, email transport, inbox monitoring, parsing, ingestion, graph work, transcription, and the other shipped workflows. Built-in SMTP/IMAP operation no longer requires N8N. N8N remains an optional per-workflow adapter.
+
+Email connector secrets require `CREDENTIALS_ENCRYPTION_KEY` in production and are encrypted server-side with authenticated AES-256-GCM. Legacy base64 passwords require re-entry.
+
+## Personal Insights
+
+Open <http://localhost:3001/dashboard/insights> to explore evidence-backed changes in activity, interests, investigations, projects, routines, places and engagement over time. One page-wide control selects a point in time, a period, or a comparison; every module uses that same selection and offers an evidence trace. Exposure is kept distinct from active interest, contextual matches are labelled as correlations rather than causes, and screenshot/downloaded-image content is never treated as proof of physical presence.
+
+The browser uses the Next.js endpoints under `/api/insights`. Direct service entry points are available under <http://localhost:8001/insights>, including `overview`, `interests`, `search`, `ai-conversations`, `places`, `changes`, `context`, and `evidence/{id}`. Period endpoints accept `subject_id`, `mode`, `from`, `to`, `point`, `compareFrom`, `compareTo`, and `granularity` as applicable. Media analysis defaults to `metadata_only`; optional visual work still follows the configured Task Router privacy policy.
+
+Task 4 is accepted. Authenticated verification covered every module and empty state, all three temporal modes, Quarter granularity, stable URL-backed controls, cohesive dark-theme surfaces, and the evidence-inspector interaction. The user's live profile stayed empty and unmodified; a dedicated local `task4-browser-smoke` subject supplied the synthetic temporal state used to open the drawer. That narrow fixture had no source artefacts or exact locators, while database-backed catalogue, trace and locator tests cover the broader evidence path. Exact results and fixture scope are recorded in the Task 4 acceptance audit below.
+
 ## Start and migrate
 
 1. Copy `.env.example` to an untracked `.env` and set the required local secrets.
@@ -61,3 +77,11 @@ Task 1 is verified with disposable PostgreSQL migration tests, real Neo4j projec
 - [Evidence and graph architecture](Technical%20Documentation/Evidence%20and%20Graph%20Architecture.md)
 - [Task 1 implementation ledger](Technical%20Documentation/Task%201%20Implementation%20Ledger.md)
 - [Task 1 acceptance audit](Technical%20Documentation/Task%201%20Acceptance%20Audit.md)
+- [Task execution and processing architecture](Technical%20Documentation/Task%20Execution%20and%20Processing%20Architecture.md)
+- [Workflow architecture and inventory](Technical%20Documentation/Workflow%20Architecture%20and%20Inventory.md)
+- [Settings architecture](Technical%20Documentation/Settings%20Architecture.md)
+- [Task 2 implementation ledger](Technical%20Documentation/Task%202%20Implementation%20Ledger.md)
+- [Task 2 acceptance audit](Technical%20Documentation/Task%202%20Acceptance%20Audit.md)
+- [Personal Insights architecture](Technical%20Documentation/Personal%20Insights%20Architecture.md)
+- [Task 4 implementation ledger](Technical%20Documentation/Task%204%20Implementation%20Ledger.md)
+- [Task 4 acceptance audit](Technical%20Documentation/Task%204%20Acceptance%20Audit.md)

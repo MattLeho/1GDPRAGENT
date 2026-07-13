@@ -12,6 +12,13 @@ from .ontology import assert_graph_label, assert_personal_label, is_onsit_label,
 class GraphProjectionService:
     """The sole writer for the personal-data Neo4j projection."""
 
+    HIGH_VALUE_LABELS = frozenset({
+        "Subject", "ControllerProfile", "Organisation", "Account", "Identifier",
+        "DataDomain", "Topic", "DataPoint", "TemporalState", "ProjectEpisode",
+        "ProcessingActivity", "Purpose", "Capability", "CapabilityExposureState",
+        "PolicyInstrument", "Claim", "SourceArtifact",
+    })
+
     def __init__(self, postgres: PostgresClient | None=None, neo4j: Neo4jClient | None=None):
         self.postgres=postgres or get_postgres_client(); self.neo4j=neo4j or get_neo4j_client()
 
@@ -50,6 +57,8 @@ class GraphProjectionService:
                    AND el.verification_method IN ('exact_quote_match','structured_value_match','human_verified')))""",str(assertion_id))
         if not rows: raise ValueError("only accepted, provenance-valid assertions can be projected")
         assertion=dict(rows[0]); subject_label=assert_personal_label(assertion["subject_type"])
+        if subject_label not in self.HIGH_VALUE_LABELS:
+            raise ValueError("assertion subject is not part of the high-value privacy topology")
         subject_ref=assertion["subject_ref"]; subject_id=str(stable_node_id(subject_label,subject_ref))
         if assertion["object_ref"]:
             object_ref=assertion["object_ref"]
@@ -57,6 +66,10 @@ class GraphProjectionService:
             value=assertion["object_value"]
             object_ref=json.dumps(value,sort_keys=True,separators=(",",":"),default=str)
         object_label="DataPoint" if assertion["object_type"]!="node_ref" else self._object_label(object_ref)
+        if object_label not in self.HIGH_VALUE_LABELS:
+            raise ValueError("assertion object is not part of the high-value privacy topology")
+        if subject_label == "ControllerProfile" and object_label == "Subject":
+            raise ValueError("controller-assigned profiles must not mutate Subject behavioural identity")
         object_key=object_ref.split(":",1)[-1] if assertion["object_type"]=="node_ref" and ":" in object_ref else object_ref
         object_id=str(stable_node_id(object_label,object_key)); rel=relationship_type(assertion["predicate"])
         cypher=f"""

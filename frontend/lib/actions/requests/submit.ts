@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { draftRequest, sendEmail } from "@/lib/n8n-client";
-import { getModelPreferences } from "@/lib/model-preferences";
 import { completeWorkflowLog, failWorkflowLog, startWorkflowLog } from "@/lib/workflow-logs";
+import { getWorkflowPreference } from '@/lib/workflows/registry';
+import { monitorInboxBuiltIn, sendBuiltInEmail } from '@/lib/connectors/email';
 
 interface AnalysisData {
     dpo_email?: string;
@@ -211,26 +212,26 @@ export async function submitRequest(payload: RequestPayload) {
             console.error("Failed to create initial message:", msgError);
         }
 
-        const modelPreferences = await getModelPreferences();
+        const draftingPreference = await getWorkflowPreference('request.drafting');
+        const sendingPreference = await getWorkflowPreference('email.sending');
 
-        // Trigger the selected workflow backend. Built-in is the default; N8N remains available.
+        // Drafting and transport are independently routed workflows.
         let emailSent = false;
         let draftCreated = false;
         let draftBackend: 'built_in' | 'n8n' | null = null;
         let builtInDraft: DraftEmail | null = null;
         if (payload.analysis?.dpo_email) {
-            const workflowBackend = modelPreferences.workflowBackend;
             const dpoEmail = payload.analysis.dpo_email;
-            const shouldUseBuiltIn = workflowBackend === 'built_in' || workflowBackend === 'hybrid';
-            const shouldUseN8N = workflowBackend === 'n8n' || workflowBackend === 'hybrid';
+            const useBuiltInDraft = draftingPreference.enabled && (draftingPreference.execution_mode === 'built_in' || draftingPreference.execution_mode === 'hybrid');
+            const allowN8NDraft = draftingPreference.enabled && (draftingPreference.execution_mode === 'n8n' || draftingPreference.execution_mode === 'hybrid');
 
-            if (shouldUseBuiltIn) {
+            if (useBuiltInDraft) {
                 const builtInLogId = await startWorkflowLog({
                     requestId: newRequestId,
                     workflowName: 'Built-in GDPR Request Drafter',
                     workflowType: 'built_in',
                     details: {
-                        backend: workflowBackend,
+                        workflowKey: 'request.drafting',
                         companyName,
                         dpoEmail,
                         requestType: payload.scope,
@@ -277,16 +278,12 @@ export async function submitRequest(payload: RequestPayload) {
                     draftBackend = 'built_in';
                     await completeWorkflowLog(builtInLogId, {
                         subject: builtInDraft.subject,
-                        emailTransport: shouldUseN8N ? 'n8n_send_email' : 'draft_only',
+                        emailTransport: sendingPreference.execution_mode,
                     });
-
-                    const deliveryNote = shouldUseN8N
-                        ? 'Hybrid mode will use the N8N email sender transport for delivery.'
-                        : 'Email was not sent by the built-in backend; switch to N8N or hybrid to deliver through the N8N email transport.';
 
                     await db.query(
                         `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
-                        [newRequestId, `Built-in workflow drafted a GDPR request for ${dpoEmail}.\n\nEmail delivery: ${deliveryNote}\n\nSubject: ${builtInDraft.subject}\n\n${builtInDraft.body}`]
+                        [newRequestId, `Built-in workflow drafted a GDPR request for ${dpoEmail}.\n\nSubject: ${builtInDraft.subject}\n\n${builtInDraft.body}`]
                     );
                     await db.query(
                         `UPDATE requests SET progress = 15, status = 'action_required' WHERE id = $1`,
@@ -295,11 +292,11 @@ export async function submitRequest(payload: RequestPayload) {
                 } catch (builtInError) {
                     console.error("Built-in workflow failed:", builtInError);
                     await failWorkflowLog(builtInLogId, builtInError, {
-                        backend: workflowBackend,
+                        workflowKey: 'request.drafting',
                         stage: 'draft',
                     });
 
-                    if (!shouldUseN8N) {
+                    if (!allowN8NDraft) {
                         await db.query(
                             `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
                             [newRequestId, `Built-in workflow failed. Please check model provider settings and retry. Error: ${builtInError instanceof Error ? builtInError.message : 'Unknown error'}`]
@@ -308,16 +305,14 @@ export async function submitRequest(payload: RequestPayload) {
                 }
             }
 
-            if (shouldUseN8N) {
-                let emailDraft = builtInDraft;
-
-                if (!emailDraft || workflowBackend === 'n8n') {
+            let emailDraft: DraftEmail | null = builtInDraft;
+            if (allowN8NDraft && !emailDraft) {
                     const n8nDraftLogId = await startWorkflowLog({
                         requestId: newRequestId,
                         workflowName: 'N8N Request Drafter',
                         workflowType: 'n8n',
                         details: {
-                            backend: workflowBackend,
+                            workflowKey: 'request.drafting',
                             companyName,
                             dpoEmail,
                             requestType: payload.scope,
@@ -353,7 +348,7 @@ export async function submitRequest(payload: RequestPayload) {
                     } catch (n8nDraftError) {
                         console.error("N8N draft workflow failed:", n8nDraftError);
                         await failWorkflowLog(n8nDraftLogId, n8nDraftError, {
-                            backend: workflowBackend,
+                            workflowKey: 'request.drafting',
                             stage: 'draft',
                         });
 
@@ -364,15 +359,30 @@ export async function submitRequest(payload: RequestPayload) {
                             );
                         }
                     }
+            }
+
+            if (emailDraft && sendingPreference.enabled && sendingPreference.execution_mode !== 'disabled') {
+                const requireReview = sendingPreference.configuration.require_review === true;
+                if (!requireReview && (sendingPreference.execution_mode === 'built_in' || sendingPreference.execution_mode === 'hybrid')) {
+                    const builtInEmailLogId = await startWorkflowLog({requestId:newRequestId,workflowName:'Built-in SMTP Email Sender',workflowType:'built_in',details:{workflowKey:'email.sending',to:dpoEmail}});
+                    try {
+                        const sent=await sendBuiltInEmail({requestId:newRequestId,to:dpoEmail,subject:emailDraft.subject,body:emailDraft.body});
+                        emailSent=true; await completeWorkflowLog(builtInEmailLogId,{messageId:sent.messageId,transport:sent.transport});
+                        await db.query(`INSERT INTO messages (request_id,sender,content) VALUES($1,'agent',$2)`,[newRequestId,`Built-in SMTP transport sent the GDPR request to ${dpoEmail}.`]);
+                        await db.query(`UPDATE requests SET progress=20,status='processing' WHERE id=$1`,[newRequestId]);
+                        // Prime the built-in monitor; a failed initial check does not undo a successful send.
+                        monitorInboxBuiltIn().catch(error=>console.warn('Initial inbox monitor check failed:',error));
+                    } catch (error) { await failWorkflowLog(builtInEmailLogId,error,{workflowKey:'email.sending',stage:'smtp_send'}); }
                 }
 
-                if (emailDraft) {
+                const useN8NTransport = !requireReview && !emailSent && (sendingPreference.execution_mode === 'n8n' || sendingPreference.execution_mode === 'hybrid');
+                if (useN8NTransport) {
                     const n8nEmailLogId = await startWorkflowLog({
                         requestId: newRequestId,
                         workflowName: 'N8N Email Sender',
                         workflowType: 'n8n',
                         details: {
-                            backend: workflowBackend,
+                            workflowKey: 'email.sending',
                             to: dpoEmail,
                             draftSource: emailDraft === builtInDraft ? 'built_in' : 'n8n',
                         },
@@ -405,7 +415,7 @@ export async function submitRequest(payload: RequestPayload) {
                     } catch (n8nEmailError) {
                         console.error("N8N email workflow failed:", n8nEmailError);
                         await failWorkflowLog(n8nEmailLogId, n8nEmailError, {
-                            backend: workflowBackend,
+                            workflowKey: 'email.sending',
                             stage: 'email_send',
                         });
 
@@ -415,6 +425,7 @@ export async function submitRequest(payload: RequestPayload) {
                         );
                     }
                 }
+                if (requireReview) await db.query(`INSERT INTO messages(request_id,sender,content) VALUES($1,'agent',$2)`,[newRequestId,'Draft is awaiting human review before email delivery.']);
             }
         }
 

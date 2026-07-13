@@ -1,0 +1,8 @@
+[
+  {
+    "query": "privacy engineering",
+    "occurred_at": "2024-11-03T09:30:00Z",
+    "event_id": "logical-event-001",
+    "subject": {"id": "synthetic-subject"}
+  }
+]

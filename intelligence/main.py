@@ -17,6 +17,9 @@ from api.query import router as query_router
 from api.onsit import router as onsit_router
 from api.extract import router as extract_router
 from api.evidence import router as evidence_router
+from api.execution import router as execution_router
+from api.bulk_ingestion import router as bulk_ingestion_router
+from api.insights import router as insights_router
 
 
 settings = get_settings()
@@ -34,6 +37,13 @@ async def lifespan(app: FastAPI):
         await GraphProjectionService().backfill_legacy_node_ids()
     except Exception as exc:
         print(f"[{settings.service_name}] Graph schema/backfill deferred: {exc}")
+    try:
+        from db.postgres import get_postgres_client
+        from ingestion.catalogue import sync_format_support_registry
+        count=await sync_format_support_registry(get_postgres_client())
+        print(f"[{settings.service_name}] Published {count} file support records")
+    except Exception as exc:
+        print(f"[{settings.service_name}] File support catalogue sync deferred: {exc}")
     
     yield
     
@@ -69,6 +79,9 @@ app.include_router(query_router, tags=["Query"])
 app.include_router(onsit_router, tags=["ONSIT Discovery"])
 app.include_router(extract_router, tags=["File Extraction"])
 app.include_router(evidence_router, tags=["Evidence"])
+app.include_router(execution_router, tags=["Task Execution"])
+app.include_router(bulk_ingestion_router, tags=["Bulk ingestion"])
+app.include_router(insights_router, tags=["Personal Insights"])
 
 
 @app.get("/")

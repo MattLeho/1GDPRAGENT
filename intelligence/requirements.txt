@@ -77,3 +77,28 @@ langextract>=1.1.1              # Google LangExtract for grounded extraction
 Pillow>=10.0.0                  # Mechanical image-region evidence resolution
 mutagen>=1.47.0                 # Mechanical media duration verification
 
+# =============================================================================
+# Task 3 local-first ingestion and temporal engine
+# =============================================================================
+
+# Columnar event lake and local analytical queries
+polars>=1.25.0,<2.0.0
+pyarrow>=19.0.0,<24.0.0
+duckdb>=1.2.0,<2.0.0
+ijson>=3.3.0,<4.0.0
+
+# Explicit deterministic statistical dependency. NetworkX is already supplied
+# by Maigret and must not be pinned incompatibly here.
+ruptures>=1.1.9,<2.0.0
+
+# Safe P0 family extraction. Optional system codecs remain separately reported.
+PyYAML>=6.0.2,<7.0.0
+pypdf>=5.3.0,<7.0.0
+openpyxl>=3.1.5,<4.0.0
+python-docx>=1.1.2,<2.0.0
+python-pptx>=1.0.2,<2.0.0
+odfpy>=1.4.1,<2.0.0
+striprtf>=0.0.29,<1.0.0
+icalendar>=6.1.1,<8.0.0
+vobject>=0.9.9,<1.0.0
+

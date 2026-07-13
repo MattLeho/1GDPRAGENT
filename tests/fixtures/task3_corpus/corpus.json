@@ -1,0 +1,84 @@
+{
+  "version": "task3-synthetic-corpus-v1",
+  "snapshots": [
+    "snapshots/export_2025_01/events.json",
+    "snapshots/export_2025_07/events.json"
+  ],
+  "duplicate_paths": [
+    "duplicates/path_a/activity.json",
+    "duplicates/path_b/renamed.json"
+  ],
+  "reordered_json": [
+    "reordered/first.json",
+    "reordered/second.json"
+  ],
+  "malformed_json": "malformed/broken.json",
+  "mime_mismatch": {
+    "path": "file_truth/actually_json.jpg",
+    "declared_mime": "application/json",
+    "parser_probe_format": "json"
+  },
+  "archive_policy": {
+    "traversal_member": "../../outside.txt",
+    "expansion_member": "highly-compressible.txt",
+    "expanded_bytes": 8192,
+    "maximum_expansion_ratio": 2.0
+  },
+  "unknown_schema": [
+    {"mystery_a": 1, "payload": {"shape": "one"}},
+    {"mystery_b": [1, 2, 3], "payload": {"shape": "two", "extra": true}},
+    {"mystery_a": 2, "payload": {"shape": "three"}}
+  ],
+  "approved_parser": {
+    "parser_id": "synthetic.search.activity",
+    "parser_version": "1.0.0",
+    "file_family": "json",
+    "event_type": "search.performed",
+    "data_domain": "search_history",
+    "timestamp_selector": "/occurred_at",
+    "temporal_precision": "SECOND",
+    "subject_selector": "/subject/id",
+    "object_selectors": {"value": "/query"},
+    "identifier_selectors": {"id": "/event_id"},
+    "action_class": "SEARCHED",
+    "service": "Synthetic Search",
+    "object_type": "query"
+  },
+  "opaque_token": {
+    "value": "a8f45c73d20e49b1b6ac1296",
+    "observations": [
+      {"service": "synthetic-search", "domain": "search", "schema": "schema-a", "seen_at": "2024-01-01T00:00:00Z"},
+      {"service": "synthetic-ads", "domain": "advertising", "schema": "schema-b", "seen_at": "2025-01-01T00:00:00Z"},
+      {"service": "synthetic-search", "domain": "search", "schema": "schema-a", "seen_at": "2026-01-01T00:00:00Z"}
+    ]
+  },
+  "date_only_record": {
+    "subject": {"id": "synthetic-subject"},
+    "event_id": "date-only-001",
+    "occurred_at": "2025-03-17",
+    "query": "date-only fixture"
+  },
+  "locations": {
+    "exact": {"latitude": 51.507351, "longitude": -0.127758, "accuracy_m": 12},
+    "city": {"city": "London"}
+  },
+  "interactions": {
+    "sent_to": "synthetic-recipient",
+    "followed": "synthetic-account"
+  },
+  "controller_interest": {
+    "controller_state_key": "segment:synthetic-traveller",
+    "personal_state_key": "topic:synthetic-travel"
+  },
+  "project_burst": [1, 1, 1, 1, 20, 22],
+  "recurrent_topic": [true, false, true, false, true],
+  "regime_shift": [0, 0, 0, 0, 0, 12, 12, 12, 12, 12],
+  "checkpoint_restart": {
+    "item_key": "artifact:synthetic-interruption",
+    "content_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "parser_version": "1.0.0",
+    "partial_records_seen": 2,
+    "completed_records_seen": 5,
+    "error_code": "FORCED_SYNTHETIC_INTERRUPTION"
+  }
+}

@@ -9,34 +9,14 @@
  */
 
 import { NextResponse } from 'next/server';
-import { Pool } from 'pg';
+import { pool } from '@/lib/db';
+import { N8N_WEBHOOK_MAPPINGS } from '@/lib/workflows/registry';
 
 // =============================================================================
 // Database Connection
 // =============================================================================
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-});
-
-// =============================================================================
-// Webhook Mappings
-// =============================================================================
-
-interface WebhookMapping {
-    id: string;
-    envVar: string;
-}
-
-const webhookMappings: WebhookMapping[] = [
-    { id: 'policyAnalyzer', envVar: 'N8N_WEBHOOK_POLICY_ANALYZER' },
-    { id: 'requestDrafter', envVar: 'N8N_WEBHOOK_REQUEST_DRAFTER' },
-    { id: 'kgIngestor', envVar: 'N8N_WEBHOOK_INGEST_DATA' },
-    { id: 'hybridRag', envVar: 'N8N_WEBHOOK_ENHANCED_RAG' },
-    { id: 'transcription', envVar: 'N8N_WEBHOOK_TRANSCRIPTION' },
-    { id: 'vendorOcr', envVar: 'N8N_WEBHOOK_VENDOR_OCR' },
-    { id: 'policyScanner', envVar: 'N8N_WEBHOOK_POLICY_SCANNER' },
-];
+const webhookMappings=N8N_WEBHOOK_MAPPINGS;
 
 // =============================================================================
 // Environment Variable Check

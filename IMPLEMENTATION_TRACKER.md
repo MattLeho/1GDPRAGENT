@@ -1,6 +1,6 @@
 # Implementation Tracker
 
-Updated: 2026-07-10
+Updated: 2026-07-13
 
 ## Current Focus
 
@@ -13,6 +13,25 @@ Updated: 2026-07-10
 - [x] Task 1: add disposable PostgreSQL and live Neo4j integration tests.
 - [x] Task 1: pass the line-by-line acceptance audit, type checking, linting, production build, and live Compose verification.
 - [x] Task 1 follow-up: fix Neo4j driver-6 integer pagination, distinguish an empty connected graph, and remove fabricated graph-statistic fallbacks.
+- [x] Task 2: add canonical TaskDefinition/EngineDefinition registries and persisted TaskRoute configuration.
+- [x] Task 2: enforce strict-local, local-first, and controlled-cloud execution with per-invocation ExecutionRecord audit.
+- [x] Task 2: add explicit deterministic, local ASR/OCR/Ollama, and remote generation adapters with health/capability/discovery behavior.
+- [x] Task 2: replace Gemini audio transcription with local Parakeet/Whisper routing, FFmpeg normalization, timestamp provenance, and text-only semantic follow-up.
+- [x] Task 2: replace the global workflow backend at runtime with canonical per-workflow definitions/preferences and migrate the legacy choice.
+- [x] Task 2: reconcile N8N webhook configuration to one registry and remove N8N as a Next.js startup dependency.
+- [x] Task 2: implement built-in encrypted SMTP/IMAP transport, response monitoring/classification, rotation, deletion, and legacy-secret re-entry.
+- [x] Task 2: rebuild settings navigation around identity, connectors, task routes, workflows, retention, privacy/audit, and advanced configuration.
+- [x] Task 2: document processing, workflow inventory/parity, and settings architecture.
+- [x] Task 2: pass 38 Python tests, TypeScript, focused lint, production build, live migration, privacy-route probes, and healthy Compose verification.
+- [x] Task 4: deliver `/dashboard/insights` with one point/period/compare selection shared by all modules.
+- [x] Task 4: add immutable, versioned insight materialisations, aggregate buckets, evidence indexes, external-context events, temporal-correlation candidates, media-location candidates, and settings.
+- [x] Task 4: implement evidence-backed overview, interest, search, AI-conversation, project/era, change, place, media, and contextual-correlation services and APIs.
+- [x] Task 4: enforce exposure-versus-interest, occurrence-time, non-causal correlation, media-origin, location-evidence, and strict-local privacy safeguards.
+- [x] Task 4: pass all 18 synthetic acceptance scenarios, 77 Task 4 tests, deterministic cold/warm materialisation checks, and zero-call default media privacy verification.
+- [x] Task 4: verify authenticated module/empty-state rendering, point-in-time/period/compare URL selection, Quarter granularity, stable controls, and cohesive dark-mode temporal and activity-density surfaces.
+- [x] Task 4: fix unstable default timestamps that caused repeated refreshes and protect the memoized URL selection with a frontend runtime contract test.
+- [x] Task 4: verify the authenticated evidence-inspector interaction with the isolated local `task4-browser-smoke` subject while leaving the user's empty profile unmodified; retain database fixtures as authority for exact source and locator resolution absent from the narrow browser fixture.
+- [x] Task 4: complete and accept the final line-by-line audit without beginning Task 5.
 
 - [x] Review `Audit.md` and `fixes.md`.
 - [x] Review original planning docs in `App_Context_and_Plan/`.
@@ -43,14 +62,14 @@ Audit follow-up notes:
 ## Workflow Backend
 
 - [x] Identify current split between N8N routes and built-in agent routes.
-- [x] Add setting for workflow backend: built-in, N8N, or hybrid.
+- [x] Replace the legacy global backend with built-in, N8N, hybrid, or disabled preference per workflow.
 - [x] Default new installs to built-in workflows.
 - [x] Update request submission to use selected workflow backend.
 - [x] Add workflow logs for both built-in and N8N executions.
 - [x] Implement built-in email sending or clearly expose N8N as the email transport fallback.
-- [ ] Translate remaining N8N agents into built-in services where appropriate.
-  - [ ] Port inbox monitor/response parser after the SMTP/IMAP transport choice is settled.
-  - [ ] Port KG/identity/hybrid RAG workflows through existing intelligence services once graph interfaces are ready.
+- [x] Translate shipped core N8N agents into built-in handlers without duplicating Python intelligence services.
+  - [x] Port SMTP/IMAP testing, transport, incremental inbox monitoring, response matching/classification, and parsing handoff.
+  - [x] Register KG/identity/grounded extraction/hybrid retrieval against existing Task 1 intelligence and graph services.
 
 ## RLM Agent
 
@@ -78,7 +97,7 @@ Audit follow-up notes:
 - [x] Allow local-development credential saving without a manually configured encryption key.
 - [ ] Replace static OpenAI/Google pricing hints with a versioned or live pricing source.
 - [ ] Add clear/delete/rotate controls for stored provider credentials.
-- [ ] Expose clean runtime provider adapters for non-Google generation and tool-calling.
+- [x] Expose explicit runtime provider adapters for task-routed generation; existing RLM tool-calling adapters remain available.
 
 ## Knowledge Graph
 

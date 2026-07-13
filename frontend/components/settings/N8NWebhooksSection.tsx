@@ -40,13 +40,18 @@ import {
 // =============================================================================
 
 const n8nWebhooksSchema = z.object({
-    policyAnalyzer: z.string().url().optional().or(z.literal('')),
-    requestDrafter: z.string().url().optional().or(z.literal('')),
-    kgIngestor: z.string().url().optional().or(z.literal('')),
-    hybridRag: z.string().url().optional().or(z.literal('')),
+    analyzePolicy: z.string().url().optional().or(z.literal('')),
+    draftRequest: z.string().url().optional().or(z.literal('')),
+    ingestData: z.string().url().optional().or(z.literal('')),
+    enhancedRag: z.string().url().optional().or(z.literal('')),
     transcription: z.string().url().optional().or(z.literal('')),
-    vendorOcr: z.string().url().optional().or(z.literal('')),
-    policyScanner: z.string().url().optional().or(z.literal('')),
+    vendorExtract: z.string().url().optional().or(z.literal('')),
+    policyScan: z.string().url().optional().or(z.literal('')),
+    sendEmail: z.string().url().optional().or(z.literal('')),
+    testImap: z.string().url().optional().or(z.literal('')),
+    parseResponse: z.string().url().optional().or(z.literal('')),
+    ingestIdentity: z.string().url().optional().or(z.literal('')),
+    validateTriple: z.string().url().optional().or(z.literal('')),
 });
 
 type N8NWebhooksForm = z.infer<typeof n8nWebhooksSchema>;
@@ -65,28 +70,28 @@ interface WebhookConfig {
 
 const webhookConfigs: WebhookConfig[] = [
     {
-        id: 'policyAnalyzer',
+        id: 'analyzePolicy',
         name: 'Policy Analyzer',
         description: 'Uses Python intelligence agents for policy analysis and data categorization',
-        envVar: 'N8N_WEBHOOK_POLICY_ANALYZER',
+        envVar: 'N8N_WEBHOOK_ANALYZE_POLICY',
         icon: FileText,
     },
     {
-        id: 'requestDrafter',
+        id: 'draftRequest',
         name: 'Request Drafter',
         description: 'Python RLM agent for drafting requests, N8N handles email forwarding',
-        envVar: 'N8N_WEBHOOK_REQUEST_DRAFTER',
+        envVar: 'N8N_WEBHOOK_DRAFT_REQUEST',
         icon: FileText,
     },
     {
-        id: 'kgIngestor',
+        id: 'ingestData',
         name: 'Knowledge Graph Ingestor',
         description: 'Uses Python intelligence agents to process and ingest data into Neo4j',
         envVar: 'N8N_WEBHOOK_INGEST_DATA',
         icon: BrainCircuit,
     },
     {
-        id: 'hybridRag',
+        id: 'enhancedRag',
         name: 'Hybrid RAG',
         description: 'Hybrid Python/N8N implementation for vector + graph retrieval',
         envVar: 'N8N_WEBHOOK_ENHANCED_RAG',
@@ -95,24 +100,29 @@ const webhookConfigs: WebhookConfig[] = [
     {
         id: 'transcription',
         name: 'File Transcription',
-        description: 'Audio/video transcription with Gemini',
-        envVar: 'N8N_WEBHOOK_TRANSCRIPTION',
+        description: 'Optional N8N adapter; built-in transcription uses the task router',
+        envVar: 'N8N_WEBHOOK_FILE_TRANSCRIPTION',
         icon: FileText,
     },
     {
-        id: 'vendorOcr',
+        id: 'vendorExtract',
         name: 'Vendor OCR Extractor',
         description: 'Python-based OCR extraction for vendor discovery from screenshots',
-        envVar: 'N8N_WEBHOOK_VENDOR_OCR',
+        envVar: 'N8N_WEBHOOK_VENDOR_EXTRACT',
         icon: ScanSearch,
     },
     {
-        id: 'policyScanner',
+        id: 'policyScan',
         name: 'Privacy Policy Scanner',
         description: 'UK GDPR compliance analysis',
-        envVar: 'N8N_WEBHOOK_POLICY_SCANNER',
+        envVar: 'N8N_WEBHOOK_POLICY_SCAN',
         icon: ScanSearch,
     },
+    {id:'sendEmail',name:'Email Sender',description:'Optional N8N email transport adapter',envVar:'N8N_WEBHOOK_SEND_EMAIL',icon:FileText},
+    {id:'testImap',name:'IMAP Test',description:'Optional N8N connection-test adapter',envVar:'N8N_WEBHOOK_TEST_IMAP',icon:FileText},
+    {id:'parseResponse',name:'Response Parser',description:'Optional N8N response parsing adapter',envVar:'N8N_WEBHOOK_PARSE_RESPONSE',icon:FileText},
+    {id:'ingestIdentity',name:'Identity Ingestion',description:'Optional N8N adapter to canonical identity assertions',envVar:'N8N_WEBHOOK_INGEST_IDENTITY',icon:BrainCircuit},
+    {id:'validateTriple',name:'MAKGED Validation',description:'Optional N8N validation adapter',envVar:'N8N_WEBHOOK_VALIDATE_TRIPLE',icon:BrainCircuit},
 ];
 
 // =============================================================================
@@ -129,13 +139,18 @@ export function N8NWebhooksSection() {
     const form = useForm<N8NWebhooksForm>({
         resolver: zodResolver(n8nWebhooksSchema),
         defaultValues: {
-            policyAnalyzer: '',
-            requestDrafter: '',
-            kgIngestor: '',
-            hybridRag: '',
+            analyzePolicy: '',
+            draftRequest: '',
+            ingestData: '',
+            enhancedRag: '',
             transcription: '',
-            vendorOcr: '',
-            policyScanner: '',
+            vendorExtract: '',
+            policyScan: '',
+            sendEmail: '',
+            testImap: '',
+            parseResponse: '',
+            ingestIdentity: '',
+            validateTriple: '',
         },
     });
 

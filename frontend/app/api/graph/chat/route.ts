@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { runCypher } from '@/lib/graph';
-import { getAICredential } from '@/lib/ai-credentials';
-import { getWorkflowModelPreference } from '@/lib/model-preferences';
+import { executeTask } from '@/lib/execution/router';
 
 /**
  * Graph Chat API - Answers questions about the knowledge graph using Gemini
@@ -70,8 +69,7 @@ export async function POST(request: Request) {
         // Build context from results
         const context = buildContextFromResults(results);
 
-        // Call Gemini to generate a natural language response
-        const geminiResponse = await callGemini(query, context);
+        const geminiResponse = await explainGraph(query, context);
 
         return NextResponse.json({
             response: geminiResponse,
@@ -122,45 +120,12 @@ function buildContextFromResults(results: unknown[]): string {
     return context;
 }
 
-async function callGemini(query: string, context: string): Promise<string> {
-    const preferences = await getWorkflowModelPreference('graph');
-    const apiKey = await getAICredential('google') ||
-        process.env.GEMINI_API_KEY ||
-        process.env.GOOGLE_API_KEY;
-
-    if (!apiKey) {
-        // Fallback to simple response if no API key
-        return generateSimpleResponse(query, context);
-    }
-
+async function explainGraph(query: string, context: string): Promise<string> {
     try {
-        const { GoogleGenAI } = await import('@google/genai');
-        const ai = new GoogleGenAI({ apiKey });
-        const model = preferences.provider === 'google'
-            ? preferences.model
-            : process.env.GEMINI_MODEL_GRAPH || process.env.GEMINI_MODEL_FLASH || 'gemini-3.1-flash';
-
-        const response = await ai.models.generateContent({
-            model,
-            contents: `You are a privacy analyst helping a user understand their data footprint. 
-                            
-The user asked: "${query}"
-
-Based on their knowledge graph, here's what we found:
-${context}
-
-Provide a helpful, concise response (2-3 sentences max) that answers their question based on this data. 
-If the data is limited, acknowledge that and suggest how they can expand their graph.
-Focus on privacy implications and data connections.`,
-            config: {
-                temperature: 0.7,
-                maxOutputTokens: 200,
-            },
-        });
-
-        return response.text || generateSimpleResponse(query, context);
+        const result=await executeTask({taskKey:'graph.explanation',workflowKey:'graph.query',input:{text:`Question: ${query}\n\nGrounded graph results:\n${context}`},configuration:{systemPrompt:'Answer the question in two or three concise sentences using only the grounded graph results. State when evidence is limited and do not turn model hypotheses into facts.'}});
+        return result.ok&&typeof (result.output as {text?:unknown}).text==='string'?(result.output as {text:string}).text:generateSimpleResponse(query,context);
     } catch (error) {
-        console.error('Gemini call failed:', error);
+        console.error('Graph explanation task failed:', error);
         return generateSimpleResponse(query, context);
     }
 }

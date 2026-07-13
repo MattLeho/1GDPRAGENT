@@ -106,6 +106,8 @@ def test_application_code_contains_no_runtime_ddl():
     offenders=[]
     for root in roots:
         for path in root.rglob('*'):
+            if 'node_modules' in path.parts or '.next' in path.parts:
+                continue
             if path.suffix in {'.ts','.tsx','.py'} and pattern.search(path.read_text(encoding='utf-8',errors='ignore')):
                 offenders.append(str(path.relative_to(ROOT)))
     assert not offenders,f'Runtime DDL must be owned by database/migrations: {offenders}'
