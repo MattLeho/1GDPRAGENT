@@ -2,7 +2,7 @@
 title: Task 5 Final Self-Audit
 date: 2026-07-13
 tags: [gdpr-agent, task-5, self-audit]
-status: implementation-verified-browser-ui-smoke-deferred
+status: implementation-verified-extension-install-smoke-deferred
 ---
 
 # Task 5 Final Self-Audit
@@ -48,7 +48,7 @@ Every plan begins as a dry run and exposes eligible/protected/uncertain groups w
 
 ## 10. Settings and review UI
 
-`Settings → Connectors` uses real APIs for definition/instance status, displayed permissions, data classes, backfill, sync, pause/resume and disconnect. `Settings → Data Retention` exposes policies, decision reviews including `UNSURE`, plan groups/reasons, dry-run/review state, exact destructive approval and staged actions. The evidence inspector explicitly shows when full source content was purged and minimised evidence remains.
+`Settings → Connectors` uses real APIs for definition/instance status, displayed permissions, data classes, backfill, sync, pause/resume and disconnect. Chromium instances also expose one-time pairing creation and revocation, show the local bridge URL and instance ID, and display the token only in the creation response; the token is stored only as a hash server-side. `Settings → Data Retention` exposes policies, decision reviews including `UNSURE`, plan groups/reasons, dry-run/review state, exact destructive approval and staged actions. The evidence inspector explicitly shows when full source content was purged and minimised evidence remains.
 
 ## 11. Migrations and credentials
 
@@ -61,7 +61,8 @@ Migrations 021–026 add connector/retention contracts, browser pairing, email t
 - Task 5 aggregate before final suite — **43 passed**; deletion safety after approval hardening — **5 passed**.
 - Canonical migration idempotency test — **1 passed**; live migrations 021–026 applied successfully.
 - `pnpm run build` in `frontend` — passed, 61 routes/pages generated.
-- `pnpm run lint` — exit 0, 137 warnings and no errors; warnings are predominantly pre-existing, with no build/type failure.
+- `pnpm run lint` — exit 0, 135 warnings and no errors; warnings are predominantly pre-existing, with no build/type failure.
+- Authenticated in-app browser smoke on `localhost:3001` — Settings Connectors and Data Retention loaded and interacted with successfully; live API-backed controls rendered and browser logs contained no warnings or errors. This smoke exposed the missing pairing-token UI, which was added and then production-build verified.
 - Browser extension `pnpm test` — **4 passed**; `pnpm run build` — passed.
 - Real TLS SMTP smoke — passed; TLS/auth/data/dot-stuffing accepted.
 - Real TLS IMAP deletion smoke — passed; `UID MOVE` observed, no `EXPUNGE` or `STORE`.
@@ -84,9 +85,9 @@ Migrations 021–026 add connector/retention contracts, browser pairing, email t
 
 ## 15. Incomplete or deferred requirements
 
-- The user explicitly deferred browser use. Automated extension/bridge/build/API tests pass, but the final authenticated visual Settings smoke and a real installed-Chromium history round trip remain deferred. Required user action: allow browser testing, log into the GDPR app if needed, load `browser-extension/dist`, pair it in Settings and approve the optional History permission.
+- The authenticated visual Settings smoke passed. The remaining external acceptance step is a real installed-Chromium history round trip: load `browser-extension/dist` as an unpacked extension, create its one-time pairing in Settings, and approve the optional History permission. Extension installation and that permission require user action/confirmation, so this step remains deferred until the user is ready.
 - No safe real third-party mailbox credentials were supplied. Acquisition uses deterministic protocol doubles plus migrated end-to-end ingestion; destructive IMAP uses a real local TLS protocol server. A provider-account smoke requires a disposable IMAP account/app password and permission to create/move a test message.
-- Lint has 137 warnings and zero errors. Cleaning unrelated legacy warnings is outside Task 5 and was not used to hide any Task 5 failure.
+- Lint has 135 warnings and zero errors. Cleaning unrelated legacy warnings is outside Task 5 and was not used to hide any Task 5 failure.
 
 ## 16. Scope confirmation
 
