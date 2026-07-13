@@ -1,0 +1,11 @@
+[
+  {
+    "uuid": "conversation-claude-1",
+    "name": "Retention review",
+    "chat_messages": [
+      {"uuid": "turn-system-1", "sender": "system", "created_at": "2024-04-01T09:00:00Z", "text": "Be concise."},
+      {"uuid": "turn-human-unknown", "sender": "human", "created_at": "2024-04-01T09:00:05Z", "text": "Review these records."},
+      {"uuid": "turn-assistant-2", "sender": "assistant", "created_at": "2024-04-01T09:00:10Z", "text": "I can help classify them."}
+    ]
+  }
+]

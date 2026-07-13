@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="utf-8"><title>GDPR Agent Browser Connector</title></head>
+<body><main><h1>GDPR Agent Browser Connector</h1>
+<p>History access is optional and is requested only when you enable it. Page content is never captured.</p>
+<label>Local bridge URL <input id="bridgeUrl" size="70" value="http://127.0.0.1:8001/connectors/browser/sync"></label><br>
+<label>Connector instance ID <input id="connectorInstanceId" size="40"></label><br>
+<label>Pairing token <input id="pairingToken" type="password" size="48" autocomplete="off"></label><br>
+<button id="save">Save pairing</button><button id="permission">Enable browser history</button>
+<button id="backfill">Backfill history</button><button id="sync">Sync now</button><pre id="status"></pre>
+</main><script type="module" src="options.mjs"></script></body></html>

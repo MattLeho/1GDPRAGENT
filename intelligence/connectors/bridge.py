@@ -21,9 +21,11 @@ from evidence.ledger import EvidenceLedger
 from evidence.models import EvidenceLocatorCreate, LocatorType
 from ingestion.bulk import BulkIngestionService
 from ingestion.storage import StorageRoots, write_raw_blob
+from ingestion.event_sink import persist_grounded_events
 
 from .models import ConnectorRawRecord, PermissionAccess
 from .signatures import canonical_json as _canonical_json, connector_record_signature
+from .event_mapping import map_connector_events
 
 
 BRIDGE_VERSION = "task5-connector-bridge-v1"
@@ -72,6 +74,11 @@ def _extension_for(record: ConnectorRawRecord) -> str:
 
 
 def _is_file_like(record: ConnectorRawRecord) -> bool:
+    if record.data_class in {
+        "browser.visit", "email.message", "ai.conversation_turn",
+        "filesystem.observation",
+    } and not record.media_type.casefold().startswith("message/rfc822"):
+        return False
     if record.source_metadata.get("file_name") or record.source_metadata.get("path"):
         return True
     media_type = record.media_type.split(";", 1)[0].strip().casefold()
@@ -132,6 +139,7 @@ class ConnectorIngestionBridge:
                     str(blob.path), analysis_run_id=context["analysis_run_id"],
                     export_snapshot_id=snapshot_id, declared_mime=record.media_type,
                     original_path=original_path,
+                    requested_tasks=tuple(record.source_metadata.get("requested_tasks") or ()),
                 )
                 artifact_id = processed.artifact_id
                 event_count = processed.event_count
@@ -142,6 +150,15 @@ class ConnectorIngestionBridge:
                 )
                 event_count = 0
             locator_id = await self._ensure_root_locator(artifact_id, record)
+            mapped_events = map_connector_events(
+                record, context, artifact_id=artifact_id, snapshot_id=snapshot_id,
+                locator_id=locator_id,
+            )
+            event_count += await persist_grounded_events(
+                self.postgres, self.roots, mapped_events,
+                analysis_run_id=context["analysis_run_id"],
+                partition_key=f"connector-{raw['id']}",
+            )
             await self.postgres.execute(
                 """UPDATE connector_raw_records SET source_artifact_id=$2,ingestion_status='ingested',error=NULL
                 WHERE id=$1""", raw["id"], artifact_id,
@@ -262,15 +279,33 @@ class ConnectorIngestionBridge:
         ))
 
     async def _record_typed_artifact(self, record, context, snapshot_id, blob, original_path) -> UUID:
+        parent_artifact_id = None
+        member_path = None
+        if record.data_class == "ai.conversation_turn":
+            export_key = record.source_metadata.get("export_key")
+            parents = await self.postgres.execute(
+                """SELECT source_artifact_id FROM connector_raw_records
+                   WHERE connector_instance_id=$1 AND data_class='ai.conversation_export'
+                     AND source_metadata->>'export_key'=$2 AND ingestion_status='ingested'
+                   ORDER BY observed_at,id LIMIT 1""",
+                record.connector_instance_id, export_key,
+            )
+            if not parents:
+                raise ConnectorIngestionError("AI conversation turn is missing its export SourceArtifact parent")
+            parent_artifact_id = parents[0]["source_artifact_id"]
+            member_path = str(record.source_metadata.get("source_pointer") or record.source_record_id)
         existing = await self.postgres.execute(
-            "SELECT id FROM source_artifacts WHERE export_snapshot_id=$1 AND original_path=$2 AND archive_member_path IS NULL",
-            snapshot_id, original_path,
+            """SELECT id FROM source_artifacts WHERE export_snapshot_id=$1 AND original_path=$2
+               AND parent_artifact_id IS NOT DISTINCT FROM $3
+               AND archive_member_path IS NOT DISTINCT FROM $4""",
+            snapshot_id, original_path, parent_artifact_id, member_path,
         )
         if existing:
             return existing[0]["id"]
         _, artifact_id = await self.ledger.record_source_occurrence(
             snapshot_id, blob.sha256, blob.byte_size, storage_uri=blob.path.resolve().as_uri(),
             original_path=original_path, file_name=Path(original_path).name,
+            parent_artifact_id=parent_artifact_id, archive_member_path=member_path,
             declared_mime=record.media_type, extension=_extension_for(record),
             file_type_status="declared", canonical_hash=blob.sha256,
             source_organisation=context["provider"], source_product=context["connector_key"],

@@ -73,6 +73,24 @@ def bulk_ingestion_process_file(self, data: dict) -> dict:
     return asdict(result)
 
 
+@app.task(
+    bind=True, name="intelligence.connectors.sync",
+    autoretry_for=(OSError, TimeoutError), retry_backoff=True,
+    retry_backoff_max=900, retry_kwargs={"max_retries": 4},
+)
+def connector_sync(self, data: dict) -> dict:
+    """Task 2/Celery execution entrypoint for scheduled connector runs."""
+    from uuid import UUID
+    from connectors.application import ConnectorApplication
+    from connectors.models import SyncRunKind
+    result = run_async(ConnectorApplication().run_instance(
+        UUID(data["connector_instance_id"]),
+        kind=SyncRunKind(data.get("kind", "sync")),
+        cursor_key=data.get("cursor_key", "default"),
+    ))
+    return result.model_dump(mode="json")
+
+
 @app.task(bind=True, name="intelligence.ingest_to_graph")
 def ingest_to_graph_task(self, data: dict) -> dict:
     """

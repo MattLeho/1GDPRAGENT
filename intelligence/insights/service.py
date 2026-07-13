@@ -34,7 +34,7 @@ from insights.models import (
 )
 from insights.repository import InsightRepository
 from insights.search import analyse_search_events
-from insights.signals import ClassifiedSignal, classify_events
+from insights.signals import ClassifiedSignal, classify_events, effective_signal_weight
 from temporal.interest import aggregate_interest_states
 from temporal.models import TopicAssignment
 from temporal.routines import build_routine_distributions, build_routine_drift
@@ -139,6 +139,10 @@ def _interest_views(
     baseline_states: Mapping[str, ObservedInterestState] | None = None,
 ) -> tuple[ObservedInterestState, ...]:
     signal_by_id = {signal.event.event_id:signal for signal in signals}
+    effective_weights = {
+        event_id: effective_signal_weight(signal, as_of=end)
+        for event_id, signal in signal_by_id.items()
+    }
     contributing = {
         event_id for event_id,signal in signal_by_id.items()
         if signal.interest_contributing and (signal.event.action_class is not ActionClass.SEARCHED or event_id in search_episode_ids)
@@ -159,7 +163,7 @@ def _interest_views(
     baseline_topics = {topic for event in baseline_events for topic in _topics(event)}
     for state in states:
         topic_events = [event_by_id[value] for value in state.evidence_event_ids]
-        average_weight = sum(signal_by_id[event.event_id].weight for event in topic_events) / len(topic_events)
+        average_weight = sum(effective_weights[event.event_id] for event in topic_events) / len(topic_events)
         if state.topic_id in prior_topic_ids and state.topic_id not in baseline_topics:
             change = "returning"
         elif len(topic_events) == 1:
@@ -180,7 +184,7 @@ def _interest_views(
             detector_id=state.detector_id, detector_version=state.detector_version,
             analysis_run_id=analysis_run_id,
             calculated_features={"signal_weight":average_weight,"evidence_count":len(topic_events)},
-            evidence=tuple(_event_ref(event, weight=signal_by_id[event.event_id].weight) for event in topic_events),
+            evidence=tuple(_event_ref(event, weight=effective_weights[event.event_id]) for event in topic_events),
             subject_id=subject_id, topic_id=state.topic_id, topic_path=state.topic_path,
             window_start=start, window_end=end, **current_dimensions,
             first_observed_at=min(event.occurred_at for event in topic_events if event.occurred_at),

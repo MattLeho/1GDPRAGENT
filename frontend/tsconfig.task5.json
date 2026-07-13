@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "types": ["node"]
+  },
+  "include": [
+    "lib/connectors/**/*.ts",
+    "lib/retention/**/*.ts",
+    "lib/secure-credentials.ts",
+    "lib/db.ts"
+  ],
+  "exclude": ["node_modules", ".next"]
+}

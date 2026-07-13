@@ -1,7 +1,9 @@
-import net from 'net';
 import tls from 'tls';
+import type { Socket } from 'net';
+import crypto from 'crypto';
 import { pool } from '@/lib/db';
 import { decryptCredential, encryptCredential } from '@/lib/secure-credentials';
+import { sendSmtpMessage } from '@/lib/connectors/smtp-transport';
 
 export interface EmailConnectorSettings {
     id:string; email:string; imap_host:string; imap_port:number; smtp_host:string;
@@ -59,14 +61,64 @@ export async function testEmailConnector():Promise<{success:boolean;message:stri
     catch(error){await pool.query('UPDATE email_settings SET connection_verified=false,updated_at=NOW() WHERE id=$1',[settings.id]);return{success:false,message:error instanceof Error?error.message:String(error)};}
 }
 
-export async function sendBuiltInEmail(input:{requestId?:string;to:string;subject:string;body:string}):Promise<{messageId:string;transport:'smtp'}>{
+export interface EmailTransportDraft {
+    id:string;request_id:string|null;recipient:string;subject:string;status:'draft'|'reviewed'|'sent'|'failed';
+    reviewed_by:string|null;reviewed_at:string|null;transport_message_id:string|null;created_at:string;sent_at:string|null;
+}
+
+function publicDraft(row:Record<string,unknown>):EmailTransportDraft{return {
+    id:String(row.id),request_id:row.request_id?String(row.request_id):null,recipient:String(row.recipient),subject:String(row.subject),
+    status:row.status as EmailTransportDraft['status'],reviewed_by:row.reviewed_by?String(row.reviewed_by):null,
+    reviewed_at:row.reviewed_at?String(row.reviewed_at):null,transport_message_id:row.transport_message_id?String(row.transport_message_id):null,
+    created_at:String(row.created_at),sent_at:row.sent_at?String(row.sent_at):null,
+};}
+
+export async function createBuiltInEmailDraft(input:{requestId?:string;to:string;subject:string;body:string}):Promise<EmailTransportDraft>{
+    if(!input.to.trim()||!input.subject.trim()||!input.body)throw new Error('Recipient, subject and body are required');
+    const result=await pool.query(`INSERT INTO email_transport_drafts(request_id,recipient,subject,body_ciphertext)
+        VALUES($1,$2,$3,$4) RETURNING id,request_id,recipient,subject,status,reviewed_by,reviewed_at,transport_message_id,created_at,sent_at`,
+    [input.requestId||null,cleanHeader(input.to),cleanHeader(input.subject),encryptCredential(input.body)]);
+    return publicDraft(result.rows[0]);
+}
+
+export async function reviewBuiltInEmailDraft(draftId:string,reviewedBy:string):Promise<EmailTransportDraft>{
+    if(!reviewedBy.trim())throw new Error('A reviewer identity is required');
+    const result=await pool.query(`UPDATE email_transport_drafts SET status='reviewed',reviewed_by=$2,reviewed_at=NOW(),error=NULL
+        WHERE id=$1 AND status='draft' RETURNING id,request_id,recipient,subject,status,reviewed_by,reviewed_at,transport_message_id,created_at,sent_at`,[draftId,reviewedBy.trim()]);
+    if(!result.rows[0])throw new Error('Only a draft can be reviewed');
+    return publicDraft(result.rows[0]);
+}
+
+export async function sendReviewedBuiltInEmail(draftId:string):Promise<{messageId:string;transport:'smtp';draft:EmailTransportDraft}>{
+    const draftResult=await pool.query(`SELECT id,request_id,recipient,subject,body_ciphertext,status FROM email_transport_drafts WHERE id=$1`,[draftId]);
+    const draft=draftResult.rows[0];
+    if(!draft||draft.status!=='reviewed')throw new Error('Email must be explicitly reviewed before sending');
     const settings=await internalConnector();
     if(settings.paused) throw new Error('Email connector is paused');
-    const messageId=`<${cryptoRandom()}@${settings.email.split('@')[1]||'gdpr-agent.local'}>`;
-    await smtpSend(settings,{...input,messageId});
-    await pool.query(`INSERT INTO outbound_messages(request_id,transport,transport_message_id,recipient,subject,status,metadata,sent_at)
-        VALUES($1,'smtp',$2,$3,$4,'sent',$5::jsonb,NOW())`,[input.requestId||null,messageId,input.to,input.subject,JSON.stringify({smtp_host:settings.smtp_host})]);
-    return{messageId,transport:'smtp'};
+    const messageId=`<${crypto.randomUUID()}@${settings.email.split('@')[1]||'gdpr-agent.local'}>`;
+    try{
+        await smtpSend(settings,{to:draft.recipient,subject:draft.subject,body:decryptCredential(draft.body_ciphertext),messageId});
+        const client=await pool.connect();try{await client.query('BEGIN');
+            await client.query(`INSERT INTO outbound_messages(request_id,transport,transport_message_id,recipient,subject,status,metadata,sent_at)
+                VALUES($1,'smtp',$2,$3,$4,'sent',$5::jsonb,NOW())`,[draft.request_id,messageId,draft.recipient,draft.subject,JSON.stringify({smtp_host:settings.smtp_host,draft_id:draft.id})]);
+            const sent=await client.query(`UPDATE email_transport_drafts SET status='sent',transport_message_id=$2,sent_at=NOW(),error=NULL
+                WHERE id=$1 AND status='reviewed' RETURNING id,request_id,recipient,subject,status,reviewed_by,reviewed_at,transport_message_id,created_at,sent_at`,[draft.id,messageId]);
+            if(!sent.rows[0])throw new Error('Email draft changed before send completion');
+            await client.query('COMMIT');return{messageId,transport:'smtp',draft:publicDraft(sent.rows[0])};
+        }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+    }catch(error){
+        await pool.query(`UPDATE email_transport_drafts SET status='failed',error=$2::jsonb WHERE id=$1 AND status='reviewed'`,[draft.id,JSON.stringify({message:error instanceof Error?error.message:String(error)})]);
+        throw error;
+    }
+}
+
+export async function sendBuiltInEmail(input:{requestId?:string;to:string;subject:string;body:string}):Promise<{messageId:string;transport:'smtp'}>{
+    // Request submission is an explicit user send action; preserve a durable
+    // draft/review audit rather than bypassing the transport state machine.
+    const draft=await createBuiltInEmailDraft(input);
+    await reviewBuiltInEmailDraft(draft.id,'request-submit');
+    const result=await sendReviewedBuiltInEmail(draft.id);
+    return{messageId:result.messageId,transport:result.transport};
 }
 
 export async function monitorInboxBuiltIn():Promise<{checked:number;unseen:number;matched:number;status:string}>{
@@ -78,18 +130,13 @@ export async function monitorInboxBuiltIn():Promise<{checked:number;unseen:numbe
 }
 
 function smtpFromImap(host:string):string{return host.replace(/^imap\./i,'smtp.');}
-function cryptoRandom():string{return `${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`;}
 function cleanHeader(value:string):string{return value.replace(/[\r\n]+/g,' ');}
 
 async function smtpSend(settings:EmailConnectorSettings&{password:string},message:{to:string;subject:string;body:string;messageId:string}):Promise<void>{
-    const socket=settings.smtp_secure?tls.connect({host:settings.smtp_host,port:settings.smtp_port,servername:settings.smtp_host,rejectUnauthorized:true}):net.connect({host:settings.smtp_host,port:settings.smtp_port});
-    await protocol(socket,[
-        {expect:/^220/m,send:`EHLO gdpr-agent.local\r\n`},{expect:/^250 /m,send:`AUTH LOGIN\r\n`},
-        {expect:/^334/m,send:`${Buffer.from(settings.email).toString('base64')}\r\n`},{expect:/^334/m,send:`${Buffer.from(settings.password).toString('base64')}\r\n`},
-        {expect:/^235/m,send:`MAIL FROM:<${cleanHeader(settings.email)}>\r\n`},{expect:/^250/m,send:`RCPT TO:<${cleanHeader(message.to)}>\r\n`},
-        {expect:/^250/m,send:'DATA\r\n'},{expect:/^354/m,send:`From: ${cleanHeader(settings.email)}\r\nTo: ${cleanHeader(message.to)}\r\nSubject: ${cleanHeader(message.subject)}\r\nMessage-ID: ${message.messageId}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${message.body.replace(/^\./gm,'..')}\r\n.\r\n`},
-        {expect:/^250/m,send:'QUIT\r\n'},{expect:/^221/m,send:null},
-    ]); socket.destroy();
+    await sendSmtpMessage(
+        {host:settings.smtp_host,port:settings.smtp_port,secure:settings.smtp_secure,username:settings.email,password:settings.password},
+        {from:settings.email,...message},
+    );
 }
 
 async function imapCommand(settings:EmailConnectorSettings&{password:string},commands:string[]):Promise<string>{
@@ -98,9 +145,9 @@ async function imapCommand(settings:EmailConnectorSettings&{password:string},com
     return protocol(socket,[{expect:/^\* OK/im,send:`a0 LOGIN "${escapedUser}" "${escapedPassword}"\r\n`},{expect:/^a0 OK/im,send:`${commands.join('\r\n')}\r\n`},{expect:new RegExp(`^${commands.at(-1)?.split(' ')[0]} OK`,'im'),send:null}]).finally(()=>socket.destroy());
 }
 
-function protocol(socket:net.Socket|tls.TLSSocket,steps:Array<{expect:RegExp;send:string|null}>):Promise<string>{return new Promise((resolve,reject)=>{
+function protocol(socket:Socket|tls.TLSSocket,steps:Array<{expect:RegExp;send:string|null}>):Promise<string>{return new Promise((resolve,reject)=>{
     let all='';let pending='';let index=0;const timeout=setTimeout(()=>{socket.destroy();reject(new Error('Email connector timed out'));},20_000);
-    socket.setEncoding('utf8');socket.on('error',error=>{clearTimeout(timeout);reject(error);});socket.on('data',chunk=>{all+=chunk;
+    socket.setEncoding('utf8');socket.on('error',(error:Error)=>{clearTimeout(timeout);reject(error);});socket.on('data',(chunk:string)=>{all+=chunk;
         pending+=chunk;while(index<steps.length&&steps[index].expect.test(pending)){const step=steps[index++];pending='';if(step.send)socket.write(step.send);if(index===steps.length){clearTimeout(timeout);resolve(all);}}
     });
   });}

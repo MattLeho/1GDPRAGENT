@@ -36,6 +36,7 @@ export function EvidenceInspector({ insightId, open, onOpenChange }: EvidenceIns
   const active = result?.id === insightId ? result : null;
   const loading = Boolean(open && insightId && !active);
   const trace = active?.trace;
+  const purged = trace?.source_artifacts.filter(item => item.full_source_unavailable === true) || [];
   return <Sheet open={open} onOpenChange={onOpenChange}>
     <SheetContent className="w-full sm:max-w-2xl">
       <SheetHeader>
@@ -46,6 +47,7 @@ export function EvidenceInspector({ insightId, open, onOpenChange }: EvidenceIns
         {loading && <p className="text-sm text-muted-foreground">Loading evidence...</p>}
         {active?.error && <div className="flex gap-2 rounded-md border border-destructive/40 p-3 text-sm text-destructive"><AlertTriangle className="size-4" />{active.error}</div>}
         {trace && <div className="space-y-5">
+          {purged.length > 0 && <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><AlertTriangle className="mt-0.5 size-4 shrink-0"/><span>Full source content was purged after review for {purged.length} source artefact{purged.length===1?'':'s'}. The exact minimised evidence shown below remains available.</span></div>}
           <div className="rounded-lg border p-3">
             <p className="font-medium">Detector {trace.detector_id} v{trace.detector_version}</p>
             <p className="text-xs text-muted-foreground">Insight {trace.insight_id}</p>

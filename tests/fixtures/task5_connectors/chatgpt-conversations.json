@@ -1,0 +1,26 @@
+[
+  {
+    "id": "conversation-chatgpt-1",
+    "title": "Data access planning",
+    "mapping": {
+      "node-user": {
+        "message": {
+          "id": "turn-user-1",
+          "author": {"role": "user"},
+          "create_time": 1710000000,
+          "content": {"content_type": "text", "parts": ["How can I request my data?"]},
+          "metadata": {"model_slug": "unknown-client-model"}
+        }
+      },
+      "node-assistant": {
+        "message": {
+          "id": "turn-assistant-1",
+          "author": {"role": "assistant"},
+          "create_time": 1710000010,
+          "content": {"content_type": "text", "parts": ["Start with the controller's privacy contact."]},
+          "metadata": {"model_slug": "unknown-client-model"}
+        }
+      }
+    }
+  }
+]

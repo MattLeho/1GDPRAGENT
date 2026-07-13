@@ -20,6 +20,8 @@ from api.evidence import router as evidence_router
 from api.execution import router as execution_router
 from api.bulk_ingestion import router as bulk_ingestion_router
 from api.insights import router as insights_router
+from api.connectors import router as connectors_router
+from api.retention import router as retention_router
 
 
 settings = get_settings()
@@ -44,6 +46,12 @@ async def lifespan(app: FastAPI):
         print(f"[{settings.service_name}] Published {count} file support records")
     except Exception as exc:
         print(f"[{settings.service_name}] File support catalogue sync deferred: {exc}")
+    try:
+        from connectors.application import ConnectorApplication
+        definitions = await ConnectorApplication().declare_definitions()
+        print(f"[{settings.service_name}] Published {len(definitions)} source connector definitions")
+    except Exception as exc:
+        print(f"[{settings.service_name}] Connector definition sync deferred: {exc}")
     
     yield
     
@@ -64,8 +72,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
         "http://nextjs_app:3000",
     ],
+    allow_origin_regex=r"^chrome-extension://[a-p]{32}$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -82,6 +93,8 @@ app.include_router(evidence_router, tags=["Evidence"])
 app.include_router(execution_router, tags=["Task Execution"])
 app.include_router(bulk_ingestion_router, tags=["Bulk ingestion"])
 app.include_router(insights_router, tags=["Personal Insights"])
+app.include_router(connectors_router, tags=["Source connectors"])
+app.include_router(retention_router, tags=["Retention"])
 
 
 @app.get("/")

@@ -19,10 +19,15 @@ from .models import (
     SyncRunStatus,
 )
 from .registry import validate_definition, validate_enabled_permissions
+from .lifecycle import transition
 
 
 def _json(value: object) -> str:
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+def _decoded(value: Any) -> Any:
+    return json.loads(value) if isinstance(value, str) else value
 
 
 class ConnectorRepository:
@@ -91,6 +96,61 @@ class ConnectorRepository:
         rows = await self.postgres.execute("SELECT * FROM connector_instances WHERE id=$1", instance_id)
         if not rows:
             raise LookupError(f"connector instance {instance_id} does not exist")
+        return self._instance(rows[0])
+
+    async def list_instances(self, *, profile_id: UUID | None = None) -> list[ConnectorInstance]:
+        if profile_id is None:
+            rows = await self.postgres.execute(
+                "SELECT * FROM connector_instances ORDER BY created_at,id"
+            )
+        else:
+            rows = await self.postgres.execute(
+                "SELECT * FROM connector_instances WHERE profile_id=$1 ORDER BY created_at,id",
+                profile_id,
+            )
+        return [self._instance(row) for row in rows]
+
+    async def set_status(
+        self, instance_id: UUID, status: ConnectorStatus,
+    ) -> ConnectorInstance:
+        current = await self.get_instance(instance_id)
+        candidate = transition(current, status)
+        rows = await self.postgres.execute(
+            """UPDATE connector_instances SET status=$2,next_sync_at=$3,updated_at=$4
+               WHERE id=$1 AND status=$5 RETURNING *""",
+            instance_id, candidate.status.value, candidate.next_sync_at,
+            candidate.updated_at, current.status.value,
+        )
+        if not rows:
+            raise RuntimeError("connector status changed concurrently")
+        return self._instance(rows[0])
+
+    async def set_enabled_permissions(
+        self, instance_id: UUID, definition: SourceConnectorDefinition,
+        enabled_permissions: Iterable[str], *, actor: str,
+    ) -> ConnectorInstance:
+        if not actor.strip():
+            raise ValueError("permission changes require an audit actor")
+        current = await self.get_instance(instance_id)
+        if (current.definition_key, current.definition_version) != (definition.key, definition.version):
+            raise ValueError("connector instance does not match definition")
+        enabled = validate_enabled_permissions(definition, enabled_permissions)
+        rows = await self.postgres.execute(
+            """WITH changed AS (
+                 UPDATE connector_instances SET enabled_permissions=$2::jsonb,updated_at=NOW()
+                 WHERE id=$1 AND enabled_permissions=$3::jsonb RETURNING *
+               ), audited AS (
+                 INSERT INTO connector_permission_audits(
+                   connector_instance_id,actor,permissions_before,permissions_after)
+                 SELECT $1,$4,$3::jsonb,$2::jsonb FROM changed
+               ) SELECT * FROM changed""",
+            instance_id, _json(list(enabled)), _json(list(current.enabled_permissions)), actor.strip(),
+        )
+        if not rows:
+            refreshed = await self.get_instance(instance_id)
+            if refreshed.enabled_permissions == enabled:
+                return refreshed
+            raise RuntimeError("connector permissions changed concurrently")
         return self._instance(rows[0])
 
     async def get_cursor(self, instance_id: UUID, cursor_key: str = "default") -> ConnectorCursor | None:
@@ -165,6 +225,21 @@ class ConnectorRepository:
         )
         if not rows:
             raise LookupError(f"sync run {run_id} does not exist or is already terminal")
+        connector_id = rows[0]["connector_instance_id"]
+        if status is SyncRunStatus.COMPLETED:
+            await self.postgres.execute(
+                """UPDATE connector_instances SET last_sync_at=$2,last_error=NULL,
+                   status=CASE WHEN status='degraded' THEN 'connected' ELSE status END,
+                   updated_at=NOW() WHERE id=$1""",
+                connector_id, rows[0]["completed_at"],
+            )
+        elif status is SyncRunStatus.FAILED:
+            await self.postgres.execute(
+                """UPDATE connector_instances SET last_error=$2::jsonb,
+                   status=CASE WHEN status='connected' THEN 'degraded' ELSE status END,
+                   updated_at=NOW() WHERE id=$1""",
+                connector_id, _json(error or {"message": "connector sync failed"}),
+            )
         return self._run(rows[0])
 
     async def enqueue_raw_record(self, run_id: UUID, record: ConnectorRawRecord) -> tuple[UUID | None, bool]:
@@ -222,8 +297,8 @@ class ConnectorRepository:
             id=row["id"], definition_key=row["connector_key"],
             definition_version=row["definition_version"], profile_id=row["profile_id"],
             account_key=row["account_key"], display_name=row["display_name"],
-            status=row["status"], enabled_permissions=tuple(row["enabled_permissions"]),
-            configuration=dict(row["configuration"]), credential_id=row["credential_id"],
+            status=row["status"], enabled_permissions=tuple(_decoded(row["enabled_permissions"])),
+            configuration=dict(_decoded(row["configuration"])), credential_id=row["credential_id"],
             last_sync_at=row["last_sync_at"], next_sync_at=row["next_sync_at"],
             created_at=row["created_at"], updated_at=row["updated_at"],
         )
@@ -232,7 +307,7 @@ class ConnectorRepository:
     def _cursor(row: Any) -> ConnectorCursor:
         return ConnectorCursor(
             connector_instance_id=row["connector_instance_id"], cursor_key=row["cursor_key"],
-            version=row["cursor_version"], position=dict(row["position"]),
+            version=row["cursor_version"], position=dict(_decoded(row["position"])),
             source_watermark=row["source_watermark"], updated_at=row["updated_at"],
         )
 
@@ -241,7 +316,7 @@ class ConnectorRepository:
         return ConnectorSyncRun(
             id=row["id"], connector_instance_id=row["connector_instance_id"],
             analysis_run_id=row["analysis_run_id"], kind=row["run_kind"], status=row["status"],
-            cursor_before=dict(row["cursor_before"]), cursor_after=dict(row["cursor_after"]),
+            cursor_before=dict(_decoded(row["cursor_before"])), cursor_after=dict(_decoded(row["cursor_after"])),
             artefacts_discovered=row["artefacts_discovered"], events_produced=row["events_produced"],
             duplicates_skipped=row["duplicates_skipped"], errors=row["errors"],
             started_at=row["started_at"], completed_at=row["completed_at"],

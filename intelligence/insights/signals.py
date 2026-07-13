@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from math import pow
 
 from ingestion.models import ActionClass, ActivityEvent
 
@@ -66,7 +68,7 @@ def classify_event(event: ActivityEvent) -> ClassifiedSignal:
         return ClassifiedSignal(event, SignalClass.ACTIVE_INVESTIGATION, True, 1.0, "user-authored AI turn",1.0,"conversation-role")
     if _contains(values, "click", "clicked", "link_click"):
         return ClassifiedSignal(event, SignalClass.ACTIVE_INVESTIGATION, True, 0.8, "click is active engagement",0.9,"explicit-click")
-    if _contains(values, "open", "opened", "email_open", "newsletter_open"):
+    if _contains(values, "open", "opened", "opened_candidate", "email_open", "newsletter_open"):
         reliable = event.relationships.get("open_evidence_reliable") is True
         if reliable:
             return ClassifiedSignal(event, SignalClass.PASSIVE_CONSUMPTION, True, 0.25, "reliable open is weak passive consumption",0.7,"source-open-signal")
@@ -88,6 +90,27 @@ def classify_event(event: ActivityEvent) -> ClassifiedSignal:
 
 def classify_events(events: list[ActivityEvent] | tuple[ActivityEvent, ...]) -> tuple[ClassifiedSignal, ...]:
     return tuple(classify_event(event) for event in events)
+
+
+def effective_signal_weight(
+    signal: ClassifiedSignal, *, as_of: datetime, email_half_life_days: float = 45.0,
+) -> float:
+    """Decay current email engagement without fabricating negative/disinterest evidence."""
+
+    if not signal.interest_contributing or signal.weight <= 0:
+        return 0.0
+    event = signal.event
+    task5_decay_events = {"email_link_clicked", "email_replied"}
+    if (
+        event.data_domain.casefold() != "email"
+        or event.event_type.casefold() not in task5_decay_events
+        or event.occurred_at is None
+    ):
+        return signal.weight
+    if email_half_life_days <= 0:
+        raise ValueError("email_half_life_days must be positive")
+    age_days = max(0.0, (as_of - event.occurred_at).total_seconds() / 86_400)
+    return signal.weight * pow(0.5, age_days / email_half_life_days)
 
 
 def _semantic_values(event: ActivityEvent) -> tuple[str, ...]:

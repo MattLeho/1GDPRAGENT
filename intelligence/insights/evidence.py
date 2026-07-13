@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlparse
 from uuid import UUID
 
 from evidence.locators import resolve_locator
+from evidence.purged import resolve_persisted_locator
 from features.pipeline import load_activity_event_partitions
 from insights.models import InsightTrace
 
@@ -149,8 +150,7 @@ class InsightEvidenceTracer:
                 item = dict(row)
                 item["locator"] = _value(item, "locator", {})
                 try:
-                    content = _local_path(item["storage_uri"]).read_bytes()
-                    resolved = resolve_locator(content, item["locator_type"], item["locator"])
+                    resolved = await resolve_persisted_locator(self.connection, item["id"])
                     item["resolvable"] = True
                     item["resolved_byte_count"] = len(resolved)
                 except Exception as exc:
@@ -165,7 +165,9 @@ class InsightEvidenceTracer:
                 """SELECT id,export_snapshot_id,parent_artifact_id,content_blob_id,original_path,
                 archive_member_path,file_name,declared_mime,detected_mime,extension,file_type_status,
                 canonical_hash,source_organisation,source_product,source_service,created_at
-                FROM source_artifacts WHERE id=ANY($1::uuid[]) ORDER BY created_at,id""",
+                ,cpt.content_purged_at,cpt.full_source_unavailable,cpt.retained_evidence_basis
+                FROM source_artifacts sa LEFT JOIN content_purge_tombstones cpt ON cpt.source_artifact_id=sa.id
+                WHERE sa.id=ANY($1::uuid[]) ORDER BY sa.created_at,sa.id""",
                 list(artifact_ids),
             )
             artifacts = [dict(row) for row in rows]
