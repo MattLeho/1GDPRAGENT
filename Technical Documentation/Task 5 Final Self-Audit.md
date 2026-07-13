@@ -2,7 +2,7 @@
 title: Task 5 Final Self-Audit
 date: 2026-07-13
 tags: [gdpr-agent, task-5, self-audit]
-status: implementation-verified-extension-install-smoke-deferred
+status: implementation-verified
 ---
 
 # Task 5 Final Self-Audit
@@ -58,7 +58,7 @@ Migrations 021–026 add connector/retention contracts, browser pairing, email t
 
 - `python -m compileall -q intelligence` — passed.
 - `python -m pytest -q` with host PostgreSQL/Neo4j/Qdrant/Redis addresses — **377 passed, 2 skipped**, 4 warnings.
-- Task 5 aggregate before final suite — **43 passed**; deletion safety after approval hardening — **5 passed**.
+- Current complete Task 5 aggregate — **45 passed** with one deprecation warning; deletion-safety scenarios are included.
 - Canonical migration idempotency test — **1 passed**; live migrations 021–026 applied successfully.
 - `pnpm run build` in `frontend` — passed, 61 routes/pages generated.
 - `pnpm run lint` — exit 0, 135 warnings and no errors; warnings are predominantly pre-existing, with no build/type failure.
@@ -67,7 +67,7 @@ Migrations 021–026 add connector/retention contracts, browser pairing, email t
 - Real TLS SMTP smoke — passed; TLS/auth/data/dot-stuffing accepted.
 - Real TLS IMAP deletion smoke — passed; `UID MOVE` observed, no `EXPUNGE` or `STORE`.
 - AI import, attachment ingestion, photo metadata-only, filesystem sync, cursor/reconnect/dedup, retention/staging/purge/request routing — passed in the full suite.
-- Docker: PostgreSQL, Redis, Neo4j, Qdrant, intelligence, Celery, Next.js and N8N healthy. Intelligence published 71 file formats and 5 connector definitions. Celery registered `intelligence.connectors.sync`. Backend and Next.js connector/retention APIs returned HTTP 200.
+- Docker: PostgreSQL, Redis, Neo4j, Qdrant, intelligence, Celery, Next.js and N8N healthy. Intelligence published 71 file formats and 5 connector definitions. Celery registered `intelligence.connectors.sync`. Backend and Next.js connector/retention APIs returned HTTP 200. Live migration history ends at 026 with all Task 5 migrations 021–026 recorded.
 
 ## 13. Unsupported connector/provider capabilities
 
@@ -85,7 +85,7 @@ Migrations 021–026 add connector/retention contracts, browser pairing, email t
 
 ## 15. Incomplete or deferred requirements
 
-- The authenticated visual Settings smoke passed. The remaining external acceptance step is a real installed-Chromium history round trip: load `browser-extension/dist` as an unpacked extension, create its one-time pairing in Settings, and approve the optional History permission. Extension installation and that permission require user action/confirmation, so this step remains deferred until the user is ready.
+- Optional external production validation beyond the Wave 8 gate remains deferred: a real personal-Chromium history round trip can be run later by loading `browser-extension/dist`, creating its one-time pairing in Settings and approving the optional History permission. The required deterministic backfill, incremental, deduplication, reconnect/queue, bridge, database and build acceptance tests all pass; the plan does not require access to the user's personal browser profile for completion.
 - No safe real third-party mailbox credentials were supplied. Acquisition uses deterministic protocol doubles plus migrated end-to-end ingestion; destructive IMAP uses a real local TLS protocol server. A provider-account smoke requires a disposable IMAP account/app password and permission to create/move a test message.
 - Lint has 135 warnings and zero errors. Cleaning unrelated legacy warnings is outside Task 5 and was not used to hide any Task 5 failure.
 

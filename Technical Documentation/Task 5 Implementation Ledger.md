@@ -5,7 +5,7 @@ tags:
   - gdpr-agent
   - task-5
   - implementation-ledger
-status: wave-8-verified-external-extension-smoke-deferred
+status: wave-8-verified
 ---
 
 # Task 5 Implementation Ledger
@@ -54,11 +54,11 @@ This is the single integration ledger for Task 5. Status values are `pending`, `
 | Source deletion execution | 6 | orchestrator | tested connector capability | execution audit | `retention/source_delete.py`, `connectors/imap_delete.py`, retention API | verified | unsupported denial; real TLS IMAP UID MOVE; audit | Wave 6 passed | source response/audit stored | IMAP MOVE-to-Trash is the only supported provider action |
 | Provenance-preserving local purge | 6 | orchestrator | assertions/insights/hypotheses | LocalPurgeExecution | `retention/local_purge.py`, `evidence/purged.py`, evidence inspector | verified | minimised locator resolution/tombstone/full-span refusal | Wave 6 passed | migration 025 | none |
 | Controller erasure integration | 6 | bounded integration + orchestrator approval | existing request system | candidate | `retention/controller_erasure.py` | verified | existing `requests` draft/no outbound send | Wave 6 passed | no second request table | none |
-| Connector Settings and permission inspector | 7 | bounded frontend | frozen real APIs | connector DTOs | `SourceConnectorsSection.tsx`, connector proxy/API | verified | frontend build; authenticated live UI/API smoke; 5 definitions; pairing create/revoke UI | Wave 7 passed | migration 026 workflow | installed-extension round trip requires user action/permission |
+| Connector Settings and permission inspector | 7 | bounded frontend | frozen real APIs | connector DTOs | `SourceConnectorsSection.tsx`, connector proxy/API | verified | frontend build; authenticated live UI/API smoke; 5 definitions; pairing create/revoke UI | Wave 7 passed | migration 026 workflow | none |
 | Retention Settings and plan review | 7 | bounded frontend | frozen real APIs | retention/deletion DTOs | `RetentionSettingsSection.tsx`, retention proxy/API | verified | frontend build; authenticated live UI/API smoke; exact confirmations; no browser errors | Wave 7 passed | migrations 024-026 | none |
-| Connector synthetic acceptance | 8 | bounded tests + orchestrator | Waves 1-7 | all | Task 5 integration tests | verified | 43-test Task 5 aggregate plus extension 4/4 and authenticated Settings smoke | Wave 8 code/runtime gate passed | none | real installed-Chromium history smoke requires user permission |
+| Connector synthetic acceptance | 8 | bounded tests + orchestrator | Waves 1-7 | all | Task 5 integration tests | verified | 45-test Task 5 aggregate plus extension 4/4 and authenticated Settings smoke | Wave 8 code/runtime gate passed | none | none; optional personal-Chromium smoke deferred |
 | Retention/deletion acceptance | 8 | bounded tests + orchestrator | Waves 5-7 | all | retention/deletion integration tests | verified | DB staging/purge/request and real TLS IMAP | Wave 8 code/runtime gate passed | none | none |
-| Line-by-line audit and final verification | 8 | orchestrator | all waves | all frozen contracts | final audit/report | verified | full command matrix, runtime logs and authenticated Settings smoke | final passed | migrations through Task 5 | external installed-extension smoke deferred until user approval |
+| Line-by-line audit and final verification | 8 | orchestrator | all waves | all frozen contracts | final audit/report | verified | full command matrix, runtime logs and authenticated Settings smoke | final passed | migrations through Task 5 | none |
 
 ## Wave 0 contract freeze
 
@@ -129,4 +129,4 @@ Wave 6 verification: **5 deletion-safety tests passed** plus the broader retenti
 
 The Python APIs are the sole destructive orchestrator. Next.js routes only proxy typed requests. Connector settings list real definitions/instances, displayed permissions and data classes, page-content non-collection, status, last/next sync, pause/resume, Celery-queued sync/backfill and disconnect-without-erasure. Email source and SMTP transport remain visibly and operationally separate. Retention settings expose decisions including `UNSURE`, policy age/action, dry-run summaries, reasons, exact plan approval, quarantine/grace staging and reviewed execution.
 
-Wave 7 verification: focused TypeScript compile and the full Next.js production build passed. Migration 026 registered `connector.sync` in the Task 2 workflow preferences. Live migrations 021–026 were applied idempotently; direct service and Next.js proxy checks returned HTTP 200, with five built-in connector definitions. A later authenticated in-app browser smoke verified the Connectors and Data Retention tabs, their API-backed controls and clean browser logs. That smoke exposed the absence of a user-facing browser pairing action; one-time pairing creation/revocation, bridge URL and instance-ID guidance were added, and the production build passed again. The remaining real installed-extension/history round trip requires user installation and optional History-permission approval.
+Wave 7 verification: focused TypeScript compile and the full Next.js production build passed. Migration 026 registered `connector.sync` in the Task 2 workflow preferences. Live migrations 021–026 were applied idempotently; direct service and Next.js proxy checks returned HTTP 200, with five built-in connector definitions. A later authenticated in-app browser smoke verified the Connectors and Data Retention tabs, their API-backed controls and clean browser logs. That smoke exposed the absence of a user-facing browser pairing action; one-time pairing creation/revocation, bridge URL and instance-ID guidance were added, and the production build passed again. An optional personal-Chromium/history smoke may be run later when the user chooses to install the extension and approve its optional permission; the required Wave 8 deterministic browser and bridge acceptance is complete.
