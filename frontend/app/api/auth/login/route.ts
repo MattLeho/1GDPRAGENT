@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import { cookies } from 'next/headers';
+import { createSessionToken } from '@/lib/auth-session';
 
 export async function POST(request: Request) {
     try {
@@ -16,7 +17,7 @@ export async function POST(request: Request) {
 
         // Check if user exists
         const result = await pool.query(
-            'SELECT id, username, password_hash FROM user_profiles WHERE username = $1',
+            'SELECT id, username, password_hash, default_profile_id FROM user_profiles WHERE username = $1',
             [username]
         );
 
@@ -40,7 +41,7 @@ export async function POST(request: Request) {
         }
 
         // Create session token
-        const token = Buffer.from(`${user.id}:${Date.now()}`).toString('base64');
+        const token = createSessionToken(String(user.id),String(user.default_profile_id));
 
         // Set HTTP-only cookie - await cookies() for Next.js 16+
         const cookieStore = await cookies();

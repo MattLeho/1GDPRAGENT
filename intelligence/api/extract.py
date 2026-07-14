@@ -1,331 +1,102 @@
+"""Canonical, routed grounded-claim ingestion.
+
+Model execution is intentionally absent.  The frontend Task Router may supply
+candidate exact quotes; this API verifies each quote against canonical bytes
+and persists only resolvable policy Claims.
 """
-File Extraction API Endpoint (LangExtract-powered)
+from __future__ import annotations
 
-Provides REST API for extracting structured GDPR-relevant information
-from uploaded file content using Google LangExtract.
-
-This is SEPARATE from the ONSIT extraction pipeline in intelligence/extraction/.
-It specifically handles file upload processing from the frontend.
-"""
-
-import asyncio
-import os
+from datetime import datetime
+from hashlib import sha256
 import json
-from typing import Optional
-from uuid import UUID
+from typing import Annotated
+from uuid import NAMESPACE_URL, UUID, uuid5
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
-from evidence.ledger import EvidenceLedger
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 
+from api.security import require_internal_request, require_profile_id
+from privacy.policy_sources import (
+    PolicySourceIngestionService, PolicySourceMetadata, PolicyTextSpan,
+)
+from privacy.purpose import PurposeRepository, grounded_claim
 
-router = APIRouter(prefix="/extract", tags=["File Extraction"])
-
-
-# =============================================================================
-# Request/Response Models
-# =============================================================================
-
-class FileExtractionRequest(BaseModel):
-    """Request body for file content extraction."""
-    content: str = Field(..., description="Extracted text content from the file")
-    file_name: str = Field(..., description="Original file name")
-    file_id: Optional[str] = Field(None, description="Database file ID")
-    request_id: Optional[str] = Field(None, description="Associated request UUID")
-    company_name: Optional[str] = Field(None, description="Company name for context")
-    extraction_passes: int = Field(default=2, description="Number of LangExtract passes")
+router = APIRouter(
+    prefix="/extract", tags=["Grounded extraction"],
+    dependencies=[Depends(require_internal_request)],
+)
 
 
-class TextExtractionRequest(BaseModel):
-    """Request body for raw text extraction."""
-    content: str = Field(..., description="Text to extract from")
-    context: Optional[str] = Field(None, description="Additional context")
-    extraction_passes: int = Field(default=1, description="Number of extraction passes")
+class CandidateClaim(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    claim_type: str = Field(min_length=1, max_length=200)
+    exact_quote: str = Field(min_length=1)
+    byte_start: int = Field(ge=0)
+    byte_end: int = Field(gt=0)
 
 
-class ExtractionEntity(BaseModel):
-    """Single extracted entity."""
-    entity_class: str
-    text: str
-    start_offset: int = 0
-    end_offset: int = 0
-    attributes: dict = {}
-    confidence: float = 1.0
+class PolicyClaimsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    content: str = Field(min_length=1)
+    policy_key: str = Field(min_length=1, max_length=500)
+    version_label: str = Field(min_length=1, max_length=200)
+    retrieved_at: datetime
+    authorisation_basis: str = Field(min_length=1, max_length=1000)
+    source_uri: str | None = None
+    controller_key: str | None = None
+    file_name: str = Field(default="privacy-policy.txt", min_length=1)
+    claims: tuple[CandidateClaim, ...] = Field(default=(), max_length=500)
 
 
-class ExtractionResponse(BaseModel):
-    """Response from extraction."""
-    success: bool
-    file_name: Optional[str] = None
-    entities: list[ExtractionEntity] = []
-    entity_count: int = 0
-    classes_found: list[str] = []
-    error: Optional[str] = None
-    analysis_run_id: Optional[str] = None
-
-
-# =============================================================================
-# GDPR Extraction Configuration (LangExtract-specific)
-# =============================================================================
-
-def _get_langextract():
-    """Import and return langextract module, or None if unavailable."""
-    try:
-        import langextract as lx
-        return lx
-    except ImportError:
-        return None
-
-
-def _build_gdpr_examples(lx):
-    """Build GDPR-specific few-shot examples for LangExtract."""
-    return [
-        lx.data.ExampleData(
-            text="Google collects your browsing history and location data to personalize advertisements and improve search results.",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="data_collection",
-                    extraction_text="browsing history and location data",
-                    attributes={
-                        "collector": "Google",
-                        "data_type": "browsing history, location data",
-                        "purpose": "personalize advertisements, improve search results",
-                        "risk_level": "high",
-                    },
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="We share your email address with our advertising partners including Meta and TikTok for targeted marketing.",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="data_sharing",
-                    extraction_text="email address",
-                    attributes={
-                        "from_entity": "we",
-                        "to_entity": "Meta, TikTok",
-                        "data_type": "email address",
-                        "purpose": "targeted marketing",
-                    },
-                ),
-                lx.data.Extraction(
-                    extraction_class="third_party",
-                    extraction_text="Meta",
-                    attributes={
-                        "name": "Meta",
-                        "role": "advertising partner",
-                        "data_access": "email address",
-                    },
-                ),
-                lx.data.Extraction(
-                    extraction_class="third_party",
-                    extraction_text="TikTok",
-                    attributes={
-                        "name": "TikTok",
-                        "role": "advertising partner",
-                        "data_access": "email address",
-                    },
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="You have the right to request deletion of your personal data by emailing privacy@company.com within 30 days.",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="data_right",
-                    extraction_text="right to request deletion",
-                    attributes={
-                        "right_type": "right to erasure",
-                        "description": "request deletion of personal data",
-                        "how_to_exercise": "email privacy@company.com",
-                        "timeframe": "30 days",
-                    },
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="We retain your payment information for 7 years to comply with tax regulations.",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="personal_data",
-                    extraction_text="payment information",
-                    attributes={
-                        "data_type": "payment information",
-                        "sensitivity": "high",
-                        "retention_period": "7 years",
-                    },
-                ),
-                lx.data.Extraction(
-                    extraction_class="legal_basis",
-                    extraction_text="comply with tax regulations",
-                    attributes={
-                        "basis_type": "legal obligation",
-                        "description": "tax regulation compliance",
-                        "applies_to": "payment information",
-                    },
-                ),
-            ],
-        ),
-    ]
-
-
-GDPR_PROMPT = """\
-Extract GDPR-relevant information from the document in order of appearance.
-Use exact text from the source for extractions. Do not paraphrase.
-
-Entity classes to extract:
-- data_collection: Information about data being collected (collector, data_type, purpose, legal_basis, risk_level)
-- data_sharing: Information about data shared between parties (from_entity, to_entity, data_type, purpose)
-- data_right: User rights regarding their data (right_type, description, how_to_exercise)
-- third_party: Third parties with access to data (name, role, location, data_access)
-- personal_data: Specific personal data items (data_type, sensitivity, retention_period)
-- legal_basis: Legal basis for data processing (basis_type, description, applies_to)
-
-Provide meaningful attributes for each entity to add GDPR context.\
-"""
-
-
-# =============================================================================
-# API Endpoints
-# =============================================================================
-
-@router.post("/file", response_model=ExtractionResponse)
-async def extract_from_file_content(body: FileExtractionRequest):
-    """
-    Extract GDPR entities from uploaded file content using LangExtract.
-    
-    This endpoint processes text extracted from uploaded files
-    through the LangExtract pipeline for structured GDPR extraction.
-    """
-    ledger=EvidenceLedger()
-    try: request_id=UUID(body.request_id) if body.request_id else None
-    except ValueError: request_id=None
-    run_id=await ledger.create_analysis_run("grounded_extraction","task1-langextract-v1",request_id=request_id,configuration={"file_id":body.file_id,"file_name":body.file_name,"extraction_passes":body.extraction_passes})
-    lx = _get_langextract()
-    if lx is None:
-        await ledger.postgres.execute("UPDATE analysis_runs SET status='failed',completed_at=NOW(),error='langextract unavailable' WHERE id=$1",run_id)
-        raise HTTPException(
-            status_code=503,
-            detail="langextract library not installed. Run: pip install langextract",
-        )
-
-    if not body.content or len(body.content.strip()) < 10:
-        await ledger.postgres.execute("UPDATE analysis_runs SET status='completed',completed_at=NOW() WHERE id=$1",run_id)
-        return ExtractionResponse(
-            success=True,
-            file_name=body.file_name,
-            entities=[],
-            entity_count=0,
-            classes_found=[],
-            analysis_run_id=str(run_id),
-        )
-
-    # Build context-aware prompt
-    prompt = GDPR_PROMPT
-    if body.company_name:
-        prompt += f"\n\nCompany context: {body.company_name}"
-
-    examples = _build_gdpr_examples(lx)
-
-    try:
-        # LangExtract's extract() is synchronous — run in thread pool
-        result = await asyncio.to_thread(
-            lx.extract,
-            text_or_documents=body.content[:50000],  # Cap at 50k chars
-            prompt_description=prompt,
-            examples=examples,
-            model_id="gemini-2.5-flash",
-            extraction_passes=body.extraction_passes,
-            max_workers=10,
-            max_char_buffer=1000,
-            context_window_chars=500,
-            show_progress=False,
-            fetch_urls=False,
-        )
-
-        # Convert LangExtract result to our response format
-        entities = []
-        docs = result if isinstance(result, list) else [result]
-
-        for doc in docs:
-            extractions = getattr(doc, "extractions", []) or []
-            source_text = getattr(doc, "text", body.content) or body.content
-
-            for ext in extractions:
-                char_interval = getattr(ext, "char_interval", None)
-                if char_interval:
-                    start = getattr(char_interval, "start_pos", 0) or 0
-                    end = getattr(char_interval, "end_pos", 0) or 0
-                else:
-                    start = source_text.find(ext.extraction_text)
-                    if start < 0:
-                        continue
-                    end = start + len(ext.extraction_text)
-
-                if source_text[start:end] != ext.extraction_text:
-                    start=source_text.find(ext.extraction_text)
-                    if start<0:
-                        continue
-                    end=start+len(ext.extraction_text)
-
-                entities.append(ExtractionEntity(
-                    entity_class=ext.extraction_class,
-                    text=ext.extraction_text,
-                    start_offset=start,
-                    end_offset=end,
-                    attributes=ext.attributes if hasattr(ext, "attributes") and ext.attributes else {},
-                    confidence=getattr(ext, "confidence", 1.0) or 1.0,
-                ))
-
-        classes_found = list(set(e.entity_class for e in entities))
-
-        await ledger.postgres.execute("UPDATE analysis_runs SET status='completed',completed_at=NOW() WHERE id=$1",run_id)
-        if entities and body.file_id:
-            from agents.kg_ingestor import KGIngestorAgent,IngestRequest
-            await KGIngestorAgent().ingest(IngestRequest(company_name=body.company_name or "Unknown",request_id=body.request_id or body.file_id,extracted_data=[{"type":item.entity_class,"value":item.text,"category":item.entity_class,"confidence":item.confidence} for item in entities],source="grounded_extraction",source_artifact={"legacy_file_id":body.file_id,"exact_text":body.content[:50000]}))
-        return ExtractionResponse(
-            success=True,
-            file_name=body.file_name,
-            entities=entities,
-            entity_count=len(entities),
-            classes_found=classes_found,
-            analysis_run_id=str(run_id),
-        )
-
-    except Exception as e:
-        await ledger.postgres.execute("UPDATE analysis_runs SET status='failed',completed_at=NOW(),error=$2 WHERE id=$1",run_id,str(e))
-        return ExtractionResponse(
-            success=False,
-            file_name=body.file_name,
-            error=str(e),
-            analysis_run_id=str(run_id),
-        )
-
-
-@router.post("/text", response_model=ExtractionResponse)
-async def extract_from_text(body: TextExtractionRequest):
-    """
-    Extract GDPR entities from raw text using LangExtract.
-    
-    Lightweight endpoint for quick text extraction without file context.
-    """
-    file_req = FileExtractionRequest(
-        content=body.content,
-        file_name="<text_input>",
-        extraction_passes=body.extraction_passes,
+@router.post("/policy-claims")
+async def ingest_policy_claims(
+    body: PolicyClaimsRequest,
+    profile_id: Annotated[UUID, Depends(require_profile_id)],
+):
+    raw = body.content.encode("utf-8")
+    spans = tuple(PolicyTextSpan(
+        byte_start=item.byte_start, byte_end=item.byte_end, expected_text=item.exact_quote,
+    ) for item in body.claims)
+    metadata = PolicySourceMetadata(
+        policy_key=body.policy_key, version_label=body.version_label,
+        retrieved_at=body.retrieved_at, authorisation_basis=body.authorisation_basis,
+        source_uri=body.source_uri, file_name=body.file_name, profile_id=profile_id,
+        controller_key=body.controller_key,
+        extra={"candidate_claim_count": len(body.claims), "task_router_required": True},
     )
-    return await extract_from_file_content(file_req)
+    try:
+        source = await PolicySourceIngestionService().ingest(raw, metadata, text_spans=spans)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    postgres = PurposeRepository().postgres
+    saved = []
+    for candidate in body.claims:
+        locator = {"byte_start": candidate.byte_start, "byte_end": candidate.byte_end}
+        digest = sha256(raw[candidate.byte_start:candidate.byte_end]).hexdigest()
+        rows = await postgres.execute(
+            """SELECT id FROM evidence_locators WHERE artifact_id=$1 AND locator_type='text_span'
+               AND locator=$2::jsonb AND raw_hash=$3 AND verified=true ORDER BY created_at,id LIMIT 1""",
+            source.source_artifact_id, json.dumps(locator), digest,
+        )
+        if not rows:
+            raise HTTPException(status_code=422, detail="candidate quote has no resolvable exact EvidenceLocator")
+        claim_id = uuid5(NAMESPACE_URL, f"{source.policy_source_version_id}:{candidate.claim_type}:{candidate.byte_start}:{candidate.byte_end}")
+        claim = grounded_claim(
+            claim_id=claim_id, claim_type=candidate.claim_type, text=candidate.exact_quote,
+            source_artifact_id=source.source_artifact_id,
+            evidence_locator_ids=(rows[0]["id"],), status="candidate",
+        )
+        await PurposeRepository(postgres).save_claim(
+            claim, policy_source_version_id=source.policy_source_version_id,
+            analysis_run_id=source.analysis_run_id,
+        )
+        saved.append(claim.model_dump(mode="json"))
+    return {"source": source.model_dump(mode="json"), "claims": saved,
+            "grounding": "Every candidate quote was resolved against canonical UTF-8 bytes; no model was called by this API."}
 
 
 @router.get("/health")
 async def extract_health():
-    """Check LangExtract availability and configuration."""
-    lx = _get_langextract()
-    api_key = os.environ.get("LANGEXTRACT_API_KEY") or os.environ.get("GOOGLE_AI_API_KEY")
-
-    return {
-        "langextract_available": lx is not None,
-        "langextract_version": getattr(lx, "__version__", "unknown") if lx else None,
-        "api_key_configured": bool(api_key),
-        "recommended_model": "gemini-2.5-flash",
-    }
+    return {"mode": "task-router-candidates-only", "direct_model_execution": False,
+            "canonical_source_required": True, "exact_locator_required": True}

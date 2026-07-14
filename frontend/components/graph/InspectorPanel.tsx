@@ -315,6 +315,8 @@ export function InspectorPanel({
         ? nodeTypeConfig[selectedNode.type] || nodeTypeConfig.User
         : null;
     const Icon = config?.icon || User;
+    const evidenceEdges = selectedNode && Array.isArray(selectedNode.properties.evidence_edges)
+        ? selectedNode.properties.evidence_edges as Array<Record<string, unknown>> : [];
 
     // ==========================================================================
     // Default View: Enhanced Stats
@@ -541,7 +543,19 @@ export function InspectorPanel({
                             <FileText className="h-4 w-4" />
                             Evidence
                         </h4>
-                        {selectedNode.evidenceLinks && selectedNode.evidenceLinks.length > 0 ? (
+                        {evidenceEdges.length > 0 ? <div className="space-y-3">{evidenceEdges.map((edge,index)=><div key={`${edge.assertionId}-${index}`} className="rounded-lg border p-3 text-xs space-y-1">
+                            <p className="font-medium">{String(edge.statement||'Evidence relationship')}</p>
+                            <p>Basis: {String(edge.basis||'unknown')} · Status: {String(edge.status||'unknown')} · Epistemic: {String(edge.epistemicState||'unknown')}</p>
+                            <p>Confidence: {edge.confidence == null?'unknown':String(edge.confidence)} · Layer: {String(edge.profileLayer||'unknown')}</p>
+                            <p>Valid: {String(edge.validFrom||'unknown')} → {String(edge.validTo||'open')}</p>
+                            <p>Controller observed: {String(edge.controllerObservedFrom||'unknown')} → {String(edge.controllerObservedTo||'open')}</p>
+                            <p>Exported: {String(edge.exportedAt||'unknown')} · Ingested: {String(edge.ingestedAt||'unknown')}</p>
+                            <p>Derivation: {String(edge.derivationMethod||'unknown')}@{String(edge.derivationVersion||'unknown')}</p>
+                            <p className="break-all">Assertion: {String(edge.assertionId||'unknown')}</p>
+                            <p className="break-all">Source artifacts: {Array.isArray(edge.sourceArtifactIds)?edge.sourceArtifactIds.join(', '):'unknown'}</p>
+                            <p className="break-all">Exact locators: {Array.isArray(edge.evidenceLocatorIds)?edge.evidenceLocatorIds.join(', '):'unknown'}</p>
+                            <p>Review history: status and supersession are preserved in the assertion ledger.</p>
+                        </div>)}</div> : selectedNode.evidenceLinks && selectedNode.evidenceLinks.length > 0 ? (
                             <div className="space-y-2">
                                 {selectedNode.evidenceLinks.map((evidence, idx) => (
                                     <a

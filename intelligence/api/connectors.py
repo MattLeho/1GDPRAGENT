@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from connectors.browser_bridge import (
@@ -11,11 +11,12 @@ from connectors.browser_bridge import (
     BrowserBridgeReplayInProgress, BrowserBridgeService,
 )
 from connectors.application import ConnectorApplication
-from connectors.lifecycle import connector_health
 from connectors.models import ConnectorStatus, SyncRunKind
+from api.security import require_internal_request, require_profile_id
+from connectors.scheduler import ConnectorScheduler
 
 
-router = APIRouter(prefix="/connectors", tags=["Source connectors"])
+router = APIRouter(prefix="/connectors", tags=["Source connectors"], dependencies=[Depends(require_internal_request)])
 
 
 class CreateBrowserPairing(BaseModel):
@@ -43,7 +44,7 @@ class UpdatePermissions(BaseModel):
 
 
 @router.get("")
-async def list_connectors(profile_id: UUID | None = None):
+async def list_connectors(profile_id: UUID = Depends(require_profile_id)):
     app = ConnectorApplication()
     definitions = await app.declare_definitions()
     instances = await app.repository.list_instances(profile_id=profile_id)
@@ -54,7 +55,7 @@ async def list_connectors(profile_id: UUID | None = None):
 
 
 @router.post("")
-async def create_connector(body: CreateConnectorInstance):
+async def create_connector(body: CreateConnectorInstance, profile_id: UUID = Depends(require_profile_id)):
     app = ConnectorApplication()
     await app.declare_definitions()
     try:
@@ -76,7 +77,7 @@ async def create_connector(body: CreateConnectorInstance):
         )
         return await app.repository.create_instance(
             definition, display_name=body.display_name,
-            enabled_permissions=body.enabled_permissions, profile_id=body.profile_id,
+            enabled_permissions=body.enabled_permissions, profile_id=profile_id,
             account_key=body.account_key, configuration=body.configuration,
             credential_id=credential_id,
             status=initial_status,
@@ -86,10 +87,11 @@ async def create_connector(body: CreateConnectorInstance):
 
 
 @router.post("/instances/{instance_id}/sync")
-async def sync_connector(instance_id: UUID, backfill: bool = False):
+async def sync_connector(instance_id: UUID, backfill: bool = False, profile_id: UUID = Depends(require_profile_id)):
     try:
         app = ConnectorApplication()
         instance = await app.repository.get_instance(instance_id)
+        if instance.profile_id != profile_id: raise LookupError("connector instance does not exist")
         definition = app.registry.get_definition(instance.definition_key, instance.definition_version)
         if instance.status not in {ConnectorStatus.CONNECTED, ConnectorStatus.DEGRADED}:
             raise ValueError(f"sync unavailable while connector is {instance.status.value}")
@@ -107,31 +109,36 @@ async def sync_connector(instance_id: UUID, backfill: bool = False):
 
 
 @router.post("/instances/{instance_id}/status/{status}")
-async def update_connector_status(instance_id: UUID, status: ConnectorStatus):
+async def update_connector_status(instance_id: UUID, status: ConnectorStatus, profile_id: UUID = Depends(require_profile_id)):
     try:
-        return await ConnectorApplication().repository.set_status(instance_id, status)
+        app=ConnectorApplication(); instance=await app.repository.get_instance(instance_id)
+        if instance.profile_id != profile_id: raise LookupError("connector instance does not exist")
+        return await app.repository.set_status(instance_id, status)
     except (ValueError, LookupError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.put("/instances/{instance_id}/permissions")
-async def update_connector_permissions(instance_id: UUID, body: UpdatePermissions):
+async def update_connector_permissions(instance_id: UUID, body: UpdatePermissions, profile_id: UUID = Depends(require_profile_id)):
     app = ConnectorApplication()
     try:
         instance = await app.repository.get_instance(instance_id)
+        if instance.profile_id != profile_id: raise LookupError("connector instance does not exist")
         definition = app.registry.get_definition(instance.definition_key, instance.definition_version)
         return await app.repository.set_enabled_permissions(
-            instance_id, definition, body.enabled_permissions, actor=body.actor,
+            instance_id, definition, body.enabled_permissions, actor=f"profile:{profile_id}",
         )
     except (ValueError, LookupError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/instances/{instance_id}/health")
-async def connector_instance_health(instance_id: UUID):
+async def connector_instance_health(instance_id: UUID, profile_id: UUID = Depends(require_profile_id)):
     try:
-        instance = await ConnectorApplication().repository.get_instance(instance_id)
-        return connector_health(instance)
+        app = ConnectorApplication()
+        instance = await app.repository.get_instance(instance_id)
+        if instance.profile_id != profile_id: raise LookupError("connector instance does not exist")
+        return await ConnectorScheduler(app.postgres).health_for(instance)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -145,20 +152,25 @@ def _pairing_origin_allowed(request: Request) -> bool:
 
 
 @router.post("/browser/pairings")
-async def create_browser_pairing(body: CreateBrowserPairing, request: Request):
+async def create_browser_pairing(body: CreateBrowserPairing, request: Request, profile_id: UUID = Depends(require_profile_id)):
     if not _pairing_origin_allowed(request):
         raise HTTPException(status_code=403, detail="pairing is restricted to the local GDPR Agent UI")
     try:
+        instance=await ConnectorApplication().repository.get_instance(body.connector_instance_id)
+        if instance.profile_id != profile_id: raise LookupError("connector instance does not exist")
         return await BrowserBridgeService().create_pairing(body.connector_instance_id, body.label)
     except (ValueError, LookupError, BrowserBridgeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.delete("/browser/pairings/{pairing_id}")
-async def revoke_browser_pairing(pairing_id: UUID, request: Request):
+async def revoke_browser_pairing(pairing_id: UUID, request: Request, profile_id: UUID = Depends(require_profile_id)):
     if not _pairing_origin_allowed(request):
         raise HTTPException(status_code=403, detail="pairing is restricted to the local GDPR Agent UI")
-    if not await BrowserBridgeService().revoke_pairing(pairing_id):
+    rows=await ConnectorApplication().postgres.execute(
+        """SELECT 1 FROM browser_connector_pairings bp JOIN connector_instances ci ON ci.id=bp.connector_instance_id WHERE bp.id=$1 AND ci.profile_id=$2""",pairing_id,profile_id,
+    )
+    if not rows or not await BrowserBridgeService().revoke_pairing(pairing_id):
         raise HTTPException(status_code=404, detail="pairing not found")
     return {"revoked": True}
 

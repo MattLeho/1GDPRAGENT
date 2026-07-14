@@ -53,6 +53,11 @@ IMAP_EMAIL_DEFINITION = SourceConnectorDefinition(
             key="mail.attachments", access=PermissionAccess.READ, data_class="email.message",
             description="Ingest attachment content through Task 3A",
         ),
+        ConnectorPermission(
+            key="mail.source_delete", access=PermissionAccess.DELETE, data_class="email.message",
+            description="Move explicitly approved messages to the IMAP Trash mailbox",
+            required=False, enabled_by_default=False,
+        ),
     ),
     supports_backfill=True, supports_incremental=True, supports_source_delete=True,
     configuration_schema={

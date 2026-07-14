@@ -6,6 +6,7 @@ Tasks are executed by Celery workers connected to Redis.
 """
 
 import asyncio
+from datetime import datetime, timezone
 from celery import Celery
 from config import get_settings
 
@@ -36,6 +37,13 @@ app.conf.update(
     # Performance
     worker_prefetch_multiplier=1,   # Fair task distribution
     worker_max_tasks_per_child=1000,  # Restart workers periodically (memory leaks)
+    beat_schedule={
+        "connector-recurring-sync": {
+            "task": "intelligence.connectors.schedule_due",
+            "schedule": 60.0,
+            "options": {"expires": 55.0},
+        },
+    },
 )
 
 
@@ -89,6 +97,18 @@ def connector_sync(self, data: dict) -> dict:
         cursor_key=data.get("cursor_key", "default"),
     ))
     return result.model_dump(mode="json")
+
+
+@app.task(bind=True, name="intelligence.connectors.schedule_due")
+def connector_schedule_due(self, limit: int = 100) -> dict:
+    """Claim due connector instances and enqueue their existing sync task."""
+    from connectors.scheduler import ConnectorScheduler
+
+    return run_async(ConnectorScheduler().enqueue_due(
+        connector_sync.delay,
+        now=datetime.now(timezone.utc),
+        limit=limit,
+    ))
 
 
 @app.task(bind=True, name="intelligence.ingest_to_graph")

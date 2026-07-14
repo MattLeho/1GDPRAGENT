@@ -103,6 +103,9 @@ class SourceDeletionService:
             raise SourceDeletionDenied("source deletion item is not eligible after grace")
         if row["action"] != "source_delete" or not row["source_delete_capability"] or not row["supports_source_delete"]:
             raise SourceDeletionDenied("source connector lacks verified source-delete capability")
+        enabled_permissions = set(_decoded(row["enabled_permissions"]) or ())
+        if "mail.source_delete" not in enabled_permissions:
+            raise SourceDeletionDenied("source deletion requires the enabled mail.source_delete permission")
         if row["review_status"] != "approved" or row["classification"] not in {"LOW_VALUE_BULK", "SPAM"}:
             raise SourceDeletionDenied("retention decision is not approved low-value/spam")
 

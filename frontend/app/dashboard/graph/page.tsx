@@ -4,6 +4,9 @@ import { useState, useCallback } from 'react';
 import { GraphCanvas } from '@/components/graph/GraphCanvas';
 import { InspectorPanel } from '@/components/graph/InspectorPanel';
 import { ShadowProfileChat } from '@/components/graph/ShadowProfileChat';
+import { PrivacyGraphControls } from '@/components/graph/PrivacyGraphControls';
+import { PrivacyModePanel } from '@/components/graph/PrivacyModePanel';
+import type { PrivacyGraphFilters, PrivacyGraphMode } from '@/lib/privacy/types';
 import { toast } from 'sonner';
 
 interface GraphNode {
@@ -16,6 +19,8 @@ interface GraphNode {
 export default function GraphPage() {
     const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
     const [graphRefreshKey, setGraphRefreshKey] = useState(0);
+    const [mode,setMode]=useState<PrivacyGraphMode>('now');
+    const [privacyFilters,setPrivacyFilters]=useState<PrivacyGraphFilters>({});
 
     const handleNodeClick = useCallback((node: GraphNode) => {
         setSelectedNode(node);
@@ -93,6 +98,15 @@ export default function GraphPage() {
                     </p>
                 </div>
             </div>
+            <PrivacyGraphControls mode={mode} filters={privacyFilters} onMode={next=>{
+                setMode(next);
+                setPrivacyFilters(current=>({ ...current,
+                    profileLayer: next==='controller_profile'?'controller_profile':current.profileLayer,
+                    capabilityStatus: next==='capabilities'?(current.capabilityStatus||'evidenced_from_export'):undefined,
+                    purpose: next==='purpose'?(current.purpose||undefined):undefined,
+                    compareTo: next==='compare'?current.compareTo:undefined,
+                }));
+            }} onFilters={setPrivacyFilters}/>
 
             {/* Main Content */}
             <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -102,11 +116,13 @@ export default function GraphPage() {
                         onNodeClick={handleNodeClick}
                         selectedNodeId={selectedNode?.id}
                         refreshKey={graphRefreshKey}
+                        privacyFilters={privacyFilters}
                     />
                 </div>
 
                 {/* Inspector Panel - Zone B */}
                 <div className="w-80 flex-shrink-0 border-l bg-white dark:bg-zinc-900 overflow-y-auto">
+                    <PrivacyModePanel mode={mode} filters={privacyFilters}/>
                     <InspectorPanel
                         selectedNode={selectedNode}
                         onClose={handleCloseInspector}

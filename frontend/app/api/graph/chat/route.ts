@@ -1,151 +1,40 @@
-import { NextResponse } from 'next/server';
-import { runCypher } from '@/lib/graph';
+import { NextRequest, NextResponse } from 'next/server';
+import { intelligenceAuthorityHeaders, requireApiSession } from '@/lib/api-session';
 import { executeTask } from '@/lib/execution/router';
 
-/**
- * Graph Chat API - Answers questions about the knowledge graph using Gemini
- */
-export async function POST(request: Request) {
+const baseUrl = () => process.env.INTELLIGENCE_SERVICE_URL || process.env.INTELLIGENCE_URL || 'http://intelligence:8000';
+
+/** Closed proxy for the typed PrivacyQueryService. No question, SQL or Cypher is accepted. */
+export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
+    let body: unknown;
+    try { body = await request.json(); }
+    catch { return NextResponse.json({ detail: 'A typed privacy tool call is required.' }, { status: 400 }); }
     try {
-        const body = await request.json();
-        const { query } = body;
-
-        if (!query) {
-            return NextResponse.json(
-                { error: 'Query is required' },
-                { status: 400 }
-            );
+        if (body && typeof body === 'object' && typeof (body as {question?:unknown}).question === 'string') {
+            const question=(body as {question:string}).question.trim();
+            if(!question)return NextResponse.json({detail:'Question is required'},{status:400});
+            const selection=await executeTask({taskKey:'graph.explanation',workflowKey:'graph.query',input:{text:question},configuration:{systemPrompt:`Select exactly one privacy tool and its arguments. Return JSON only: {"tool":"...","arguments":{...}}. Allowed tools: get_current_profile, get_profile_at, compare_profile_periods, trace_assertion, get_assertion_evidence, find_identifier_links, get_identifier_centrality, simulate_identifier_removal, list_controller_assignments, compare_behavioural_and_controller_profile, list_capability_exposure, trace_capability_evidence, list_purpose_drift_candidates, trace_purpose_lineage, list_open_privacy_hypotheses, compare_export_snapshots, get_personal_drift, get_controller_drift, get_understanding_drift. Never return SQL or Cypher. If required IDs or dates are absent, select the closest no-argument tool and preserve uncertainty.`}});
+            const selectedText=selection.ok?(selection.output as {text?:unknown}).text:null;
+            if(typeof selectedText!=='string')return NextResponse.json({detail:'No typed tool selection was produced'},{status:422});
+            const match=selectedText.match(/\{[\s\S]*\}/);if(!match)return NextResponse.json({detail:'Tool selector returned invalid JSON'},{status:422});
+            try{body=JSON.parse(match[0]);}catch{return NextResponse.json({detail:'Tool selector returned invalid JSON'},{status:422});}
         }
-
-        // First, fetch relevant graph data based on query keywords
-        const lowerQuery = query.toLowerCase();
-        let cypherQuery = "MATCH (n:GraphNode) WHERE coalesce(n.retired,false)=false AND coalesce(n.source,'')<>'inference' RETURN n LIMIT 50";
-        let cypherParams: Record<string, unknown> = {};
-
-        // Use more specific queries based on what's being asked
-        if (lowerQuery.includes('email')) {
-            cypherQuery = `
-                MATCH (s:Subject)-[r]->(e:GraphNode)
-                WHERE (e:Identifier OR e:Email) AND coalesce(r.epistemic_basis,'') <> 'model_hypothesis'
-                RETURN s, r, e LIMIT 50
-            `;
-        } else if (lowerQuery.includes('company') || lowerQuery.includes('companies')) {
-            cypherQuery = `
-                MATCH (c:GraphNode)
-                WHERE c:Organisation OR c:ControllerProfile
-                OPTIONAL MATCH (a:Account)-[r:HELD_BY]->(c)
-                WHERE r IS NULL OR coalesce(r.epistemic_basis,'') <> 'model_hypothesis'
-                RETURN c, a, r LIMIT 50
-            `;
-        } else if (lowerQuery.includes('amazon') || lowerQuery.includes('google') || lowerQuery.includes('facebook')) {
-            const company = lowerQuery.includes('amazon') ? 'Amazon' :
-                lowerQuery.includes('google') ? 'Google' : 'Facebook';
-            cypherQuery = `
-                MATCH (c:GraphNode)
-                WHERE (c:Organisation OR c:ControllerProfile) AND toLower(coalesce(c.value,c.canonical_key,'')) CONTAINS toLower($company)
-                OPTIONAL MATCH (a:Account)-[r:HELD_BY]->(c)
-                WHERE r IS NULL OR coalesce(r.epistemic_basis,'') <> 'model_hypothesis'
-                RETURN c, a, r LIMIT 50
-            `;
-            cypherParams = { company };
-        } else if (lowerQuery.includes('phone')) {
-            cypherQuery = `
-                MATCH (s:Subject)-[r]->(ph:GraphNode)
-                WHERE (ph:Identifier OR ph:Phone) AND coalesce(r.epistemic_basis,'') <> 'model_hypothesis'
-                RETURN s, r, ph LIMIT 50
-            `;
-        } else if (lowerQuery.includes('account')) {
-            cypherQuery = `
-                MATCH (s:Subject)-[r]->(a:Account)
-                WHERE coalesce(r.epistemic_basis,'') <> 'model_hypothesis'
-                OPTIONAL MATCH (a)-[held:HELD_BY]->(c:Organisation)
-                RETURN s, r, a, held, c LIMIT 50
-            `;
-        }
-
-        // Execute the query
-        const results = await runCypher(cypherQuery, cypherParams);
-
-        // Build context from results
-        const context = buildContextFromResults(results);
-
-        const geminiResponse = await explainGraph(query, context);
-
-        return NextResponse.json({
-            response: geminiResponse,
-            graphData: context,
+        const response = await fetch(`${baseUrl()}/query`, {
+            method: 'POST', body: JSON.stringify(body), cache: 'no-store',
+            headers: intelligenceAuthorityHeaders(authority.profileId), signal: AbortSignal.timeout(120_000),
         });
-
-    } catch (error) {
-        console.error('Graph chat error:', error);
-        return NextResponse.json(
-            { error: 'Failed to process query' },
-            { status: 500 }
-        );
-    }
-}
-
-function buildContextFromResults(results: unknown[]): string {
-    if (!results || results.length === 0) {
-        return "The knowledge graph is empty or no relevant data was found.";
-    }
-
-    const nodes: Set<string> = new Set();
-    const relationships: Set<string> = new Set();
-
-    for (const record of results) {
-        const rec = record as { keys: string[]; get: (key: string) => unknown };
-        if (rec.keys) {
-            for (const key of rec.keys) {
-                const value = rec.get(key);
-                if (value && typeof value === 'object') {
-                    const node = value as { properties?: Record<string, unknown>; labels?: string[]; type?: string };
-                    if (node.properties) {
-                        const props = node.properties;
-                        const label = node.labels?.[0] || 'Node';
-                        const name = props.name || props.value || props.address || props.username || 'unknown';
-                        nodes.add(`${label}: ${name}`);
-                    } else if (node.type) {
-                        relationships.add(node.type);
-                    }
-                }
-            }
+        const payload = await response.json().catch(() => ({ detail: `Privacy query service returned ${response.status}` }));
+        if (!response.ok) return NextResponse.json(payload, { status: response.status });
+        let explanation: string | null = null;
+        if (payload.evidence_bearing === true && Array.isArray(payload.citations) && payload.citations.length > 0) {
+            const explained = await executeTask({taskKey:'graph.explanation',workflowKey:'graph.query',input:{text:JSON.stringify(payload)},configuration:{systemPrompt:'Explain only the supplied typed privacy-tool result. Preserve unknowns and epistemic status. Every evidence-bearing sentence must cite an Assertion ID and EvidenceLocator from the supplied citations. Do not generate or execute graph queries.'}});
+            const text = explained.ok ? (explained.output as {text?:unknown}).text : null;
+            explanation = typeof text === 'string' ? text : null;
         }
-    }
-
-    let context = `Found ${nodes.size} relevant items in the graph:\n`;
-    context += Array.from(nodes).join('\n');
-    if (relationships.size) context += `\nRelationships: ${Array.from(relationships).join(', ')}`;
-
-    return context;
-}
-
-async function explainGraph(query: string, context: string): Promise<string> {
-    try {
-        const result=await executeTask({taskKey:'graph.explanation',workflowKey:'graph.query',input:{text:`Question: ${query}\n\nGrounded graph results:\n${context}`},configuration:{systemPrompt:'Answer the question in two or three concise sentences using only the grounded graph results. State when evidence is limited and do not turn model hypotheses into facts.'}});
-        return result.ok&&typeof (result.output as {text?:unknown}).text==='string'?(result.output as {text:string}).text:generateSimpleResponse(query,context);
+        return NextResponse.json({ ...payload, explanation });
     } catch (error) {
-        console.error('Graph explanation task failed:', error);
-        return generateSimpleResponse(query, context);
+        return NextResponse.json({ detail: 'Privacy query service is unavailable', error: error instanceof Error ? error.message : String(error) }, { status: 503 });
     }
-}
-
-function generateSimpleResponse(query: string, context: string): string {
-    const lowerQuery = query.toLowerCase();
-
-    if (context.includes('empty')) {
-        return "Your knowledge graph is empty. Start by creating GDPR requests and adding identities to build your data map.";
-    }
-
-    const itemCount = (context.match(/\n/g) || []).length;
-
-    if (lowerQuery.includes('email')) {
-        return `Based on your graph, I found ${itemCount} email-related entries. These create traceable connections across different services and companies.`;
-    }
-
-    if (lowerQuery.includes('compan')) {
-        return `Your graph contains company data. Each company may share your information with partners and third parties.`;
-    }
-
-    return `Found ${itemCount} relevant items in your graph. ${context.substring(0, 200)}`;
 }

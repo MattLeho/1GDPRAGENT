@@ -4,6 +4,8 @@
 
 > privacy-rights acquisition + provenance-preserving personal-data analysis + temporal evidence graph + human-controlled AI interpretation
 
+In product terms, it is a local-first personal-data autonomy system that uses privacy access rights and user-authorised connectors to acquire evidence, reconstructs longitudinal behavioural and controller-profile histories, maps identifier linkability and institutional capability, and uses AI as an evidence-constrained interface for exploring a temporal privacy graph.
+
 It helps a person request data from organisations, preserve the returned source material, inspect what a controller appears to record or infer, and explore evidence-backed relationships without treating model output as psychological truth.
 
 ## Trusted evidence architecture
@@ -60,6 +62,12 @@ The browser uses the Next.js endpoints under `/api/insights`. Direct service ent
 
 Task 4 is accepted. Authenticated verification covered every module and empty state, all three temporal modes, Quarter granularity, stable URL-backed controls, cohesive dark-theme surfaces, and the evidence-inspector interaction. The user's live profile stayed empty and unmodified; a dedicated local `task4-browser-smoke` subject supplied the synthetic temporal state used to open the drawer. That narrow fixture had no source artefacts or exact locators, while database-backed catalogue, trace and locator tests cover the broader evidence path. Exact results and fixture scope are recorded in the Task 4 acceptance audit below.
 
+## Privacy capability and temporal graph
+
+Open <http://localhost:3001/dashboard/graph> for eight evidence-preserving modes: Now, Through Time, Compare, Controller Profile, Capabilities, Linkability, Purpose, and Access. The page never collapses self-declared, observed behavioural, controller-assigned, and system-hypothesis layers into one truth. Observed edges are solid, technically possible edges are dashed, and alleged/unverified edges are dotted.
+
+The model-facing `/query` surface contains exactly 19 typed, profile-scoped tools. Natural-language graph questions first select one of those tools; the validated result is read from PostgreSQL and may be explained only with resolvable Assertion, EvidenceLocator, and SourceArtifact citations. Arbitrary SQL/Cypher and the former keyword graph chat are not available through this surface.
+
 ## Start and migrate
 
 1. Copy `.env.example` to an untracked `.env` and set the required local secrets.
@@ -85,3 +93,5 @@ Task 1 is verified with disposable PostgreSQL migration tests, real Neo4j projec
 - [Personal Insights architecture](Technical%20Documentation/Personal%20Insights%20Architecture.md)
 - [Task 4 implementation ledger](Technical%20Documentation/Task%204%20Implementation%20Ledger.md)
 - [Task 4 acceptance audit](Technical%20Documentation/Task%204%20Acceptance%20Audit.md)
+- [Task 6 privacy capability architecture](Technical%20Documentation/Task%206%20Privacy%20Capability%20Architecture.md)
+- [Task 6 final acceptance audit](Technical%20Documentation/Task%206%20Final%20Acceptance%20Audit.md)

@@ -16,7 +16,10 @@ class GraphProjectionService:
         "Subject", "ControllerProfile", "Organisation", "Account", "Identifier",
         "DataDomain", "Topic", "DataPoint", "TemporalState", "ProjectEpisode",
         "ProcessingActivity", "Purpose", "Capability", "CapabilityExposureState",
-        "PolicyInstrument", "Claim", "SourceArtifact",
+        "PolicyInstrument", "Claim", "SourceArtifact", "LegalBasis", "Dataset", "Authority",
+        "CapabilityCandidate", "LinkabilitySnapshot", "IdentifierRemovalSimulation",
+        "PurposeDistanceAssessment", "PrivacyHypothesis", "DeletionSimulation",
+        "ExpectedRemoval", "DeletionVerification",
     })
 
     def __init__(self, postgres: PostgresClient | None=None, neo4j: Neo4jClient | None=None):
@@ -50,13 +53,25 @@ class GraphProjectionService:
     async def project_assertion(self, assertion_id: UUID | str) -> dict:
         await self.ensure_schema()
         rows=await self.postgres.execute(
-            """SELECT a.* FROM assertions a WHERE a.id=$1::uuid AND a.status='accepted'
+            """SELECT a.*,ar.profile_id,COALESCE((SELECT array_agg(ae.evidence_locator_id ORDER BY ae.evidence_locator_id)
+                 FROM assertion_evidence ae WHERE ae.assertion_id=a.id),'{}'::uuid[]) evidence_locator_ids
+               ,COALESCE((SELECT array_agg(DISTINCT el.artifact_id ORDER BY el.artifact_id)
+                 FROM assertion_evidence ae JOIN evidence_locators el ON el.id=ae.evidence_locator_id
+                 WHERE ae.assertion_id=a.id),'{}'::uuid[]) source_artifact_ids
+               FROM assertions a JOIN analysis_runs ar ON ar.id=a.analysis_run_id
+               WHERE a.id=$1::uuid AND a.status='accepted'
                AND NOT (a.epistemic_basis='model_hypothesis' AND NOT EXISTS(
                  SELECT 1 FROM assertion_evidence ae JOIN evidence_locators el ON el.id=ae.evidence_locator_id
                  WHERE ae.assertion_id=a.id AND el.verified
                    AND el.verification_method IN ('exact_quote_match','structured_value_match','human_verified')))""",str(assertion_id))
         if not rows: raise ValueError("only accepted, provenance-valid assertions can be projected")
-        assertion=dict(rows[0]); subject_label=assert_personal_label(assertion["subject_type"])
+        assertion=dict(rows[0])
+        if assertion["profile_id"] is None:
+            profiles=await self.postgres.execute("SELECT id FROM profiles ORDER BY created_at,id LIMIT 2")
+            if len(profiles)!=1:
+                raise ValueError("projection requires an unambiguous profile scope")
+            assertion["profile_id"]=profiles[0]["id"]
+        subject_label=assert_personal_label(assertion["subject_type"])
         if subject_label not in self.HIGH_VALUE_LABELS:
             raise ValueError("assertion subject is not part of the high-value privacy topology")
         subject_ref=assertion["subject_ref"]; subject_id=str(stable_node_id(subject_label,subject_ref))
@@ -72,6 +87,11 @@ class GraphProjectionService:
             raise ValueError("controller-assigned profiles must not mutate Subject behavioural identity")
         object_key=object_ref.split(":",1)[-1] if assertion["object_type"]=="node_ref" and ":" in object_ref else object_ref
         object_id=str(stable_node_id(object_label,object_key)); rel=relationship_type(assertion["predicate"])
+        edge_epistemic=(
+            "alleged_unverified" if str(assertion["epistemic_basis"])=="model_hypothesis"
+            else "potentially_enabled" if assertion["predicate"].upper() in {"TECHNICALLY_COULD_ENABLE","CAN_REQUEST"}
+            else "currently_observed"
+        )
         cypher=f"""
         MERGE (s:GraphNode:{subject_label} {{node_id:$subject_id}})
         ON CREATE SET s.canonical_key=$subject_ref,s.created_at=datetime()
@@ -79,14 +99,24 @@ class GraphProjectionService:
         ON CREATE SET o.canonical_key=$object_key,o.value=$object_value,o.source=$object_source,o.created_at=datetime()
         MERGE (s)-[r:{rel} {{assertion_id:$assertion_id}}]->(o)
         SET r.confidence=$confidence,r.epistemic_basis=$basis,r.data_class=$data_class,
-            r.inferred=($basis='model_hypothesis'),r.projected_at=datetime()
+            r.edge_epistemic=$edge_epistemic,r.assertion_status='accepted',
+            r.valid_from=$valid_from,r.valid_to=$valid_to,
+            r.controller_observed_from=$controller_observed_from,
+            r.controller_observed_to=$controller_observed_to,
+            r.exported_at=$exported_at,r.ingested_at=$ingested_at,
+            r.system_asserted_at=$system_asserted_at,
+            r.derivation_method=$derivation_method,r.derivation_version=$derivation_version,
+            r.evidence_locator_ids=$evidence_locator_ids,r.source_artifact_ids=$source_artifact_ids,
+            r.profile_id=$profile_id,r.projected_at=datetime()
+        REMOVE r.inferred
         RETURN s.node_id AS subject_id,o.node_id AS object_id,r.assertion_id AS assertion_id
         """
-        result=await self.neo4j.execute(cypher,{"subject_id":subject_id,"subject_ref":subject_ref,"object_id":object_id,"object_key":object_key,"object_value":object_ref,"assertion_id":str(assertion["id"]),"confidence":float(assertion["confidence"]) if assertion["confidence"] is not None else None,"basis":str(assertion["epistemic_basis"]),"data_class":str(assertion["data_class"]),"object_source":"onsit" if is_onsit_label(object_label) else "gdpr"})
+        result=await self.neo4j.execute(cypher,{"subject_id":subject_id,"subject_ref":subject_ref,"object_id":object_id,"object_key":object_key,"object_value":object_ref,"assertion_id":str(assertion["id"]),"profile_id":str(assertion["profile_id"]),"confidence":float(assertion["confidence"]) if assertion["confidence"] is not None else None,"basis":str(assertion["epistemic_basis"]),"data_class":str(assertion["data_class"]),"object_source":"onsit" if is_onsit_label(object_label) else "gdpr","edge_epistemic":edge_epistemic,"valid_from":assertion["valid_from"].isoformat() if assertion["valid_from"] else None,"valid_to":assertion["valid_to"].isoformat() if assertion["valid_to"] else None,"controller_observed_from":assertion["controller_observed_from"].isoformat() if assertion["controller_observed_from"] else None,"controller_observed_to":assertion["controller_observed_to"].isoformat() if assertion["controller_observed_to"] else None,"exported_at":assertion["exported_at"].isoformat() if assertion["exported_at"] else None,"ingested_at":assertion["ingested_at"].isoformat() if assertion["ingested_at"] else None,"system_asserted_at":assertion["system_asserted_at"].isoformat() if assertion["system_asserted_at"] else None,"derivation_method":assertion["derivation_method"],"derivation_version":assertion["derivation_version"],"evidence_locator_ids":[str(value) for value in assertion["evidence_locator_ids"]],"source_artifact_ids":[str(value) for value in assertion["source_artifact_ids"]]})
         return result[0] if result else {"subject_id":subject_id,"object_id":object_id,"assertion_id":str(assertion["id"])}
 
     async def project_pending(self, limit: int=1000) -> int:
-        rows=await self.postgres.execute("SELECT id FROM assertions WHERE status='accepted' ORDER BY system_asserted_at LIMIT $1",limit)
+        rows=await self.postgres.execute("""SELECT a.id FROM assertions a JOIN analysis_runs ar ON ar.id=a.analysis_run_id
+          WHERE a.status='accepted' AND ar.profile_id IS NOT NULL ORDER BY a.system_asserted_at LIMIT $1""",limit)
         for row in rows: await self.project_assertion(row["id"])
         return len(rows)
 

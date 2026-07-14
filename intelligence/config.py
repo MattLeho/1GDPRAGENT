@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     
     # Credential encryption key (Fernet)
     credential_key: str = ""
+    internal_api_key: str = ""
     
     class Config:
         env_file = ".env"

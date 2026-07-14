@@ -2,10 +2,13 @@
 title: Task 5 Final Self-Audit
 date: 2026-07-13
 tags: [gdpr-agent, task-5, self-audit]
-status: implementation-verified
+status: predecessor-repair-in-progress
 ---
 
 # Task 5 Final Self-Audit
+
+> [!warning] Superseded completion determination
+> The mandatory Task 6 predecessor audit found that this report overstated integrated completion. Source deletion lacked a separately granted destructive permission; live retention evaluation and recurring dispatch were disconnected; destructive APIs lacked signed profile-scoped authority; and controller-erasure drafting could precede the grace gate. Repairs are recorded in [[Task 6 Predecessor Audit Ledger]]. This document must not be used as current completion evidence until the repaired full suite and runtime gate are recorded.
 
 ## 1. Predecessor audit
 

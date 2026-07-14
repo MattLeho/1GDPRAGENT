@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "NEW APP CONTEXT AND PLAN/Task 4 Personal Insights, temporal extraction, contextual correlations and media intelligence- delegated.md",
+                "file": "NEW APP CONTEXT AND PLAN/Task 6 capability and final product UI delegated.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Task 4 Personal Insights, temporal extraction, contextual correlations and media intelligence- delegated"
+              "title": "Task 6 capability and final product UI delegated"
             }
           }
         ]
@@ -205,17 +205,24 @@
   },
   "active": "5f073d1032116b53",
   "lastOpenFiles": [
+    "NEW APP CONTEXT AND PLAN/Task 4 Personal Insights, temporal extraction, contextual correlations and media intelligence- delegated.md",
+    "Technical Documentation/Task 6 Final Acceptance Audit.md",
+    "Technical Documentation/Task 6 Privacy Capability Architecture.md",
+    "tests/__pycache__/test_task5_task6_predecessor_retention_evaluation.cpython-312-pytest-9.1.1.pyc",
+    "intelligence/graph/__pycache__/projection.cpython-311.pyc.134034316207568",
+    "tests/__pycache__/test_task5_task6_predecessor_scheduler.cpython-312-pytest-9.1.1.pyc",
+    "tests/__pycache__/test_task5_task6_predecessor_deletion.cpython-312-pytest-9.1.1.pyc",
+    "tests/__pycache__/test_task5_task6_predecessor_authority.cpython-312-pytest-9.1.1.pyc",
+    "intelligence/privacy/__pycache__/wording.cpython-311.pyc",
+    "intelligence/privacy/__pycache__/wording.cpython-311.pyc.128593344692496",
+    "intelligence/privacy/__pycache__/linkability.cpython-311.pyc",
+    "intelligence/privacy/__pycache__/linkability.cpython-311.pyc.128593344565120",
+    "intelligence/privacy/__pycache__/hypotheses.cpython-311.pyc",
+    "Technical Documentation/Task 6 Implementation Ledger.md",
+    "Technical Documentation/Task 6 Predecessor Audit Ledger.md",
+    "Technical Documentation/Task 5 Final Self-Audit.md",
+    "browser-extension/README.md",
     "Technical Documentation/Task 3 Implementation Ledger.md",
-    "intelligence/insights/__pycache__/repository.cpython-311.pyc.137385172284704",
-    "tests/__pycache__/test_task4_media_route_contract.cpython-312-pytest-9.1.1.pyc",
-    "tests/test_task4_media_route_contract.py",
-    "intelligence/insights/__pycache__/service.cpython-311.pyc.126300804433824",
-    "intelligence/insights/__pycache__/media.cpython-311.pyc.139613347843792",
-    "intelligence/insights/__pycache__/evidence.cpython-311.pyc.123335574628800",
-    "intelligence/insights/__pycache__/service.cpython-311.pyc.124144395195248",
-    "intelligence/insights/__pycache__/media.cpython-311.pyc.139462377360720",
-    "intelligence/insights/__pycache__/service.cpython-311.pyc.126774333261840",
-    "intelligence/insights/__pycache__/context.cpython-311.pyc.140033541505520",
     "Technical Documentation/Task 4 Acceptance Audit.md",
     "Technical Documentation/Personal Insights Architecture.md",
     "Technical Documentation/Task 4 Implementation Ledger.md",
@@ -234,12 +241,6 @@
     "Technical Documentation/Task 2 Acceptance Audit.md",
     "NEW APP CONTEXT AND PLAN/Task 5 live data connectors and conservative retention and deletion policies, delegated.md",
     "NEW APP CONTEXT AND PLAN/Task 6- capability, purpose drift, linkability, active DSAR testing and the actual product UI.md",
-    "NEW APP CONTEXT AND PLAN/Task 4 Personal Insights, temporal extraction, contextual correlations and media intelligence- delegated.md",
-    "NEW APP CONTEXT AND PLAN/Task 5- live data connectors and conservative retention and deletion policies.md",
-    "NEW APP CONTEXT AND PLAN/Task 4- Personal Insights, temporal exploration, contextual correlations and media intelligence.md",
-    "NEW APP CONTEXT AND PLAN/Task 3- build the local-first ingestion and temporal analysis engine able to ingest large amounts of data.md",
-    "NEW APP CONTEXT AND PLAN/Task 1- rebuild the evidence and graph foundation.md",
-    "NEW APP CONTEXT AND PLAN/Task 2- Task Execution Router, built-in workflow parity and settings rebuild.md",
-    "NEW APP CONTEXT AND PLAN/Personal Insights Product Context.md"
+    "NEW APP CONTEXT AND PLAN/Task 5- live data connectors and conservative retention and deletion policies.md"
   ]
 }

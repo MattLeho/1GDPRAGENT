@@ -216,12 +216,12 @@ async def test_source_delete_is_capability_gated_and_audited(tmp_path, migrated_
                connector_key,definition_version,display_name,provider,connector_type,modes,
                data_classes,permissions,supports_source_delete)
                VALUES('email.imap','1','IMAP','IMAP','email_source','["incremental_poll"]',
-               '["email.message"]','[]',TRUE)"""
+               '["email.message"]','[{"key":"mail.source_delete","access":"delete","data_class":"email.message","description":"Move reviewed messages to Trash","required":false,"enabled_by_default":false}]',TRUE)"""
         )
         connector_id = await connection.fetchval(
             """INSERT INTO connector_instances(
-               connector_key,definition_version,display_name,status,configuration)
-               VALUES('email.imap','1','Fixture','connected',$1::jsonb) RETURNING id""",
+               connector_key,definition_version,display_name,status,configuration,enabled_permissions)
+               VALUES('email.imap','1','Fixture','connected',$1::jsonb,'["mail.source_delete"]'::jsonb) RETURNING id""",
             json.dumps({"host": "localhost", "username": "fixture", "scope": "metadata_only"}),
         )
         sync_id = await connection.fetchval(

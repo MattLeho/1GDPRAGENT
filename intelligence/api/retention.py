@@ -1,11 +1,11 @@
 """Review-first retention and destructive-operation orchestration endpoints."""
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import json
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from db.postgres import get_postgres_client
@@ -15,9 +15,10 @@ from retention.local_purge import LocalPurgeService
 from retention.models import DeletionStage, RetentionAction, RetentionDecision, RetentionPolicy
 from retention.source_delete import SourceDeletionService
 from retention.staging import DeletionStagingService
+from api.security import require_internal_request, require_profile_id
 
 
-router = APIRouter(prefix="/retention", tags=["Retention"])
+router = APIRouter(prefix="/retention", tags=["Retention"], dependencies=[Depends(require_internal_request)])
 
 
 class StrictBody(BaseModel):
@@ -47,6 +48,13 @@ class BuildPlan(StrictBody):
     decision_ids: tuple[UUID, ...] = Field(min_length=1)
 
 
+class EvaluateRetention(StrictBody):
+    policy_id: UUID | None = None
+    policy_version: int | None = Field(default=None, ge=1)
+    as_of: datetime | None = None
+    limit: int = Field(default=1000, ge=1, le=10_000)
+
+
 class DecisionReview(StrictBody):
     actor: str = Field(min_length=1, max_length=200)
     approved: bool
@@ -72,11 +80,11 @@ class ControllerDraftRequest(ExactReview):
 
 
 @router.get("")
-async def retention_overview():
+async def retention_overview(profile_id: UUID = Depends(require_profile_id)):
     postgres = get_postgres_client()
-    policies = await postgres.execute("SELECT * FROM retention_policies ORDER BY updated_at DESC,id,policy_version DESC")
-    decisions = await postgres.execute("SELECT * FROM retention_decisions ORDER BY created_at DESC LIMIT 500")
-    plans = await postgres.execute("SELECT * FROM deletion_plans ORDER BY created_at DESC LIMIT 100")
+    policies = await postgres.execute("SELECT * FROM retention_policies WHERE profile_id=$1 ORDER BY updated_at DESC,id,policy_version DESC",profile_id)
+    decisions = await postgres.execute("""SELECT rd.* FROM retention_decisions rd JOIN source_artifacts sa ON sa.id=rd.source_artifact_id JOIN export_snapshots es ON es.id=sa.export_snapshot_id WHERE es.profile_id=$1 ORDER BY rd.created_at DESC LIMIT 500""",profile_id)
+    plans = await postgres.execute("""SELECT dp.* FROM deletion_plans dp JOIN retention_policies rp ON rp.id=dp.policy_id AND rp.policy_version=dp.policy_version WHERE rp.profile_id=$1 ORDER BY dp.created_at DESC LIMIT 100""",profile_id)
     items = await postgres.execute(
         "SELECT * FROM deletion_plan_items WHERE deletion_plan_id=ANY($1::uuid[]) ORDER BY item_group,id",
         [row["id"] for row in plans],
@@ -94,10 +102,10 @@ async def retention_overview():
 
 
 @router.post("/policies")
-async def create_policy(body: CreatePolicy):
+async def create_policy(body: CreatePolicy, profile_id: UUID = Depends(require_profile_id)):
     from retention.policy import RetentionRepository
     policy = RetentionPolicy(
-        id=body.id or uuid4(), version=body.version, profile_id=body.profile_id,
+        id=body.id or uuid4(), version=body.version, profile_id=profile_id,
         name=body.name, scope=body.scope, connector_keys=body.connector_keys,
         data_classes=body.data_classes, minimum_age=timedelta(seconds=body.minimum_age_seconds),
         eligibility_threshold=body.eligibility_threshold, action=body.action,
@@ -108,11 +116,24 @@ async def create_policy(body: CreatePolicy):
     return policy
 
 
+@router.post("/evaluate")
+async def evaluate_retention(body: EvaluateRetention, profile_id: UUID = Depends(require_profile_id)):
+    from retention.evaluation import RetentionEvaluationService
+    try:
+        return await RetentionEvaluationService().evaluate(
+            profile_id=profile_id, as_of=body.as_of, policy_id=body.policy_id,
+            policy_version=body.policy_version, limit=body.limit,
+        )
+    except (ValueError, LookupError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post("/plans")
-async def create_plan(body: BuildPlan):
+async def create_plan(body: BuildPlan, profile_id: UUID = Depends(require_profile_id)):
     postgres = get_postgres_client()
     try:
         policy = await _load_policy(postgres, body.policy_id, body.policy_version)
+        if policy.profile_id != profile_id: raise LookupError("retention policy does not exist")
         rows = await postgres.execute(
             "SELECT * FROM retention_decisions WHERE id=ANY($1::uuid[])", list(body.decision_ids),
         )
@@ -145,10 +166,11 @@ async def create_plan(body: BuildPlan):
 
 
 @router.post("/decisions/{decision_id}/review")
-async def review_decision(decision_id: UUID, body: DecisionReview):
+async def review_decision(decision_id: UUID, body: DecisionReview, profile_id: UUID = Depends(require_profile_id)):
     try:
+        await _require_decision_profile(decision_id,profile_id)
         await DeletionPlanRepository().review_decision(
-            decision_id, actor=body.actor, approved=body.approved, reasons=body.reasons,
+            decision_id, actor=f"profile:{profile_id}", approved=body.approved, reasons=body.reasons,
         )
         return {"reviewed": True}
     except ValueError as exc:
@@ -156,37 +178,41 @@ async def review_decision(decision_id: UUID, body: DecisionReview):
 
 
 @router.post("/plans/{plan_id}/review")
-async def review_plan(plan_id: UUID, body: ExactReview):
+async def review_plan(plan_id: UUID, body: ExactReview, profile_id: UUID = Depends(require_profile_id)):
     try:
-        await DeletionPlanRepository().review_plan(plan_id, actor=body.actor, confirmation=body.confirmation)
+        await _require_plan_profile(plan_id,profile_id)
+        await DeletionPlanRepository().review_plan(plan_id, actor=f"profile:{profile_id}", confirmation=body.confirmation)
         return {"reviewed": True}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/plans/{plan_id}/approve")
-async def approve_plan(plan_id: UUID, body: ExactReview):
+async def approve_plan(plan_id: UUID, body: ExactReview, profile_id: UUID = Depends(require_profile_id)):
     try:
-        await DeletionPlanRepository().approve_plan(plan_id, actor=body.actor, confirmation=body.confirmation)
+        await _require_plan_profile(plan_id,profile_id)
+        await DeletionPlanRepository().approve_plan(plan_id, actor=f"profile:{profile_id}", confirmation=body.confirmation)
         return {"approved": True, "dry_run": False}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/items/{item_id}/stage")
-async def stage_item(item_id: UUID, body: StageRequest):
+async def stage_item(item_id: UUID, body: StageRequest, profile_id: UUID = Depends(require_profile_id)):
     try:
+        await _require_item_profile(item_id,profile_id)
         return await DeletionStagingService().transition(
-            item_id, body.target, actor=body.actor, confirmation=body.confirmation,
+            item_id, body.target, actor=f"profile:{profile_id}", confirmation=body.confirmation,
         )
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/items/{item_id}/execute")
-async def execute_item(item_id: UUID, body: ExactReview):
+async def execute_item(item_id: UUID, body: ExactReview, profile_id: UUID = Depends(require_profile_id)):
     if body.confirmation != "EXECUTE REVIEWED ACTION":
         raise HTTPException(status_code=422, detail="exact execution confirmation required")
+    await _require_item_profile(item_id,profile_id)
     row = await get_postgres_client().execute("SELECT action FROM deletion_plan_items WHERE id=$1", item_id)
     if not row: raise HTTPException(status_code=404, detail="deletion plan item not found")
     try:
@@ -198,16 +224,20 @@ async def execute_item(item_id: UUID, body: ExactReview):
 
 
 @router.post("/items/{item_id}/controller-erasure")
-async def create_controller_candidate(item_id: UUID, body: ControllerCandidateRequest):
-    try: return await ControllerErasureService().create_candidate(item_id, controller_key=body.controller_key)
+async def create_controller_candidate(item_id: UUID, body: ControllerCandidateRequest, profile_id: UUID = Depends(require_profile_id)):
+    try:
+        await _require_item_profile(item_id,profile_id)
+        return await ControllerErasureService().create_candidate(item_id, controller_key=body.controller_key)
     except (ValueError, RuntimeError) as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/controller-erasure/{candidate_id}/draft")
-async def create_controller_draft(candidate_id: UUID, body: ControllerDraftRequest):
+async def create_controller_draft(candidate_id: UUID, body: ControllerDraftRequest, profile_id: UUID = Depends(require_profile_id)):
     try:
+        rows=await get_postgres_client().execute("""SELECT 1 FROM controller_erasure_candidates c JOIN deletion_plan_items i ON i.id=c.deletion_plan_item_id JOIN deletion_plans p ON p.id=i.deletion_plan_id JOIN retention_policies rp ON rp.id=p.policy_id AND rp.policy_version=p.policy_version WHERE c.id=$1 AND rp.profile_id=$2""",candidate_id,profile_id)
+        if not rows: raise LookupError("controller-erasure candidate does not exist")
         return await ControllerErasureService().review_and_create_draft(
-            candidate_id, actor=body.actor, confirmation=body.confirmation,
+            candidate_id, actor=f"profile:{profile_id}", confirmation=body.confirmation,
             company_name=body.company_name, company_url=body.company_url,
         )
     except (ValueError, RuntimeError) as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -229,6 +259,21 @@ async def _load_policy(postgres, policy_id, version):
         grace_period=timedelta(seconds=row["grace_period_seconds"]),
         configuration=_decoded(row["configuration"]), enabled=row["enabled"],
     )
+
+
+async def _require_plan_profile(plan_id: UUID, profile_id: UUID) -> None:
+    rows=await get_postgres_client().execute("""SELECT 1 FROM deletion_plans p JOIN retention_policies rp ON rp.id=p.policy_id AND rp.policy_version=p.policy_version WHERE p.id=$1 AND rp.profile_id=$2""",plan_id,profile_id)
+    if not rows: raise LookupError("deletion plan does not exist")
+
+
+async def _require_item_profile(item_id: UUID, profile_id: UUID) -> None:
+    rows=await get_postgres_client().execute("""SELECT 1 FROM deletion_plan_items i JOIN deletion_plans p ON p.id=i.deletion_plan_id JOIN retention_policies rp ON rp.id=p.policy_id AND rp.policy_version=p.policy_version WHERE i.id=$1 AND rp.profile_id=$2""",item_id,profile_id)
+    if not rows: raise LookupError("deletion plan item does not exist")
+
+
+async def _require_decision_profile(decision_id: UUID, profile_id: UUID) -> None:
+    rows=await get_postgres_client().execute("""SELECT 1 FROM retention_decisions rd JOIN source_artifacts sa ON sa.id=rd.source_artifact_id JOIN export_snapshots es ON es.id=sa.export_snapshot_id WHERE rd.id=$1 AND es.profile_id=$2""",decision_id,profile_id)
+    if not rows: raise LookupError("retention decision does not exist")
 
 
 def _decision(row):

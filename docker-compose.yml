@@ -166,6 +166,7 @@ services:
       - QDRANT_API_KEY=${QDRANT_API_KEY:-}
       - CREDENTIAL_KEY=${CREDENTIAL_KEY}
       - CREDENTIALS_ENCRYPTION_KEY=${CREDENTIALS_ENCRYPTION_KEY:-}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-${CREDENTIAL_KEY}}
       - GDPR_DATA_ROOT=/data
       - GDPR_IMPORT_ROOTS=/source-uploads
     ports:
@@ -228,7 +229,7 @@ services:
       - ./frontend/uploads:/source-uploads:ro
       - intelligence_cache:/app/.cache
       - intelligence_data:/data
-    command: sh -c "pip install -r requirements.txt && celery -A tasks worker -l INFO -c 4"
+    command: sh -c "pip install -r requirements.txt && celery -A tasks worker -B -l INFO -c 4"
     networks:
       - gdpr-net
     healthcheck:
@@ -278,6 +279,7 @@ services:
       # Security
       - CREDENTIAL_KEY=${CREDENTIAL_KEY}
       - CREDENTIALS_ENCRYPTION_KEY=${CREDENTIALS_ENCRYPTION_KEY:-}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-${CREDENTIAL_KEY}}
       # N8N Webhooks (use internal Docker hostnames)
       - N8N_WEBHOOK_ANALYZE_POLICY=http://n8n:5678/webhook/analyze-policy
       - N8N_WEBHOOK_DRAFT_REQUEST=http://n8n:5678/webhook/draft-request

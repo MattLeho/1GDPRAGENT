@@ -5,7 +5,9 @@
     "Identifier", "DataDomain", "DataPoint", "Topic", "TemporalState",
     "ProjectEpisode", "ProcessingActivity", "Purpose", "LegalBasis", "Capability",
     "CapabilityExposureState", "PolicyInstrument", "Claim", "SourceArtifact",
-    "Dataset", "Request"
+    "Dataset", "Authority", "CapabilityCandidate", "LinkabilitySnapshot",
+    "IdentifierRemovalSimulation", "PurposeDistanceAssessment", "PrivacyHypothesis",
+    "DeletionSimulation", "ExpectedRemoval", "DeletionVerification", "Request"
   ],
   "onsit_labels": [
     "ONSITFinding", "Email", "Username", "Phone", "Name", "Domain", "IPAddress",
@@ -16,7 +18,10 @@
     "HAS_OBSERVED_SIGNAL", "ASSIGNED_ATTRIBUTE", "MAINTAINS_PROFILE", "HAS_IDENTIFIER",
     "HAS_ACCOUNT", "HELD_BY", "DESCRIBES", "SUPPORTED_BY", "HAS_PURPOSE",
     "HAS_LEGAL_BASIS", "ENABLES_CAPABILITY", "HAS_EXPOSURE_STATE", "SUPERSEDES",
-    "DERIVED_FROM", "RELATES_TO", "HUMAN_ASSERTED"
+    "DERIVED_FROM", "RELATES_TO", "HUMAN_ASSERTED", "COLLECTED_FOR",
+    "ORIGINALLY_JUSTIFIED_BY", "CURRENTLY_USED_FOR", "EXPANDED_TO",
+    "CURRENT_SCOPE", "TECHNICALLY_COULD_ENABLE", "CONTROLS", "PROCESSES",
+    "HOSTS", "CAN_REQUEST", "HAS_LEGAL_GATEWAY_TO", "SHARES_WITH", "USES_SUBPROCESSOR"
   ],
   "semantic_separation": {
     "Subject": ["ControllerProfile", "SystemHypothesis"],

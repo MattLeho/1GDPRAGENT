@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { SkeletonGraph } from '@/components/ui/skeleton';
 import { GraphToolbar, GraphFilters, defaultGraphFilters } from './GraphToolbar';
 import { GraphLegend, generateLegendItems, nodeColors, nodeSizes } from './GraphLegend';
+import type { GraphEpistemicState } from '@/lib/privacy/types';
 
 // Dynamically import force graphs to avoid SSR issues
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
@@ -48,8 +49,17 @@ export interface GraphLink {
     source: string | GraphNode;
     target: string | GraphNode;
     type: string;
-    isInferred?: boolean;
+    epistemicState: GraphEpistemicState;
+    assertionId?: string;
+    assertionStatus?: string;
+    evidenceLocatorIds?: string[];
     confidence?: number;
+    sourceArtifactIds?: string[];
+    profileLayer?: string;
+    comparisonState?: 'added'|'removed'|'unchanged';
+    epistemicBasis?: string|null; dataClass?: string|null; validFrom?: string|null; validTo?: string|null;
+    controllerObservedFrom?: string|null; controllerObservedTo?: string|null; exportedAt?: string|null;
+    ingestedAt?: string|null; derivationMethod?: string|null; derivationVersion?: string|null;
 }
 
 export interface GraphData {
@@ -61,6 +71,7 @@ export interface GraphCanvasProps {
     onNodeClick: (node: GraphNode) => void;
     selectedNodeId?: string | null;
     refreshKey?: number;
+    privacyFilters?: import('@/lib/privacy/types').PrivacyGraphFilters;
 }
 
 // =============================================================================
@@ -132,7 +143,7 @@ function mergeGraphSlices(current: GraphData, incoming: GraphData): GraphData {
 // Component
 // =============================================================================
 
-export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0 }: GraphCanvasProps) {
+export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0, privacyFilters = {} }: GraphCanvasProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const graphRef = useRef<any>(null);
     const lastClickRef = useRef<{ nodeId: string; clickedAt: number } | null>(null);
@@ -178,6 +189,9 @@ export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0 }: Gra
             if (filters.riskLevel !== 'all') {
                 params.set('riskLevel', filters.riskLevel);
             }
+            for (const [key, value] of Object.entries(privacyFilters)) {
+                if (value) params.set(key, value);
+            }
 
             const res = await fetch(`/api/graph?${params.toString()}`);
             if (res.ok) {
@@ -220,7 +234,7 @@ export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0 }: Gra
             setLoading(false);
             setLoadingMore(false);
         }
-    }, [filters.showONSIT, filters.showGDPR, filters.showInferences, filters.searchQuery, filters.riskLevel]);
+    }, [filters.showONSIT, filters.showGDPR, filters.showInferences, filters.searchQuery, filters.riskLevel, privacyFilters]);
 
     // Initial fetch and external refreshes
     useEffect(() => {
@@ -305,7 +319,7 @@ export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0 }: Gra
             const targetId = typeof l.target === 'string' ? l.target : l.target.id;
 
             // Also filter out inferred links if inferences are hidden
-            if (l.isInferred && !filters.showInferences) return false;
+            if (l.epistemicState !== 'currently_observed' && !filters.showInferences) return false;
 
             return visibleNodeIds.has(sourceId) && visibleNodeIds.has(targetId);
         });
@@ -411,17 +425,19 @@ export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0 }: Gra
             ctx.beginPath();
             ctx.moveTo(source.x, source.y);
 
-            // Dashed line for inferred relationships
-            if (typedLink.isInferred) {
-                ctx.setLineDash([5, 5]);
-                ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)'; // Red for inferred
+            if (typedLink.epistemicState === 'potentially_enabled') {
+                ctx.setLineDash([6, 4]);
+                ctx.strokeStyle = 'rgba(217, 119, 6, 0.65)';
+            } else if (typedLink.epistemicState === 'alleged_unverified') {
+                ctx.setLineDash([2, 4]);
+                ctx.strokeStyle = 'rgba(239, 68, 68, 0.6)';
             } else {
                 ctx.setLineDash([]);
                 ctx.strokeStyle = 'rgba(156, 163, 175, 0.4)';
             }
 
             ctx.lineTo(target.x, target.y);
-            ctx.lineWidth = typedLink.isInferred ? 1.5 : 1;
+            ctx.lineWidth = typedLink.epistemicState === 'currently_observed' ? 1 : 1.5;
             ctx.stroke();
             ctx.setLineDash([]);
         },
@@ -436,6 +452,9 @@ export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0 }: Gra
             params.set('centerNodeId', node.id);
             params.set('limit', '150');
             params.set('showInferences', String(filters.showInferences));
+            for (const [key, value] of Object.entries(privacyFilters)) {
+                if (value) params.set(key, value);
+            }
 
             const response = await fetch(`/api/graph?${params.toString()}`);
             if (!response.ok) {
@@ -451,7 +470,7 @@ export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0 }: Gra
         } finally {
             setLoadingMore(false);
         }
-    }, [filters.showInferences]);
+    }, [filters.showInferences, privacyFilters]);
 
     // Event handlers - using any for react-force-graph compatibility
     const handleNodeClick = useCallback((node: any) => {
@@ -466,12 +485,31 @@ export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0 }: Gra
             lastClickRef.current = { nodeId: typedNode.id, clickedAt: now };
         }
 
-        onNodeClick(typedNode);
+        const evidence = graphData.links.filter(link => {
+            const source = getLinkEndpointId(link.source), target = getLinkEndpointId(link.target);
+            return source === typedNode.id || target === typedNode.id;
+        });
+        onNodeClick({ ...typedNode, properties: { ...typedNode.properties,
+            assertion_ids: [...new Set(evidence.map(link => link.assertionId).filter(Boolean))],
+            evidence_locator_ids: [...new Set(evidence.flatMap(link => link.evidenceLocatorIds || []))],
+            epistemic_states: [...new Set(evidence.map(link => link.epistemicState))],
+            evidence_edges: evidence.map(link => ({
+                statement: `${getLinkEndpointId(link.source)} ${link.type} ${getLinkEndpointId(link.target)}`,
+                basis: link.epistemicBasis, status: link.assertionStatus, confidence: link.confidence,
+                epistemicState: link.epistemicState, profileLayer: link.profileLayer,
+                validFrom: link.validFrom, validTo: link.validTo,
+                controllerObservedFrom: link.controllerObservedFrom, controllerObservedTo: link.controllerObservedTo,
+                exportedAt: link.exportedAt, ingestedAt: link.ingestedAt,
+                derivationMethod: link.derivationMethod, derivationVersion: link.derivationVersion,
+                assertionId: link.assertionId, sourceArtifactIds: link.sourceArtifactIds,
+                evidenceLocatorIds: link.evidenceLocatorIds, comparisonState: link.comparisonState,
+            })),
+        } });
         if (graphRef.current) {
             graphRef.current.centerAt(typedNode.x, typedNode.y, 500);
             graphRef.current.zoom(2, 500);
         }
-    }, [expandNodeNeighbors, onNodeClick]);
+    }, [expandNodeNeighbors, graphData.links, onNodeClick]);
 
     const handleNodeHover = useCallback((node: any) => {
         const typedNode = node ? (node as GraphNode) : null;
@@ -699,9 +737,11 @@ export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0 }: Gra
                         linkSource="source"
                         linkTarget="target"
                         linkColor={(link: any) =>
-                            (link as GraphLink).isInferred ? 'rgba(239, 68, 68, 0.5)' : 'rgba(156, 163, 175, 0.4)'
+                            (link as GraphLink).epistemicState === 'alleged_unverified' ? 'rgba(239, 68, 68, 0.6)' :
+                            (link as GraphLink).epistemicState === 'potentially_enabled' ? 'rgba(217, 119, 6, 0.65)' :
+                            'rgba(156, 163, 175, 0.4)'
                         }
-                        linkLineDash={(link: any) => (link as GraphLink).isInferred ? [5, 5] : []}
+                        linkLineDash={(link: any) => (link as GraphLink).epistemicState === 'potentially_enabled' ? [6, 4] : (link as GraphLink).epistemicState === 'alleged_unverified' ? [2, 4] : []}
                         cooldownTicks={100}
                         d3AlphaDecay={0.02}
                         d3VelocityDecay={0.3}

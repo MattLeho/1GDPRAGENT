@@ -9,8 +9,11 @@ export function proxy(request: NextRequest) {
     const session = request.cookies.get('gdpr-session');
 
     // If accessing dashboard routes without session, redirect to login
-    if (request.nextUrl.pathname.startsWith('/dashboard')) {
+    if (request.nextUrl.pathname.startsWith('/dashboard') || request.nextUrl.pathname.startsWith('/api/connectors') || request.nextUrl.pathname.startsWith('/api/retention')) {
         if (!session) {
+            if (request.nextUrl.pathname.startsWith('/api/')) {
+                return NextResponse.json({ detail: 'Authentication required' }, { status: 401 });
+            }
             return NextResponse.redirect(new URL('/login', request.url));
         }
     }
@@ -26,5 +29,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-    matcher: ['/dashboard/:path*', '/login'],
+    matcher: ['/dashboard/:path*', '/login', '/api/connectors/:path*', '/api/retention/:path*'],
 };

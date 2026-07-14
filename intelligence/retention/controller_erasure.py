@@ -39,6 +39,8 @@ class ControllerErasureService:
                 raise ControllerErasureDenied("deletion plan item does not exist")
             if row["action"] != "controller_erasure_candidate" or row["item_group"] != "eligible":
                 raise ControllerErasureDenied("plan item is not an eligible controller-erasure candidate")
+            if row["stage"] != "eligible_for_delete":
+                raise ControllerErasureDenied("controller-erasure candidate requires the eligible_for_delete stage")
             if row["plan_status"] != "approved" or row["dry_run"]:
                 raise ControllerErasureDenied("candidate creation requires an approved non-dry-run plan")
             if row["review_status"] != "approved" or row["classification"] not in {"LOW_VALUE_BULK", "SPAM"}:
@@ -60,10 +62,15 @@ class ControllerErasureService:
         pool = await self.postgres._get_pool()
         async with pool.acquire() as connection, connection.transaction():
             row = await connection.fetchrow(
-                "SELECT * FROM controller_erasure_candidates WHERE id=$1 FOR UPDATE", candidate_id,
+                """SELECT cec.*,dpi.stage deletion_stage
+                   FROM controller_erasure_candidates cec
+                   JOIN deletion_plan_items dpi ON dpi.id=cec.deletion_plan_item_id
+                   WHERE cec.id=$1 FOR UPDATE OF cec,dpi""", candidate_id,
             )
             if not row:
                 raise ControllerErasureDenied("controller-erasure candidate does not exist")
+            if row["deletion_stage"] != "eligible_for_delete":
+                raise ControllerErasureDenied("controller-erasure draft requires the eligible_for_delete stage")
             if row["existing_request_id"]:
                 return _candidate(row)
             preference = await connection.fetchrow(
