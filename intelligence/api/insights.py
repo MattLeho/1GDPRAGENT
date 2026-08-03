@@ -17,6 +17,7 @@ from insights.models import (
     TemporalMode,
 )
 from insights.service import InsightService
+from api.security import require_profile_id
 
 
 router = APIRouter(prefix="/insights", tags=["Personal Insights"])
@@ -29,7 +30,7 @@ class InsightRequest(BaseModel):
 
 
 def insight_request(
-    subject_id: Annotated[str, Query(min_length=1)],
+    subject_id: str,
     mode: TemporalMode = TemporalMode.PERIOD,
     granularity: PeriodGranularity = PeriodGranularity.MONTH,
     from_at: Annotated[datetime | None, Query(alias="from")] = None,
@@ -55,32 +56,51 @@ def insight_request(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def authorised_insight_request(
+    profile_id: Annotated[UUID, Depends(require_profile_id)],
+    subject_id: Annotated[str | None, Query(min_length=1)] = None,
+    mode: TemporalMode = TemporalMode.PERIOD,
+    granularity: PeriodGranularity = PeriodGranularity.MONTH,
+    from_at: Annotated[datetime | None, Query(alias="from")] = None,
+    to_at: Annotated[datetime | None, Query(alias="to")] = None,
+    point: datetime | None = None,
+    compare_from: Annotated[datetime | None, Query(alias="compareFrom")] = None,
+    compare_to: Annotated[datetime | None, Query(alias="compareTo")] = None,
+) -> InsightRequest:
+    canonical_subject = str(profile_id)
+    if subject_id is not None and subject_id != canonical_subject:
+        raise HTTPException(status_code=404, detail="insight subject does not exist")
+    return insight_request(
+        canonical_subject, mode, granularity, from_at, to_at, point, compare_from, compare_to,
+    )
+
+
 def _kwargs(request: InsightRequest):
     return {"subject_id":request.subject_id,"period":request.period,"comparison":request.comparison}
 
 
 @router.get("/overview",response_model=PeriodOverview)
-async def overview(request: Annotated[InsightRequest, Depends(insight_request)]):
+async def overview(request: Annotated[InsightRequest, Depends(authorised_insight_request)]):
     return await InsightService().get_period_overview(**_kwargs(request))
 
 
 @router.get("/interests",response_model=tuple[ObservedInterestState,...])
-async def interests(request: Annotated[InsightRequest, Depends(insight_request)]):
+async def interests(request: Annotated[InsightRequest, Depends(authorised_insight_request)]):
     return await InsightService().get_interest_states(**_kwargs(request))
 
 
 @router.get("/search",response_model=SearchInsight)
-async def search(request: Annotated[InsightRequest, Depends(insight_request)]):
+async def search(request: Annotated[InsightRequest, Depends(authorised_insight_request)]):
     return await InsightService().get_search_insights(**_kwargs(request))
 
 
 @router.get("/ai-conversations",response_model=AIConversationInsight)
-async def ai_conversations(request: Annotated[InsightRequest, Depends(insight_request)]):
+async def ai_conversations(request: Annotated[InsightRequest, Depends(authorised_insight_request)]):
     return await InsightService().get_ai_conversation_insights(**_kwargs(request))
 
 
 @router.get("/places",response_model=PlaceInsight)
-async def places(request: Annotated[InsightRequest, Depends(insight_request)]):
+async def places(request: Annotated[InsightRequest, Depends(authorised_insight_request)]):
     return await InsightService().get_place_insights(**_kwargs(request))
 
 
@@ -92,7 +112,7 @@ class ChangesResponse(BaseModel):
 
 
 @router.get("/changes",response_model=ChangesResponse)
-async def changes(request: Annotated[InsightRequest, Depends(insight_request)]):
+async def changes(request: Annotated[InsightRequest, Depends(authorised_insight_request)]):
     service = InsightService()
     snapshot = await service.get_snapshot(**_kwargs(request))
     drift = await service.get_personal_drift(**_kwargs(request))
@@ -100,14 +120,14 @@ async def changes(request: Annotated[InsightRequest, Depends(insight_request)]):
 
 
 @router.get("/context",response_model=tuple[TemporalCorrelationCandidate,...])
-async def context(request: Annotated[InsightRequest, Depends(insight_request)]):
+async def context(request: Annotated[InsightRequest, Depends(authorised_insight_request)]):
     return await InsightService().get_contextual_correlations(**_kwargs(request))
 
 
 @router.get("/evidence/{insight_id}",response_model=InsightTrace)
-async def evidence(insight_id: UUID):
+async def evidence(insight_id: UUID, profile_id: UUID = Depends(require_profile_id)):
     try:
-        return await InsightService().trace_insight(insight_id)
+        return await InsightService().trace_insight(insight_id,profile_id=profile_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -124,10 +144,18 @@ class ContextEventImport(BaseModel):
 
 
 @router.post("/context-events", status_code=201,response_model=ExternalContextEvent)
-async def import_context_event(body: ContextEventImport):
+async def import_context_event(body: ContextEventImport, profile_id: UUID = Depends(require_profile_id)):
     if body.ended_at and body.ended_at < body.occurred_at:
         raise HTTPException(status_code=422, detail="ended_at precedes occurred_at")
     postgres = get_postgres_client()
+    if body.source_artifact_id is not None:
+        owned=await postgres.execute(
+            """SELECT 1 FROM source_artifacts sa JOIN export_snapshots es ON es.id=sa.export_snapshot_id
+               WHERE sa.id=$1 AND es.profile_id=$2""",body.source_artifact_id,profile_id,
+        )
+        if not owned: raise HTTPException(status_code=404,detail="source artifact does not exist")
+    elif body.event_type == "user_added":
+        raise HTTPException(status_code=422,detail="user-added context requires an owned source artifact")
     rows = await postgres.execute(
         """INSERT INTO external_context_events
         (title,event_type,occurred_at,ended_at,topics,jurisdiction,source_uri,source_artifact_id,ingested_at)
@@ -151,12 +179,16 @@ class MediaLocationConfirmation(BaseModel):
 
 
 @router.post("/media-location-confirmations",status_code=201,response_model=MediaLocationCandidate)
-async def confirm_media_location(body: MediaLocationConfirmation):
+async def confirm_media_location(
+    body: MediaLocationConfirmation, profile_id: UUID = Depends(require_profile_id),
+):
     if (body.lat is None)!=(body.lon is None):
         raise HTTPException(status_code=422,detail="lat and lon must be supplied together")
     if body.lat is None and not body.place_label:
         raise HTTPException(status_code=422,detail="coordinates or a place label are required")
     try:
-        return await InsightService().confirm_media_location(**body.model_dump())
+        return await InsightService().confirm_media_location(
+            **body.model_dump(),profile_id=profile_id,
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404,detail=str(exc)) from exc

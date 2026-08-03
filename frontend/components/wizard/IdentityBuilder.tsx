@@ -2,6 +2,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client'
 import { useForm, useFieldArray } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
@@ -120,9 +121,11 @@ export function IdentityBuilder() {
             setIdentity(profile)
             nextStep()
         } catch (e) {
-            console.error(e)
             toast.dismiss(loadingToast)
-            toast.error("Failed to update graph")
+            if (!shouldSuppressProtectedRequestError(e)) {
+                console.error(e)
+                toast.error("Failed to update graph")
+            }
         }
     }
 

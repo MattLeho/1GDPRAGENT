@@ -8,7 +8,8 @@
  * Falls back to .env if not configured in-app.
  */
 
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import { pool } from '@/lib/db';
 import { N8N_WEBHOOK_MAPPINGS } from '@/lib/workflows/registry';
 
@@ -42,7 +43,9 @@ function getEnvUrls(): Record<string, string | undefined> {
 // GET Handler
 // =============================================================================
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         // Check if table exists and has data
         const result = await pool.query(`
@@ -87,7 +90,9 @@ export async function GET() {
 // POST Handler
 // =============================================================================
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const body = await request.json();
 
@@ -130,4 +135,3 @@ export async function POST(request: Request) {
         );
     }
 }
-

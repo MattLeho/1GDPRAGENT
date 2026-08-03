@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import { getDriver } from '@/lib/graph';
 
 export interface GraphStats {
@@ -9,35 +10,44 @@ export interface GraphStats {
     lastUpdated: string;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     const driver = getDriver();
     const session = driver.session();
 
     try {
-        // Count nodes by type
+        // Nodes are shared canonical entities. Visibility is granted only by
+        // a non-retired relationship owned by the authenticated profile.
         const nodeCountResult = await session.run(`
-            MATCH (n:GraphNode)
-            WHERE coalesce(n.retired, false) = false
+            MATCH (n:GraphNode)-[owned]-(:GraphNode)
+            WHERE owned.profile_id = $profileId
+              AND coalesce(owned.profile_retired, false) = false
+            WITH DISTINCT n
             RETURN coalesce(head([label IN labels(n) WHERE label <> 'GraphNode']), 'GraphNode') as type,
                    count(n) as count
-        `);
+        `, { profileId: authority.profileId });
 
         // Count relationships
         const relCountResult = await session.run(`
             MATCH (:GraphNode)-[r]->(:GraphNode)
-            WHERE coalesce(r.epistemic_basis, '') <> 'model_hypothesis'
+            WHERE r.profile_id = $profileId
+              AND coalesce(r.profile_retired, false) = false
+              AND coalesce(r.epistemic_basis, '') <> 'model_hypothesis'
               AND (r.inferred IS NULL OR r.inferred = false)
             RETURN count(r) as total
-        `);
+        `, { profileId: authority.profileId });
 
         // Risk is an explicit source property, not a confidence-based inference.
         const riskResult = await session.run(`
             MATCH (:GraphNode)-[r]->(:GraphNode)
-            WHERE toLower(coalesce(r.risk_level, '')) IN ['high', 'critical']
+            WHERE r.profile_id = $profileId
+              AND coalesce(r.profile_retired, false) = false
+              AND toLower(coalesce(r.risk_level, '')) IN ['high', 'critical']
               AND coalesce(r.epistemic_basis, '') <> 'model_hypothesis'
               AND (r.inferred IS NULL OR r.inferred = false)
             RETURN count(r) as count
-        `);
+        `, { profileId: authority.profileId });
 
         const nodesByType: Record<string, number> = {};
         let totalNodes = 0;

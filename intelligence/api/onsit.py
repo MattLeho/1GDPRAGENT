@@ -7,7 +7,7 @@ FastAPI routes for ONSIT discovery functionality.
 from typing import Optional
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 
 from onsit import (
@@ -21,6 +21,8 @@ from onsit import (
 )
 from onsit.orchestrator import default_orchestrator
 from onsit.enrichers import default_registry
+from api.security import require_profile_id
+from uuid import UUID
 
 
 router = APIRouter(prefix="/onsit", tags=["ONSIT Discovery"])
@@ -79,7 +81,7 @@ class EntityResponse(BaseModel):
 # =============================================================================
 
 @router.post("/discover", response_model=DiscoverResponse)
-async def start_discovery(request: DiscoverRequest):
+async def start_discovery(request: DiscoverRequest, profile_id: UUID = Depends(require_profile_id)):
     """
     Start an ONSIT discovery scan.
     
@@ -95,6 +97,7 @@ async def start_discovery(request: DiscoverRequest):
         scan_id = await default_orchestrator.start_discovery(
             seeds=request.seeds,
             enrichers=request.enrichers,
+            profile_id=profile_id,
         )
         
         return DiscoverResponse(
@@ -109,11 +112,11 @@ async def start_discovery(request: DiscoverRequest):
 
 
 @router.get("/discover/{scan_id}", response_model=ScanStatus)
-async def get_scan_status(scan_id: str):
+async def get_scan_status(scan_id: str, profile_id: UUID = Depends(require_profile_id)):
     """
     Get the status of a discovery scan.
     """
-    status = await default_orchestrator.get_status(scan_id)
+    status = await default_orchestrator.get_status(scan_id,profile_id)
     
     if not status:
         raise HTTPException(status_code=404, detail="Scan not found")
@@ -126,6 +129,7 @@ async def get_scan_findings(
     scan_id: str,
     entity_type: Optional[str] = None,
     limit: int = 100,
+    profile_id: UUID = Depends(require_profile_id),
 ):
     """
     Get findings from a discovery scan.
@@ -147,6 +151,7 @@ async def get_scan_findings(
         scan_id=scan_id,
         entity_type=filter_type,
         limit=min(limit, 500),
+        profile_id=profile_id,
     )
     
     return {
@@ -165,11 +170,11 @@ async def get_scan_findings(
 
 
 @router.delete("/discover/{scan_id}")
-async def cancel_scan(scan_id: str):
+async def cancel_scan(scan_id: str, profile_id: UUID = Depends(require_profile_id)):
     """
     Cancel a running discovery scan.
     """
-    cancelled = await default_orchestrator.cancel_scan(scan_id)
+    cancelled = await default_orchestrator.cancel_scan(scan_id,profile_id)
     
     if cancelled:
         return {"status": "cancelled", "scan_id": scan_id}

@@ -6,6 +6,11 @@ import { draftRequest, sendEmail } from "@/lib/n8n-client";
 import { completeWorkflowLog, failWorkflowLog, startWorkflowLog } from "@/lib/workflow-logs";
 import { getWorkflowPreference } from '@/lib/workflows/registry';
 import { monitorInboxBuiltIn, sendBuiltInEmail } from '@/lib/connectors/email';
+import { requireServerSessionAuthority } from '@/lib/api-session';
+import { executeTask } from '@/lib/execution/router';
+import { RequestService } from '@/lib/requests/service';
+
+const requests = new RequestService();
 
 interface AnalysisData {
     dpo_email?: string;
@@ -101,6 +106,7 @@ export async function submitRequest(payload: RequestPayload) {
     console.log("Submitting Request Payload:", payload);
 
     try {
+        const {profileId,userId}=await requireServerSessionAuthority();
         // payload.company IS the target URL in our current flow
         const companyUrl = payload.company;
         let domain: string | null = null;
@@ -118,48 +124,17 @@ export async function submitRequest(payload: RequestPayload) {
             console.warn("Could not parse company URL:", companyUrl);
         }
 
-        // Calculate deadline (30 days from now per GDPR Article 12)
-        const deadline = new Date();
-        deadline.setDate(deadline.getDate() + 30);
-
-        // Insert the main request
-        const requestQuery = `
-            INSERT INTO requests (
-                company_name, 
-                company_url, 
-                domain, 
-                status, 
-                request_type, 
-                deadline_date, 
-                notes,
-                data_period_start,
-                data_period_end,
-                next_action_date
-            ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-            RETURNING id
-        `;
-
-        const requestValues = [
-            companyName,
-            companyUrl,
-            domain,
-            'processing',
-            // Handle multi-select: "access", "deletion", or "access+deletion"
-            payload.scope,
-            deadline,
-            payload.notes,
-            payload.dateRange?.from || null,
-            payload.dateRange?.to || null
-        ];
-
-        const res = await db.query<{ id: string }>(requestQuery, requestValues);
-
-        if (!res.rows || res.rows.length === 0) {
-            throw new Error("Failed to create request in database");
-        }
-
-        const newRequestId = res.rows[0].id;
+        // Creation is operational. No controller-receipt date or legal deadline
+        // exists until explicit evidence is recorded.
+        const createdRequest = await requests.create(profileId, {
+            company_name: companyName, company_url: companyUrl, domain,
+            status: 'draft', request_type: payload.scope, notes: payload.notes,
+            next_action_at: new Date(),
+        });
+        const newRequestId = createdRequest.id;
+        await requests.appendEvent(profileId,{request_id:newRequestId,event_type:'created',
+            description:'Request created for drafting',occurred_at:new Date(),
+            actor:`user:${userId}`,reason:'User submitted request details'});
         const userName = extractIdentityField(payload.identity, ['contactName', 'name', 'fullName', 'full_name', 'displayName']) || 'GDPR requester';
         const userEmail = extractIdentityField(payload.identity, ['contactEmail', 'email', 'emailAddress', 'email_address']) || 'not-provided@example.local';
         console.log("Inserted Request ID:", newRequestId);
@@ -168,11 +143,7 @@ export async function submitRequest(payload: RequestPayload) {
         if (requestDetails.length > 0) {
             try {
                 await Promise.all(requestDetails.map(detail =>
-                    db.query(
-                        `INSERT INTO request_details (request_id, field_key, field_value_encrypted)
-                         VALUES ($1, $2, $3)`,
-                        [newRequestId, detail.fieldKey, detail.encryptedValue]
-                    )
+                    requests.addRequestDetail(profileId,newRequestId,detail.fieldKey,detail.encryptedValue)
                 ));
                 console.log(`Saved ${requestDetails.length} request detail fields for request:`, newRequestId);
             } catch (detailsError) {
@@ -204,10 +175,7 @@ export async function submitRequest(payload: RequestPayload) {
 
         // Create initial agent message
         try {
-            await db.query(
-                `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
-                [newRequestId, `Request initiated for ${companyName}. Analyzing privacy policy and preparing GDPR request.`]
-            );
+            await requests.appendMessage(profileId,newRequestId,'agent',`Request initiated for ${companyName}. Analyzing privacy policy and preparing GDPR request.`);
         } catch (msgError) {
             console.error("Failed to create initial message:", msgError);
         }
@@ -239,40 +207,30 @@ export async function submitRequest(payload: RequestPayload) {
                 });
 
                 try {
-                    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
-                    const response = await fetch(`${baseUrl}/api/gdpr-agent/draft`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            requestType: payload.scope,
-                            company: companyName,
-                            userQuery: payload.notes || `Prepare a ${payload.scope} GDPR request.`,
-                            userName,
-                            userEmail,
-                            policyUrl: companyUrl,
-                        }),
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(`Built-in draft route returned ${response.status}`);
-                    }
-
-                    const builtInResult = await response.json() as {
-                        success?: boolean;
-                        error?: string;
-                        draft?: {
-                            subject?: string;
-                            body?: string;
-                        };
+                    const typeLabels: Record<string, { label: string; article: number }> = {
+                        access: { label: 'Subject Access Request', article: 15 },
+                        deletion: { label: 'Erasure Request', article: 17 },
+                        erasure: { label: 'Erasure Request', article: 17 },
+                        rectification: { label: 'Rectification Request', article: 16 },
+                        portability: { label: 'Data Portability Request', article: 20 },
+                        objection: { label: 'Objection to Processing', article: 21 },
                     };
-
-                    if (!builtInResult.success || !builtInResult.draft?.subject || !builtInResult.draft.body) {
-                        throw new Error(builtInResult.error || 'Built-in draft failed');
-                    }
+                    const kind = typeLabels[payload.scope] || { label: 'GDPR Request', article: 15 };
+                    const input = `Controller: ${companyName}\nPolicy URL: ${companyUrl || 'not supplied'}\nData subject: ${userName} <${userEmail}>\nRequest type: ${kind.label} (UK GDPR Article ${kind.article})\nUser instructions: ${payload.notes || `Prepare a ${payload.scope} GDPR request.`}`;
+                    const routed = await executeTask({
+                        taskKey: 'request.drafting',
+                        workflowKey: 'request.drafting',
+                        input: { text: input },
+                        configuration: { systemPrompt: 'Draft a formal UK GDPR request letter using only the supplied facts. Cite the relevant right and Article 12(3) response period, offer proportionate identity verification, and mention the right to complain to the ICO. Do not invent account identifiers. Return only the complete letter body.' },
+                        profileId,
+                    });
+                    if (!routed.ok) throw new Error(routed.error.message);
+                    const draftBody = (routed.output as { text?: unknown }).text;
+                    if (typeof draftBody !== 'string' || !draftBody.trim()) throw new Error('Built-in draft engine returned no text');
 
                     builtInDraft = {
-                        subject: builtInResult.draft.subject,
-                        body: builtInResult.draft.body,
+                        subject: `${kind.label} – ${userName}`,
+                        body: draftBody,
                     };
                     draftCreated = true;
                     draftBackend = 'built_in';
@@ -281,14 +239,11 @@ export async function submitRequest(payload: RequestPayload) {
                         emailTransport: sendingPreference.execution_mode,
                     });
 
-                    await db.query(
-                        `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
-                        [newRequestId, `Built-in workflow drafted a GDPR request for ${dpoEmail}.\n\nSubject: ${builtInDraft.subject}\n\n${builtInDraft.body}`]
-                    );
-                    await db.query(
-                        `UPDATE requests SET progress = 15, status = 'action_required' WHERE id = $1`,
-                        [newRequestId]
-                    );
+                    await requests.appendMessage(profileId,newRequestId,'agent',`Built-in workflow drafted a GDPR request for ${dpoEmail}.\n\nSubject: ${builtInDraft.subject}\n\n${builtInDraft.body}`);
+                    await requests.updateProgress(profileId,newRequestId,15);
+                    await requests.transition(profileId,{request_id:newRequestId,next_state:'ready_for_review',
+                        actor:'workflow:request.drafting',reason:'Draft produced for human review',
+                        evidence_reference:`workflow_log:${builtInLogId}`,transitioned_at:new Date()});
                 } catch (builtInError) {
                     console.error("Built-in workflow failed:", builtInError);
                     await failWorkflowLog(builtInLogId, builtInError, {
@@ -297,10 +252,7 @@ export async function submitRequest(payload: RequestPayload) {
                     });
 
                     if (!allowN8NDraft) {
-                        await db.query(
-                            `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
-                            [newRequestId, `Built-in workflow failed. Please check model provider settings and retry. Error: ${builtInError instanceof Error ? builtInError.message : 'Unknown error'}`]
-                        );
+                        await requests.appendMessage(profileId,newRequestId,'agent',`Built-in workflow failed. Please check model provider settings and retry. Error: ${builtInError instanceof Error ? builtInError.message : 'Unknown error'}`);
                     }
                 }
             }
@@ -345,6 +297,10 @@ export async function submitRequest(payload: RequestPayload) {
                         await completeWorkflowLog(n8nDraftLogId, {
                             subject: emailDraft.subject,
                         });
+                        await requests.updateProgress(profileId,newRequestId,15);
+                        await requests.transition(profileId,{request_id:newRequestId,next_state:'ready_for_review',
+                            actor:'workflow:request.drafting',reason:'N8N draft produced for human review',
+                            evidence_reference:`workflow_log:${n8nDraftLogId}`,transitioned_at:new Date()});
                     } catch (n8nDraftError) {
                         console.error("N8N draft workflow failed:", n8nDraftError);
                         await failWorkflowLog(n8nDraftLogId, n8nDraftError, {
@@ -353,10 +309,7 @@ export async function submitRequest(payload: RequestPayload) {
                         });
 
                         if (!builtInDraft) {
-                            await db.query(
-                                `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
-                                [newRequestId, `N8N request drafter failed. Error: ${n8nDraftError instanceof Error ? n8nDraftError.message : 'Unknown error'}`]
-                            );
+                            await requests.appendMessage(profileId,newRequestId,'agent',`N8N request drafter failed. Error: ${n8nDraftError instanceof Error ? n8nDraftError.message : 'Unknown error'}`);
                         }
                     }
             }
@@ -366,10 +319,17 @@ export async function submitRequest(payload: RequestPayload) {
                 if (!requireReview && (sendingPreference.execution_mode === 'built_in' || sendingPreference.execution_mode === 'hybrid')) {
                     const builtInEmailLogId = await startWorkflowLog({requestId:newRequestId,workflowName:'Built-in SMTP Email Sender',workflowType:'built_in',details:{workflowKey:'email.sending',to:dpoEmail}});
                     try {
-                        const sent=await sendBuiltInEmail({requestId:newRequestId,to:dpoEmail,subject:emailDraft.subject,body:emailDraft.body});
+                        const sent=await sendBuiltInEmail(profileId,{requestId:newRequestId,to:dpoEmail,subject:emailDraft.subject,body:emailDraft.body});
                         emailSent=true; await completeWorkflowLog(builtInEmailLogId,{messageId:sent.messageId,transport:sent.transport});
-                        await db.query(`INSERT INTO messages (request_id,sender,content) VALUES($1,'agent',$2)`,[newRequestId,`Built-in SMTP transport sent the GDPR request to ${dpoEmail}.`]);
-                        await db.query(`UPDATE requests SET progress=20,status='processing' WHERE id=$1`,[newRequestId]);
+                        await requests.appendMessage(profileId,newRequestId,'agent',`Built-in SMTP transport sent the GDPR request to ${dpoEmail}.`);
+                        const sentAt=new Date();
+                        await requests.transition(profileId,{request_id:newRequestId,next_state:'sent',actor:'workflow:email.sending',
+                            reason:'SMTP transport recorded successful send',evidence_reference:`workflow_log:${builtInEmailLogId}`,
+                            transitioned_at:sentAt,sent_at:sentAt});
+                        await requests.transition(profileId,{request_id:newRequestId,next_state:'awaiting_response',actor:'workflow:email.sending',
+                            reason:'Sent request is awaiting controller response',evidence_reference:`workflow_log:${builtInEmailLogId}`,
+                            transitioned_at:sentAt,next_action_at:sentAt});
+                        await requests.updateProgress(profileId,newRequestId,20);
                         // Prime the built-in monitor; a failed initial check does not undo a successful send.
                         monitorInboxBuiltIn().catch(error=>console.warn('Initial inbox monitor check failed:',error));
                     } catch (error) { await failWorkflowLog(builtInEmailLogId,error,{workflowKey:'email.sending',stage:'smtp_send'}); }
@@ -404,14 +364,15 @@ export async function submitRequest(payload: RequestPayload) {
                             messageId: sendResult.data?.messageId || null,
                         });
 
-                        await db.query(
-                            `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
-                            [newRequestId, `N8N email transport sent the GDPR request email to ${dpoEmail}`]
-                        );
-                        await db.query(
-                            `UPDATE requests SET progress = 20, status = 'processing' WHERE id = $1`,
-                            [newRequestId]
-                        );
+                        await requests.appendMessage(profileId,newRequestId,'agent',`N8N email transport sent the GDPR request email to ${dpoEmail}`);
+                        const sentAt=new Date();
+                        await requests.transition(profileId,{request_id:newRequestId,next_state:'sent',actor:'workflow:email.sending',
+                            reason:'N8N transport recorded successful send',evidence_reference:`workflow_log:${n8nEmailLogId}`,
+                            transitioned_at:sentAt,sent_at:sentAt});
+                        await requests.transition(profileId,{request_id:newRequestId,next_state:'awaiting_response',actor:'workflow:email.sending',
+                            reason:'Sent request is awaiting controller response',evidence_reference:`workflow_log:${n8nEmailLogId}`,
+                            transitioned_at:sentAt,next_action_at:sentAt});
+                        await requests.updateProgress(profileId,newRequestId,20);
                     } catch (n8nEmailError) {
                         console.error("N8N email workflow failed:", n8nEmailError);
                         await failWorkflowLog(n8nEmailLogId, n8nEmailError, {
@@ -419,13 +380,10 @@ export async function submitRequest(payload: RequestPayload) {
                             stage: 'email_send',
                         });
 
-                        await db.query(
-                            `INSERT INTO messages (request_id, sender, content) VALUES ($1, 'agent', $2)`,
-                            [newRequestId, `N8N email transport failed. Draft is available for review. Error: ${n8nEmailError instanceof Error ? n8nEmailError.message : 'Unknown error'}`]
-                        );
+                        await requests.appendMessage(profileId,newRequestId,'agent',`N8N email transport failed. Draft is available for review. Error: ${n8nEmailError instanceof Error ? n8nEmailError.message : 'Unknown error'}`);
                     }
                 }
-                if (requireReview) await db.query(`INSERT INTO messages(request_id,sender,content) VALUES($1,'agent',$2)`,[newRequestId,'Draft is awaiting human review before email delivery.']);
+                if (requireReview) await requests.appendMessage(profileId,newRequestId,'agent','Draft is awaiting human review before email delivery.');
             }
         }
 

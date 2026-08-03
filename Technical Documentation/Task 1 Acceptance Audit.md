@@ -1,5 +1,7 @@
 # Task 1 Acceptance Audit
 
+> **PROVISIONAL — superseded by R0 evidence pending revalidation (2026-07-17).** Historical evidence is retained below but does not prove current integrated or authenticated runtime behaviour.
+
 Audit date: 2026-07-10
 
 Scope: `NEW APP CONTEXT AND PLAN/Task 1- rebuild the evidence and graph foundation.md` only. The finished code was checked against every section of that document after migrations, tests, type checking, linting, production build, and live Compose verification. Task 2 and the 300 GB Takeout pipeline were not started.

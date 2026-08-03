@@ -50,7 +50,7 @@ class GraphProjectionService:
             updated+=1
         return updated
 
-    async def project_assertion(self, assertion_id: UUID | str) -> dict:
+    async def project_assertion(self, assertion_id: UUID | str, profile_id: UUID | str) -> dict:
         await self.ensure_schema()
         rows=await self.postgres.execute(
             """SELECT a.*,ar.profile_id,COALESCE((SELECT array_agg(ae.evidence_locator_id ORDER BY ae.evidence_locator_id)
@@ -59,18 +59,15 @@ class GraphProjectionService:
                  FROM assertion_evidence ae JOIN evidence_locators el ON el.id=ae.evidence_locator_id
                  WHERE ae.assertion_id=a.id),'{}'::uuid[]) source_artifact_ids
                FROM assertions a JOIN analysis_runs ar ON ar.id=a.analysis_run_id
-               WHERE a.id=$1::uuid AND a.status='accepted'
+               WHERE a.id=$1::uuid AND ar.profile_id=$2::uuid AND a.status='accepted'
                AND NOT (a.epistemic_basis='model_hypothesis' AND NOT EXISTS(
                  SELECT 1 FROM assertion_evidence ae JOIN evidence_locators el ON el.id=ae.evidence_locator_id
                  WHERE ae.assertion_id=a.id AND el.verified
-                   AND el.verification_method IN ('exact_quote_match','structured_value_match','human_verified')))""",str(assertion_id))
+                   AND el.verification_method IN ('exact_quote_match','structured_value_match','human_verified')))""",str(assertion_id),str(profile_id))
         if not rows: raise ValueError("only accepted, provenance-valid assertions can be projected")
         assertion=dict(rows[0])
         if assertion["profile_id"] is None:
-            profiles=await self.postgres.execute("SELECT id FROM profiles ORDER BY created_at,id LIMIT 2")
-            if len(profiles)!=1:
-                raise ValueError("projection requires an unambiguous profile scope")
-            assertion["profile_id"]=profiles[0]["id"]
+            raise ValueError("projection requires an explicit canonical profile scope")
         subject_label=assert_personal_label(assertion["subject_type"])
         if subject_label not in self.HIGH_VALUE_LABELS:
             raise ValueError("assertion subject is not part of the high-value privacy topology")
@@ -115,44 +112,70 @@ class GraphProjectionService:
         return result[0] if result else {"subject_id":subject_id,"object_id":object_id,"assertion_id":str(assertion["id"])}
 
     async def project_pending(self, limit: int=1000) -> int:
-        rows=await self.postgres.execute("""SELECT a.id FROM assertions a JOIN analysis_runs ar ON ar.id=a.analysis_run_id
+        rows=await self.postgres.execute("""SELECT a.id,ar.profile_id FROM assertions a JOIN analysis_runs ar ON ar.id=a.analysis_run_id
           WHERE a.status='accepted' AND ar.profile_id IS NOT NULL ORDER BY a.system_asserted_at LIMIT $1""",limit)
-        for row in rows: await self.project_assertion(row["id"])
+        for row in rows: await self.project_assertion(row["id"],row["profile_id"])
         return len(rows)
 
-    async def retire_node(self, assertion_id: UUID | str, node_id: UUID | str) -> None:
-        await self._require_human_assertion(assertion_id)
-        result=await self.neo4j.execute("MATCH (n:GraphNode {node_id:$node_id}) SET n.retired=true,n.retired_by_assertion=$assertion_id,n.retired_at=datetime() RETURN n.node_id AS node_id",{"node_id":str(node_id),"assertion_id":str(assertion_id)})
+    async def retire_node(self, assertion_id: UUID | str, node_id: UUID | str, profile_id: UUID | str) -> None:
+        await self._require_human_assertion(assertion_id,profile_id)
+        result=await self.neo4j.execute(
+            """MATCH (n:GraphNode {node_id:$node_id})-[owned]-(:GraphNode)
+               WHERE owned.profile_id=$profile_id
+               SET owned.profile_retired=true,
+                   owned.profile_retired_by_assertion=$assertion_id,
+                   owned.profile_retired_at=datetime()
+               RETURN n.node_id AS node_id""",
+            {"node_id":str(node_id),"assertion_id":str(assertion_id),"profile_id":str(profile_id)})
         if not result: raise ValueError("stable node_id was not found")
 
-    async def merge_nodes(self, assertion_id: UUID | str, source_node_id: UUID | str, target_node_id: UUID | str) -> None:
-        await self._require_human_assertion(assertion_id)
+    async def merge_nodes(self, assertion_id: UUID | str, source_node_id: UUID | str, target_node_id: UUID | str, profile_id: UUID | str) -> None:
+        await self._require_human_assertion(assertion_id,profile_id)
         if str(source_node_id)==str(target_node_id): raise ValueError("source and target must differ")
-        nodes=await self.neo4j.query("MATCH (source:GraphNode {node_id:$source_id}),(target:GraphNode {node_id:$target_id}) RETURN [x IN labels(source) WHERE x<>'GraphNode'] AS source_labels,[x IN labels(target) WHERE x<>'GraphNode'] AS target_labels",{"source_id":str(source_node_id),"target_id":str(target_node_id)})
+        nodes=await self.neo4j.query(
+            """MATCH (source:GraphNode {node_id:$source_id})-[source_owned]-(:GraphNode),
+                     (target:GraphNode {node_id:$target_id})-[target_owned]-(:GraphNode)
+               WHERE source_owned.profile_id=$profile_id AND target_owned.profile_id=$profile_id
+               RETURN [x IN labels(source) WHERE x<>'GraphNode'] AS source_labels,
+                      [x IN labels(target) WHERE x<>'GraphNode'] AS target_labels
+               LIMIT 1""",
+            {"source_id":str(source_node_id),"target_id":str(target_node_id),"profile_id":str(profile_id)})
         if not nodes: raise ValueError("one or both stable node IDs were not found")
         if set(nodes[0]["source_labels"]) != set(nodes[0]["target_labels"]):
             raise ValueError("nodes from different ontology types cannot be merged")
         result=await self.neo4j.execute(
-            """MATCH (source:GraphNode {node_id:$source_id}),(target:GraphNode {node_id:$target_id})
-               CALL apoc.refactor.mergeNodes([target,source],{properties:'discard',mergeRels:true}) YIELD node
-               SET node.merged_by_assertion=$assertion_id,node.updated_at=datetime()
-               RETURN node.node_id AS node_id""",
-            {"source_id":str(source_node_id),"target_id":str(target_node_id),"assertion_id":str(assertion_id)})
+            """MATCH (source:GraphNode {node_id:$source_id})-[owned]-(:GraphNode)
+               WHERE owned.profile_id=$profile_id
+               SET owned.profile_retired=true,
+                   owned.profile_merged_into_node_id=$target_id,
+                   owned.profile_merged_by_assertion=$assertion_id,
+                   owned.profile_merged_at=datetime()
+               WITH DISTINCT source
+               MATCH (target:GraphNode {node_id:$target_id})
+               MERGE (source)-[marker:PROFILE_MERGED_INTO {profile_id:$profile_id}]->(target)
+               SET marker.assertion_id=$assertion_id,marker.profile_layer_event=true,
+                   marker.profile_retired=true,marker.created_at=datetime()
+               RETURN target.node_id AS node_id""",
+            {"source_id":str(source_node_id),"target_id":str(target_node_id),"assertion_id":str(assertion_id),"profile_id":str(profile_id)})
         if not result: raise ValueError("one or both stable node IDs were not found")
 
-    async def mutate_onsit(self, assertion_id: UUID | str, action: str, node_ids: list[UUID], payload: dict) -> int:
-        await self._require_human_assertion(assertion_id)
-        params={"ids":[str(item) for item in node_ids],"assertion_id":str(assertion_id),"risk":payload.get("riskLevel"),"tag":payload.get("tag")}
-        if action=="delete": update="SET n.retired=true,n.retired_by_assertion=$assertion_id,n.retired_at=datetime()"
-        elif action=="updateRisk" and params["risk"] in {"low","medium","high","critical"}: update="SET n.riskLevel=$risk,n.updatedAt=datetime(),n.updated_by_assertion=$assertion_id"
-        elif action=="addTag" and params["tag"]: update="SET n.tags=CASE WHEN n.tags IS NULL THEN [$tag] WHEN NOT $tag IN n.tags THEN n.tags+$tag ELSE n.tags END,n.updated_by_assertion=$assertion_id"
-        elif action=="removeTag" and params["tag"]: update="SET n.tags=[t IN coalesce(n.tags,[]) WHERE t<>$tag],n.updated_by_assertion=$assertion_id"
+    async def mutate_onsit(self, assertion_id: UUID | str, action: str, node_ids: list[UUID], payload: dict, profile_id: UUID | str) -> int:
+        await self._require_human_assertion(assertion_id,profile_id)
+        params={"ids":[str(item) for item in node_ids],"assertion_id":str(assertion_id),"profile_id":str(profile_id),"risk":payload.get("riskLevel"),"tag":payload.get("tag")}
+        if action=="delete": update="SET owned.profile_retired=true,owned.profile_retired_by_assertion=$assertion_id,owned.profile_retired_at=datetime()"
+        elif action=="updateRisk" and params["risk"] in {"low","medium","high","critical"}: update="SET owned.risk_level=$risk,owned.updated_at=datetime(),owned.updated_by_assertion=$assertion_id"
+        elif action=="addTag" and params["tag"]: update="SET owned.tags=CASE WHEN owned.tags IS NULL THEN [$tag] WHEN NOT $tag IN owned.tags THEN owned.tags+$tag ELSE owned.tags END,owned.updated_by_assertion=$assertion_id"
+        elif action=="removeTag" and params["tag"]: update="SET owned.tags=[t IN coalesce(owned.tags,[]) WHERE t<>$tag],owned.updated_by_assertion=$assertion_id"
         else: raise ValueError("invalid ONSIT bulk action or payload")
-        rows=await self.neo4j.execute(f"MATCH (n:GraphNode) WHERE n.node_id IN $ids AND n.source='onsit' {update} RETURN count(n) AS affected",params)
+        rows=await self.neo4j.execute(f"MATCH (n:GraphNode)-[owned]-(:GraphNode) WHERE n.node_id IN $ids AND n.source='onsit' AND owned.profile_id=$profile_id {update} RETURN count(DISTINCT n) AS affected",params)
         return int(rows[0]["affected"]) if rows else 0
 
-    async def _require_human_assertion(self, assertion_id: UUID | str) -> None:
-        rows=await self.postgres.execute("SELECT 1 FROM assertions WHERE id=$1::uuid AND status='accepted' AND epistemic_basis='human_confirmed'",str(assertion_id))
+    async def _require_human_assertion(self, assertion_id: UUID | str, profile_id: UUID | str) -> None:
+        rows=await self.postgres.execute(
+            """SELECT 1 FROM assertions a JOIN analysis_runs ar ON ar.id=a.analysis_run_id
+               WHERE a.id=$1::uuid AND ar.profile_id=$2::uuid
+                 AND a.status='accepted' AND a.epistemic_basis='human_confirmed'""",
+            str(assertion_id),str(profile_id))
         if not rows: raise ValueError("graph mutation requires an accepted human-confirmed assertion")
 
     @staticmethod

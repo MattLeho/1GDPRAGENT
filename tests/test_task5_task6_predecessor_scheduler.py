@@ -46,7 +46,10 @@ async def test_due_claim_is_atomic_deterministic_and_excludes_active_runs():
 @pytest.mark.asyncio
 async def test_enqueue_due_reuses_canonical_sync_payload_and_releases_failed_claim():
     succeeds, fails = uuid4(), uuid4()
-    postgres = SimpleNamespace(execute=AsyncMock(return_value=[]))
+    profile_id = uuid4()
+    postgres = SimpleNamespace(execute=AsyncMock(side_effect=[
+        [{"profile_id": profile_id}], [{"profile_id": profile_id}],
+    ]))
     scheduler = ConnectorScheduler(postgres)
     scheduler.claim_due = AsyncMock(return_value=[succeeds, fails])
     scheduler.release_claim = AsyncMock()
@@ -55,7 +58,8 @@ async def test_enqueue_due_reuses_canonical_sync_payload_and_releases_failed_cla
     result = await scheduler.enqueue_due(enqueue, now=NOW)
 
     assert enqueue.call_args_list[0].args[0] == {
-        "connector_instance_id": str(succeeds), "kind": "sync", "cursor_key": "default",
+        "connector_instance_id": str(succeeds), "profile_id": str(profile_id),
+        "kind": "sync", "cursor_key": "default",
     }
     assert result["queued"] == [{
         "connector_instance_id": str(succeeds), "task_id": "task-1",

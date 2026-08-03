@@ -1,7 +1,10 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { intelligenceAuthorityHeaders, requireApiSession } from '@/lib/api-session';
 import { pool } from '@/lib/db';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const { vendorIds } = await request.json();
 
@@ -14,8 +17,8 @@ export async function POST(request: Request) {
 
         // Get vendor details
         const result = await pool.query(
-            'SELECT id, domain, company_name FROM vendor_lists WHERE id = ANY($1)',
-            [vendorIds]
+            'SELECT id, domain, company_name FROM vendor_lists WHERE id = ANY($1) AND profile_id = $2',
+            [vendorIds, authority.profileId]
         );
 
         const vendors = result.rows;
@@ -26,13 +29,12 @@ export async function POST(request: Request) {
 
         for (const vendor of vendors) {
             try {
-                const res = await fetch(`${intelligenceUrl}/vendor/find-dpo`, {
+                const target = `${intelligenceUrl}/vendor/find-dpo`;
+                const body=JSON.stringify({ domain: vendor.domain, company_name: vendor.company_name });
+                const res = await fetch(target, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        domain: vendor.domain,
-                        company_name: vendor.company_name,
-                    }),
+                    headers: intelligenceAuthorityHeaders(authority.profileId, target, 'POST','application/json',undefined,undefined,body),
+                    body,
                 });
 
                 if (res.ok) {
@@ -40,8 +42,8 @@ export async function POST(request: Request) {
                     if (data.dpo_email) {
                         // Update database
                         await pool.query(
-                            'UPDATE vendor_lists SET dpo_email = $1 WHERE id = $2',
-                            [data.dpo_email, vendor.id]
+                            'UPDATE vendor_lists SET dpo_email = $1 WHERE id = $2 AND profile_id = $3',
+                            [data.dpo_email, vendor.id, authority.profileId]
                         );
                         updated.push({ id: vendor.id, dpo_email: data.dpo_email });
                     }

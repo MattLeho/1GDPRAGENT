@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import { pool } from '@/lib/db';
+import { RequestService } from '@/lib/requests/service';
+
+const requests = new RequestService();
 
 interface Activity {
     id: string;
@@ -36,8 +40,13 @@ export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const { id } = await params;
+        if (!await requests.get(authority.profileId, id)) {
+            return NextResponse.json({ success: false, error: 'Request not found' }, { status: 404 });
+        }
         // Get workflow logs
         const logsResult = await pool.query(
             `SELECT id, workflow_name, workflow_type, status, details, 

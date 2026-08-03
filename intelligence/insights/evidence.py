@@ -60,12 +60,13 @@ class InsightEvidenceTracer:
     def __init__(self, connection) -> None:
         self.connection = connection
 
-    async def trace(self, insight_id: UUID) -> InsightTrace:
+    async def trace(self, insight_id: UUID, *, profile_id: UUID) -> InsightTrace:
         materialisation = await self.connection.fetchrow(
             """SELECT im.* FROM insight_materialisations im
             JOIN insight_catalogue ic ON ic.materialisation_id=im.id
-            WHERE ic.insight_id=$1 ORDER BY im.created_at DESC,im.id DESC LIMIT 1""",
-            insight_id,
+            WHERE ic.insight_id=$1 AND im.subject_id=$2
+            ORDER BY im.created_at DESC,im.id DESC LIMIT 1""",
+            insight_id,str(profile_id),
         )
         if materialisation is None:
             raise LookupError("insight catalogue entry not found")
@@ -95,7 +96,7 @@ class InsightEvidenceTracer:
             paths = [row["storage_uri"] for row in partition_rows if Path(row["storage_uri"]).exists()]
             if paths:
                 for event in load_activity_event_partitions(paths):
-                    if event.event_id in event_ids:
+                    if event.event_id in event_ids and event.subject_id == str(profile_id):
                         activity_events.append(event.model_dump(mode="json"))
                         artifact_ids.add(event.artifact_id)
                         locator_ids.add(event.source_locator_id)
@@ -103,29 +104,35 @@ class InsightEvidenceTracer:
         assertions = []
         if assertion_ids:
             rows = await self.connection.fetch(
-                """SELECT * FROM assertions WHERE id=ANY($1::uuid[]) AND status IN ('accepted','superseded')
+                """SELECT * FROM assertions WHERE id=ANY($1::uuid[])
+                AND subject_ref=$2 AND status IN ('accepted','superseded')
                 ORDER BY system_asserted_at,id""", list(assertion_ids),
+                str(profile_id),
             )
             assertions = [dict(row) for row in rows]
             linked = await self.connection.fetch(
-                "SELECT evidence_locator_id FROM assertion_evidence WHERE assertion_id=ANY($1::uuid[])",
-                list(assertion_ids),
+                """SELECT ae.evidence_locator_id FROM assertion_evidence ae
+                   JOIN assertions a ON a.id=ae.assertion_id
+                   WHERE ae.assertion_id=ANY($1::uuid[]) AND a.subject_ref=$2""",
+                list(assertion_ids),str(profile_id),
             )
             locator_ids.update(row["evidence_locator_id"] for row in linked)
 
         temporal_states = []
         if temporal_state_ids:
             rows = await self.connection.fetch(
-                "SELECT * FROM temporal_states WHERE id=ANY($1::uuid[]) ORDER BY system_asserted_at,id",
-                list(temporal_state_ids),
+                """SELECT * FROM temporal_states WHERE id=ANY($1::uuid[])
+                   AND subject_id=$2 ORDER BY system_asserted_at,id""",
+                list(temporal_state_ids),str(profile_id),
             )
             temporal_states = [dict(row) for row in rows]
 
         temporal_aggregates = []
         if temporal_aggregate_ids:
             rows = await self.connection.fetch(
-                "SELECT * FROM temporal_aggregates WHERE id=ANY($1::uuid[]) ORDER BY window_start,id",
-                list(temporal_aggregate_ids),
+                """SELECT * FROM temporal_aggregates WHERE id=ANY($1::uuid[])
+                   AND subject_id=$2 ORDER BY window_start,id""",
+                list(temporal_aggregate_ids),str(profile_id),
             )
             temporal_aggregates = [dict(row) for row in rows]
 
@@ -142,9 +149,10 @@ class InsightEvidenceTracer:
             rows = await self.connection.fetch(
                 """SELECT el.*,cb.storage_uri,sa.original_path FROM evidence_locators el
                 JOIN source_artifacts sa ON sa.id=el.artifact_id
+                JOIN export_snapshots es ON es.id=sa.export_snapshot_id
                 JOIN content_blobs cb ON cb.id=sa.content_blob_id
-                WHERE el.id=ANY($1::uuid[]) ORDER BY el.id""",
-                list(locator_ids),
+                WHERE el.id=ANY($1::uuid[]) AND es.profile_id=$2 ORDER BY el.id""",
+                list(locator_ids),profile_id,
             )
             for row in rows:
                 item = dict(row)
@@ -162,13 +170,16 @@ class InsightEvidenceTracer:
         artifacts = []
         if artifact_ids:
             rows = await self.connection.fetch(
-                """SELECT id,export_snapshot_id,parent_artifact_id,content_blob_id,original_path,
-                archive_member_path,file_name,declared_mime,detected_mime,extension,file_type_status,
-                canonical_hash,source_organisation,source_product,source_service,created_at
+                """SELECT sa.id,sa.export_snapshot_id,sa.parent_artifact_id,sa.content_blob_id,
+                sa.original_path,sa.archive_member_path,sa.file_name,sa.declared_mime,
+                sa.detected_mime,sa.extension,sa.file_type_status,sa.canonical_hash,
+                sa.source_organisation,sa.source_product,sa.source_service,sa.created_at
                 ,cpt.content_purged_at,cpt.full_source_unavailable,cpt.retained_evidence_basis
-                FROM source_artifacts sa LEFT JOIN content_purge_tombstones cpt ON cpt.source_artifact_id=sa.id
-                WHERE sa.id=ANY($1::uuid[]) ORDER BY sa.created_at,sa.id""",
-                list(artifact_ids),
+                FROM source_artifacts sa
+                JOIN export_snapshots es ON es.id=sa.export_snapshot_id
+                LEFT JOIN content_purge_tombstones cpt ON cpt.source_artifact_id=sa.id
+                WHERE sa.id=ANY($1::uuid[]) AND es.profile_id=$2 ORDER BY sa.created_at,sa.id""",
+                list(artifact_ids),profile_id,
             )
             artifacts = [dict(row) for row in rows]
 

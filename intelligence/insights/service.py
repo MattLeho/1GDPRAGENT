@@ -907,15 +907,23 @@ class InsightService:
         self, *, artifact_id: UUID, evidence_locator_id: UUID, reviewed_by: str,
         occurred_at: datetime | None = None, lat: float | None = None,
         lon: float | None = None, place_label: str | None = None,
-        analysis_run_id: UUID | None = None,
+        analysis_run_id: UUID | None = None, profile_id: UUID,
     ) -> MediaLocationCandidate:
         pool=await self.postgres._get_pool()
         async with pool.acquire() as connection:
             exists=await connection.fetchval(
-                "SELECT EXISTS(SELECT 1 FROM evidence_locators WHERE id=$1 AND artifact_id=$2)",
-                evidence_locator_id,artifact_id,
+                """SELECT EXISTS(SELECT 1 FROM evidence_locators el
+                   JOIN source_artifacts sa ON sa.id=el.artifact_id
+                   JOIN export_snapshots es ON es.id=sa.export_snapshot_id
+                   WHERE el.id=$1 AND el.artifact_id=$2 AND es.profile_id=$3)""",
+                evidence_locator_id,artifact_id,profile_id,
             )
             if not exists: raise LookupError("artifact evidence locator not found")
+            if analysis_run_id is not None and not await connection.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM analysis_runs WHERE id=$1 AND profile_id=$2)",
+                analysis_run_id,profile_id,
+            ):
+                raise LookupError("artifact evidence locator not found")
             item=create_location_candidate(
                 artifact_id,classify_media_origin({},original_path=""),LocationObservation(
                     basis=LocationBasis.USER_CONFIRMED,evidence_locator_id=evidence_locator_id,
@@ -939,7 +947,7 @@ class InsightService:
             )
             return item
 
-    async def trace_insight(self,insight_id:UUID):
+    async def trace_insight(self,insight_id:UUID,*,profile_id:UUID):
         pool=await self.postgres._get_pool()
         async with pool.acquire() as connection:
-            return await InsightEvidenceTracer(connection).trace(insight_id)
+            return await InsightEvidenceTracer(connection).trace(insight_id,profile_id=profile_id)

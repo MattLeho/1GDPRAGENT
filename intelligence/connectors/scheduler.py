@@ -133,8 +133,14 @@ class ConnectorScheduler:
         queued: list[dict[str, str]] = []
         errors: list[dict[str, str]] = []
         for instance_id in due:
+            owners=await self.postgres.execute("SELECT profile_id FROM connector_instances WHERE id=$1",instance_id)
+            if not owners:
+                await self.release_claim(instance_id,now=now)
+                errors.append({"connector_instance_id":str(instance_id),"error_type":"OwnershipUnavailable"})
+                continue
             payload = {
                 "connector_instance_id": str(instance_id),
+                "profile_id": str(owners[0]["profile_id"]),
                 "kind": "sync",
                 "cursor_key": "default",
             }

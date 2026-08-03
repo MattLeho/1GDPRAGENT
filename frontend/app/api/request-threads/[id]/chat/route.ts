@@ -1,27 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { pool } from '@/lib/db';
+import { requireApiSession } from '@/lib/api-session';
 import { getRLMAgent, ChatMessage } from '@/lib/rlm-agent';
+import { RequestService } from '@/lib/requests/service';
+
+const requests = new RequestService();
 
 // Get chat history for a request
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const { id } = await params;
 
-        // Fetch chat messages from database (actual columns: sender, message)
-        const result = await pool.query(
-            `SELECT id, sender as role, message as content, timestamp 
-             FROM request_chat_messages 
-             WHERE request_id = $1 
-             ORDER BY timestamp ASC`,
-            [id]
-        );
+        const history = await requests.chat(authority.profileId, id);
+        if (!await requests.get(authority.profileId, id)) {
+            return NextResponse.json({ success: false, error: 'Request not found' }, { status: 404 });
+        }
 
         return NextResponse.json({
             success: true,
-            messages: result.rows,
+            messages: history.map(row => ({ id: row.id, role: row.sender, content: row.message, timestamp: row.timestamp })),
         });
     } catch (error) {
         console.error('Error fetching chat messages:', error);
@@ -37,6 +38,8 @@ export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const { id } = await params;
         const body = await request.json();
@@ -49,13 +52,7 @@ export async function POST(
             );
         }
 
-        // Verify request exists
-        const requestResult = await pool.query(
-            `SELECT id FROM access_requests WHERE id = $1`,
-            [id]
-        );
-
-        if (requestResult.rows.length === 0) {
+        if (!await requests.get(authority.profileId, id)) {
             return NextResponse.json(
                 { success: false, error: 'Request not found' },
                 { status: 404 }
@@ -63,40 +60,24 @@ export async function POST(
         }
 
         // Get chat history for conversation context
-        const historyResult = await pool.query(
-            `SELECT sender as role, message as content 
-             FROM request_chat_messages 
-             WHERE request_id = $1 
-             ORDER BY timestamp ASC 
-             LIMIT 20`,
-            [id]
-        );
+        const historyResult = (await requests.chat(authority.profileId, id)).slice(-20);
 
         // Map DB rows to ChatMessage format for the agent
-        const conversationHistory: ChatMessage[] = historyResult.rows.map((row: any) => ({
-            role: row.role === 'user' ? 'user' as const : 'assistant' as const,
-            content: row.content,
+        const conversationHistory: ChatMessage[] = historyResult.map((row) => ({
+            role: row.sender === 'user' ? 'user' as const : 'assistant' as const,
+            content: row.message,
         }));
 
         // Call RLM Agent — it handles tool execution, knowledge graph search,
         // document retrieval, GDPR references, and recursive decomposition internally
         const agent = getRLMAgent();
-        const rlmResponse = await agent.chat(id, message, conversationHistory);
+        const rlmResponse = await agent.chat(authority.profileId, id, message, conversationHistory);
 
         console.log(`[Chat] RLM Agent responded: ${rlmResponse.iterations} iteration(s), tools: [${rlmResponse.toolsUsed.join(', ')}]`);
 
         // Store user message and AI response in database
-        await pool.query(
-            `INSERT INTO request_chat_messages (request_id, sender, message)
-             VALUES ($1, 'user', $2)`,
-            [id, message]
-        );
-
-        await pool.query(
-            `INSERT INTO request_chat_messages (request_id, sender, message)
-             VALUES ($1, 'assistant', $2)`,
-            [id, rlmResponse.content]
-        );
+        await requests.appendChatMessage(authority.profileId, id, 'user', message);
+        await requests.appendChatMessage(authority.profileId, id, 'assistant', rlmResponse.content);
 
         return NextResponse.json({
             success: true,
@@ -112,4 +93,3 @@ export async function POST(
         );
     }
 }
-

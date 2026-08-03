@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Loader2, MessageCircle } from 'lucide-react';
@@ -30,13 +31,13 @@ export function ShadowProfileChat() {
             const body = await response.json();
             if (!response.ok) throw new Error(body.detail || 'Privacy query failed');
             setResult(body as PrivacyQueryResult);
-        } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+        } catch (reason) { if (!shouldSuppressProtectedRequestError(reason)) setError(reason instanceof Error ? reason.message : String(reason)); }
         finally { setLoading(null); }
     }
     async function ask(){const value=question.trim();if(!value)return;setLoading('question');setError(null);
         try{const response=await fetch('/api/graph/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({question:value})});
             const body=await response.json();if(!response.ok)throw new Error(body.detail||'Privacy question failed');setResult(body);setQuestion('');
-        }catch(reason){setError(reason instanceof Error?reason.message:String(reason))}finally{setLoading(null)}}
+        }catch(reason){if(!shouldSuppressProtectedRequestError(reason))setError(reason instanceof Error?reason.message:String(reason))}finally{setLoading(null)}}
 
     const items = result && Array.isArray(result.data.items) ? result.data.items : [];
     return <Card className="border-t rounded-none bg-white dark:bg-zinc-900 p-4 space-y-3">

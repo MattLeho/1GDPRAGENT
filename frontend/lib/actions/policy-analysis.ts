@@ -2,6 +2,10 @@
 
 import { safeQuery, db } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
+import { requireServerSessionAuthority } from '@/lib/api-session';
+import { RequestService } from '@/lib/requests/service';
+
+const requests=new RequestService();
 
 export interface PolicyAnalysis {
     id: string;
@@ -32,6 +36,7 @@ export async function savePolicyAnalysis(
         analysis_raw?: Record<string, unknown>;
     }
 ): Promise<{ success: boolean; id?: string }> {
+    await requireServerSessionAuthority();
     try {
         // Extract domain from URL
         let domain = analysis.url;
@@ -83,6 +88,7 @@ export async function savePolicyAnalysis(
  * Gets policy analysis for a URL/domain (most recent within 3 months)
  */
 export async function getPolicyAnalysisByUrl(url: string): Promise<PolicyAnalysis | null> {
+    await requireServerSessionAuthority();
     // Extract domain from URL
     let domain = url;
     try {
@@ -137,17 +143,11 @@ export async function getPolicyAnalysisByUrl(url: string): Promise<PolicyAnalysi
  * Looks up the request's domain and finds the associated policy analysis
  */
 export async function getRequestAnalysis(requestId: string): Promise<PolicyAnalysis | null> {
+    const {profileId}=await requireServerSessionAuthority();
     // First, get the request to find its domain
-    const requestResult = await safeQuery<{
-        domain: string | null;
-        company_name: string;
-    }>(`SELECT domain, company_name FROM requests WHERE id = $1`, [requestId]);
-
-    if (requestResult.error || requestResult.rows.length === 0) {
-        return null;
-    }
-
-    const { domain, company_name } = requestResult.rows[0];
+    const owned=await requests.get(profileId,requestId);
+    if(!owned)return null;
+    const {domain,company_name}=owned;
 
     // Try to find policy analysis by domain first, then by company name
     const searchDomain = domain || company_name.toLowerCase().replace(/\s+/g, '');
@@ -197,6 +197,7 @@ export async function getRequestAnalysis(requestId: string): Promise<PolicyAnaly
  * Gets all policy analyses (latest per company)
  */
 export async function getAllPolicyAnalyses(): Promise<PolicyAnalysis[]> {
+    await requireServerSessionAuthority();
     const result = await safeQuery<{
         id: string;
         url: string;

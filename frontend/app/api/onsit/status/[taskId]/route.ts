@@ -7,7 +7,8 @@
  * @see https://github.com/reconurge/flowsint - Orchestrator patterns
  */
 
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { intelligenceAuthorityHeaders, requireApiSession } from '@/lib/api-session';
 
 const INTELLIGENCE_URL = process.env.INTELLIGENCE_SERVICE_URL || 'http://localhost:8000';
 
@@ -125,9 +126,11 @@ const stepDescriptions: Record<string, string> = {
  * Returns the current status of a discovery scan.
  */
 export async function GET(
-    request: Request,
+    request: NextRequest,
     { params }: { params: Promise<{ taskId: string }> }
 ) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const { taskId } = await params;
 
@@ -138,10 +141,12 @@ export async function GET(
             );
         }
 
+        const target = `${INTELLIGENCE_URL}/onsit/discover/${taskId}`;
         const response = await fetch(
-            `${INTELLIGENCE_URL}/onsit/discover/${taskId}`,
+            target,
             {
                 method: 'GET',
+                headers: intelligenceAuthorityHeaders(authority.profileId, target, 'GET'),
                 // Prevent caching for real-time updates
                 cache: 'no-store',
             }

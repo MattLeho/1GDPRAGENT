@@ -1,5 +1,7 @@
 'use client';
 
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
+
 /**
  * InspectorPanel Component - Enhanced Version
  * 
@@ -303,7 +305,9 @@ export function InspectorPanel({
                     setStats(data);
                 }
             } catch (e) {
-                console.error('Failed to load graph stats', e);
+                if (!shouldSuppressProtectedRequestError(e)) {
+                    console.error('Failed to load graph stats', e);
+                }
             } finally {
                 setLoading(false);
             }

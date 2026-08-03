@@ -1,5 +1,7 @@
 # Task 2 Implementation Ledger
 
+> **PROVISIONAL — superseded by R0 evidence pending revalidation (2026-07-17).** Historical evidence is retained below but does not prove current integrated or authenticated runtime behaviour.
+
 Updated: 2026-07-10
 
 ## Persistence

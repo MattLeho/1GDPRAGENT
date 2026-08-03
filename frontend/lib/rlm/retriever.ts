@@ -27,6 +27,7 @@ export interface RetrievalResult {
 }
 
 export interface HybridRetrievalOptions {
+    profileId: string;
     requestId: string;
     query: string;
     entityType?: string;
@@ -45,6 +46,7 @@ export interface HybridRetrievalOptions {
  * matching the query. Supports filtering by entity type and relationship type.
  */
 export async function searchGraph(
+    profileId: string,
     requestId: string,
     query: string,
     entityType?: string,
@@ -67,7 +69,8 @@ export async function searchGraph(
         // Search across all nodes with property matching
         const nodeSearchCypher = `
             MATCH (n${labelFilter})
-            WHERE any(key IN keys(n) WHERE 
+            WHERE EXISTS { MATCH (n)-[owned]-() WHERE owned.profile_id = $profileId }
+            AND any(key IN keys(n) WHERE 
                 key <> 'embedding' AND 
                 toString(n[key]) IS NOT NULL AND
                 toLower(toString(n[key])) CONTAINS $keyword
@@ -81,6 +84,7 @@ export async function searchGraph(
         for (const keyword of keywords.slice(0, 3)) { // limit to first 3 keywords
             try {
                 const records = await runCypher(nodeSearchCypher, {
+                    profileId,
                     keyword,
                     limit: maxResults,
                 });
@@ -118,6 +122,7 @@ export async function searchGraph(
             const relCypher = relFilter
                 ? `
                     MATCH (a)-[r:${relFilter}]->(b)
+                    WHERE r.profile_id = $profileId
                     RETURN labels(a) AS aLabels, properties(a) AS aProps, 
                            type(r) AS relType, properties(r) AS rProps,
                            labels(b) AS bLabels, properties(b) AS bProps
@@ -125,7 +130,7 @@ export async function searchGraph(
                 `
                 : `
                     MATCH (a)-[r]->(b)
-                    WHERE any(key IN keys(a) WHERE 
+                    WHERE r.profile_id = $profileId AND any(key IN keys(a) WHERE 
                         key <> 'embedding' AND 
                         toString(a[key]) IS NOT NULL AND
                         toLower(toString(a[key])) CONTAINS $keyword
@@ -137,7 +142,7 @@ export async function searchGraph(
                 `;
 
             try {
-                const params: Record<string, unknown> = { limit: Math.min(maxResults, 10) };
+                const params: Record<string, unknown> = { limit: Math.min(maxResults, 10), profileId };
                 if (!relFilter) params.keyword = keywords[0] || query.toLowerCase();
 
                 const relRecords = await runCypher(relCypher, params);
@@ -179,6 +184,7 @@ export async function searchGraph(
  * ai_summary, transcript, and entities columns.
  */
 export async function searchDocuments(
+    profileId: string,
     requestId: string,
     query: string,
     fileType?: string,
@@ -192,31 +198,31 @@ export async function searchDocuments(
 
         // Build WHERE clause with ILIKE for each keyword across content columns
         const likeConditions = keywords.map((_, i) =>
-            `(COALESCE(extracted_text, '') ILIKE $${i + 2} OR ` +
-            `COALESCE(ai_summary, '') ILIKE $${i + 2} OR ` +
-            `COALESCE(transcript, '') ILIKE $${i + 2} OR ` +
-            `COALESCE(entities::text, '') ILIKE $${i + 2})`
+            `(COALESCE(extracted_text, '') ILIKE $${i + 3} OR ` +
+            `COALESCE(ai_summary, '') ILIKE $${i + 3} OR ` +
+            `COALESCE(transcript, '') ILIKE $${i + 3} OR ` +
+            `COALESCE(extracted_entities::text, entities_extracted::text, '') ILIKE $${i + 3})`
         ).join(' AND ');
 
         const typeCondition = fileType
-            ? ` AND LOWER(category) = LOWER($${keywords.length + 2})`
+            ? ` AND LOWER(category) = LOWER($${keywords.length + 3})`
             : '';
 
         const sql = `
             SELECT id, file_name, file_size_mb, category, status,
                    processing_stage, extracted_text, ai_summary, transcript, 
-                   entities, graph_ingested, error_message
+                   COALESCE(extracted_entities,entities_extracted) AS entities, graph_ingested, error_message
             FROM received_data
-            WHERE request_id = $1
+            WHERE request_id = $1 AND profile_id=$2
             AND (${likeConditions})${typeCondition}
             ORDER BY 
                 CASE WHEN ai_summary IS NOT NULL THEN 0 ELSE 1 END,
                 CASE WHEN extracted_text IS NOT NULL THEN 0 ELSE 1 END,
-                created_at DESC
-            LIMIT $${keywords.length + (fileType ? 3 : 2)}
+                date_received DESC
+            LIMIT $${keywords.length + (fileType ? 4 : 3)}
         `;
 
-        const params: (string | number)[] = [requestId];
+        const params: (string | number)[] = [requestId,profileId];
         keywords.forEach(k => params.push(`%${k}%`));
         if (fileType) params.push(fileType);
         params.push(maxResults);
@@ -284,6 +290,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<{
     stats: { graphHits: number; docHits: number; totalChars: number };
 }> {
     const {
+        profileId,
         requestId,
         query,
         entityType,
@@ -295,8 +302,8 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<{
 
     // Run both search strategies in parallel (RAG-Anything: concurrent pipelines)
     const [graphResults, docResults] = await Promise.all([
-        searchGraph(requestId, query, entityType, relationshipType, maxResults),
-        searchDocuments(requestId, query, fileType, maxResults),
+        searchGraph(profileId,requestId, query, entityType, relationshipType, maxResults),
+        searchDocuments(profileId,requestId, query, fileType, maxResults),
     ]);
 
     // Merge and sort by score (highest first)

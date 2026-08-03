@@ -1,10 +1,10 @@
 import type {ConnectorInstance,SourceConnectorDefinition} from './types';
+import {protectedApi} from '@/lib/api-client';
 
 export interface ConnectorOverview{definitions:SourceConnectorDefinition[];instances:ConnectorInstance[]}
 export interface BrowserPairing{pairing_id:string;connector_instance_id:string;token:string;created_at:string}
 async function request<T>(path:string,init?:RequestInit):Promise<T>{
-  const response=await fetch(`/api/connectors${path}`,{...init,headers:{'content-type':'application/json',...(init?.headers||{})},cache:'no-store'});
-  const payload=await response.json();if(!response.ok)throw new Error(payload.detail||`Connector request failed (${response.status})`);return payload as T;
+  return protectedApi<T>(`/api/connectors${path}`,{...init,headers:{'content-type':'application/json',...(init?.headers||{})}});
 }
 export const fetchConnectors=()=>request<ConnectorOverview>('');
 export const createConnector=(body:Record<string,unknown>)=>request<ConnectorInstance>('',{method:'POST',body:JSON.stringify(body)});

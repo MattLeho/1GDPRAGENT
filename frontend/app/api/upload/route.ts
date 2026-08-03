@@ -1,9 +1,15 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { writeFile, mkdir, unlink } from 'fs/promises';
+import { requireApiSession } from '@/lib/api-session';
+import { writeFile, mkdir, unlink, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
+import type { PoolClient } from 'pg';
 import { pool } from '@/lib/db';
 import AdmZip from 'adm-zip';
+import { RequestService } from '@/lib/requests/service';
+
+const requests = new RequestService();
 
 // Upload directory (local storage)
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
@@ -15,11 +21,21 @@ const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
  * Creates records in received_data table for tracking.
  */
 export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
+    let uploadClient: PoolClient | null = null;
+    let batchDir: string | null = null;
     try {
         const formData = await request.formData();
         const files = formData.getAll('files') as File[];
         const requestId = formData.get('requestId') as string | null;
         const sourceZip = formData.get('sourceZip') as string | null;
+
+        if (requestId) {
+            if (!await requests.get(authority.profileId, requestId)) {
+                return NextResponse.json({ success: false, error: 'Request not found' }, { status: 404 });
+            }
+        }
 
         if (!files || files.length === 0) {
             return NextResponse.json(
@@ -34,9 +50,12 @@ export async function POST(request: NextRequest) {
         }
 
         // Create subdirectory for this upload batch
-        const batchId = `batch_${Date.now()}`;
-        const batchDir = path.join(UPLOAD_DIR, batchId);
+        const batchId = `batch_${randomUUID()}`;
+        batchDir = path.join(UPLOAD_DIR, batchId);
         await mkdir(batchDir, { recursive: true });
+        const client = await pool.connect();
+        uploadClient = client;
+        await client.query('BEGIN');
 
         const uploadedFiles: Array<{
             id: string;
@@ -55,10 +74,12 @@ export async function POST(request: NextRequest) {
             // Check if this is a ZIP file — extract its contents server-side
             const ext = file.name.split('.').pop()?.toLowerCase();
             if (ext === 'zip') {
+                let zipOpened = false;
                 try {
                     const zip = new AdmZip(buffer);
                     const entries = zip.getEntries();
-                    const zipSubDir = path.join(batchDir, file.name.replace('.zip', ''));
+                    zipOpened = true;
+                    const zipSubDir = path.join(batchDir, randomUUID());
                     await mkdir(zipSubDir, { recursive: true });
 
                     for (const entry of entries) {
@@ -68,7 +89,7 @@ export async function POST(request: NextRequest) {
                         const entryName = path.basename(entry.entryName);
                         if (!entryName) continue;
 
-                        const sanitizedEntry = entryName.replace(/[^a-zA-Z0-9._-]/g, '_');
+                        const sanitizedEntry = `${randomUUID()}_${entryName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
                         const entryPath = path.join(zipSubDir, sanitizedEntry);
                         const entryData = entry.getData();
 
@@ -78,12 +99,12 @@ export async function POST(request: NextRequest) {
                         const entrySizeMb = entryData.length / (1024 * 1024);
                         const entryMime = getMimeType(entryName);
 
-                        const result = await pool.query(
+                        const result = await client.query(
                             `INSERT INTO received_data 
-                             (request_id, file_name, original_name, file_path, file_size_mb, file_type, category, status, processing_stage)
-                             VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 'upload')
+                             (request_id, file_name, original_name, file_path, file_size_mb, file_type, category, status, processing_stage, profile_id)
+                             VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 'upload', $8)
                              RETURNING id`,
-                            [requestId, sanitizedEntry, `${file.name}/${entryName}`, entryPath, entrySizeMb, entryMime, entryCategory]
+                            [requestId, sanitizedEntry, `${file.name}/${entryName}`, entryPath, entrySizeMb, entryMime, entryCategory, authority.profileId]
                         );
 
                         uploadedFiles.push({
@@ -97,19 +118,20 @@ export async function POST(request: NextRequest) {
                         });
                     }
                 } catch (zipErr) {
+                    if (zipOpened) throw zipErr;
                     console.error('Failed to extract ZIP:', zipErr);
                     // Fall through — store the ZIP as-is below
-                    const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+                    const sanitizedName = `${randomUUID()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
                     const filePath = path.join(batchDir, sanitizedName);
                     await writeFile(filePath, buffer);
                     const category = categorizeFile(file.name);
                     const fileSizeMb = file.size / (1024 * 1024);
-                    const result = await pool.query(
+                    const result = await client.query(
                         `INSERT INTO received_data 
-                         (request_id, file_name, original_name, file_path, file_size_mb, file_type, category, status, processing_stage)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 'upload')
+                         (request_id, file_name, original_name, file_path, file_size_mb, file_type, category, status, processing_stage, profile_id)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 'upload', $8)
                          RETURNING id`,
-                        [requestId, sanitizedName, file.name, filePath, fileSizeMb, file.type || 'application/zip', category]
+                        [requestId, sanitizedName, file.name, filePath, fileSizeMb, file.type || 'application/zip', category, authority.profileId]
                     );
                     uploadedFiles.push({
                         id: result.rows[0].id,
@@ -125,7 +147,7 @@ export async function POST(request: NextRequest) {
             }
 
             // Normal (non-ZIP) file handling
-            const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const sanitizedName = `${randomUUID()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
             const filePath = path.join(batchDir, sanitizedName);
 
             // Write file to disk
@@ -136,10 +158,10 @@ export async function POST(request: NextRequest) {
             const fileSizeMb = file.size / (1024 * 1024);
 
             // Insert into database
-            const result = await pool.query(
+            const result = await client.query(
                 `INSERT INTO received_data 
-                 (request_id, file_name, original_name, file_path, file_size_mb, file_type, category, status, processing_stage)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 'upload')
+                 (request_id, file_name, original_name, file_path, file_size_mb, file_type, category, status, processing_stage, profile_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 'upload', $8)
                  RETURNING id`,
                 [
                     requestId,
@@ -149,6 +171,7 @@ export async function POST(request: NextRequest) {
                     fileSizeMb,
                     file.type || getMimeType(file.name),
                     category,
+                    authority.profileId,
                 ]
             );
 
@@ -163,6 +186,7 @@ export async function POST(request: NextRequest) {
             });
         }
 
+        await client.query('COMMIT');
         return NextResponse.json({
             success: true,
             batchId,
@@ -171,11 +195,17 @@ export async function POST(request: NextRequest) {
             totalSizeMb: uploadedFiles.reduce((sum, f) => sum + f.fileSize / (1024 * 1024), 0).toFixed(2),
         });
     } catch (error) {
+        if (uploadClient) await uploadClient.query('ROLLBACK').catch(() => undefined);
+        if (batchDir && batchDir.startsWith(`${UPLOAD_DIR}${path.sep}`)) {
+            await rm(batchDir, { recursive: true, force: true }).catch(() => undefined);
+        }
         console.error('Upload error:', error);
         return NextResponse.json(
             { success: false, error: 'Failed to upload files' },
             { status: 500 }
         );
+    } finally {
+        uploadClient?.release();
     }
 }
 
@@ -183,20 +213,22 @@ export async function POST(request: NextRequest) {
  * GET /api/upload - Get file status by ID or batch
  */
 export async function GET(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     const searchParams = request.nextUrl.searchParams;
     const fileId = searchParams.get('fileId');
     const requestId = searchParams.get('requestId');
 
     try {
-        let query = 'SELECT * FROM received_data';
-        let params: string[] = [];
+        let query = 'SELECT * FROM received_data WHERE profile_id = $1';
+        let params: string[] = [authority.profileId];
 
         if (fileId) {
-            query += ' WHERE id = $1';
-            params = [fileId];
+            query += ' AND id = $2';
+            params.push(fileId);
         } else if (requestId) {
-            query += ' WHERE request_id = $1 ORDER BY date_received DESC';
-            params = [requestId];
+            query += ' AND request_id = $2 ORDER BY date_received DESC';
+            params.push(requestId);
         } else {
             query += ' ORDER BY date_received DESC LIMIT 50';
         }
@@ -240,6 +272,8 @@ export async function GET(request: NextRequest) {
  * PATCH /api/upload - Update file processing status
  */
 export async function PATCH(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const body = await request.json();
         const { fileId, status, processingStage, processingProgress, extractedText, markdownContent, transcript, aiSummary, entitiesExtracted, graphIngested, errorMessage } = body;
@@ -304,10 +338,10 @@ export async function PATCH(request: NextRequest) {
             updates.push(`processing_completed_at = NOW()`);
         }
 
-        values.push(fileId); // Last param for WHERE clause
+        values.push(fileId, authority.profileId); // Last params for authority-scoped WHERE clause
 
         const result = await pool.query(
-            `UPDATE received_data SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+            `UPDATE received_data SET ${updates.join(', ')} WHERE id = $${paramIndex} AND profile_id = $${paramIndex + 1} RETURNING *`,
             values
         );
 
@@ -335,6 +369,8 @@ export async function PATCH(request: NextRequest) {
  * DELETE /api/upload - Delete an individual file
  */
 export async function DELETE(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     const searchParams = request.nextUrl.searchParams;
     const fileId = searchParams.get('fileId');
 
@@ -348,8 +384,8 @@ export async function DELETE(request: NextRequest) {
     try {
         // Get file path before deleting from DB
         const fileResult = await pool.query(
-            'SELECT file_path FROM received_data WHERE id = $1',
-            [fileId]
+            'SELECT file_path FROM received_data WHERE id = $1 AND profile_id = $2',
+            [fileId, authority.profileId]
         );
 
         if (fileResult.rows.length === 0) {
@@ -362,17 +398,17 @@ export async function DELETE(request: NextRequest) {
         const filePath = fileResult.rows[0].file_path;
 
         // Delete from database
-        await pool.query('DELETE FROM received_data WHERE id = $1', [fileId]);
-
         // Try to delete the physical file
         if (filePath) {
             try {
                 await unlink(filePath);
-            } catch (fsError) {
+            } catch (fsError: any) {
                 // File may not exist on disk — that's OK
-                console.warn('Could not delete file from disk:', fsError);
+                if (fsError?.code !== 'ENOENT') throw fsError;
             }
         }
+
+        await pool.query('DELETE FROM received_data WHERE id = $1 AND profile_id = $2', [fileId, authority.profileId]);
 
         return NextResponse.json({ success: true });
     } catch (error) {

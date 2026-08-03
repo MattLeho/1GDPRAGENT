@@ -1,5 +1,10 @@
 
 import { create } from 'zustand';
+import {
+    protectedFetch as fetch,
+    registerProtectedStateReset,
+    shouldSuppressProtectedRequestError,
+} from '@/lib/api-client';
 
 // --- Types ---
 
@@ -108,6 +113,7 @@ export const useRequestStore = create<RequestState>((set) => ({
                 set({ graphData: data });
             }
         } catch (e) {
+            if (shouldSuppressProtectedRequestError(e)) return;
             console.error("Failed to load graph data", e);
         }
     },
@@ -124,3 +130,10 @@ export const useRequestStore = create<RequestState>((set) => ({
         graphData: [],
     }),
 }));
+
+/** Clears wizard, identity, notes, analysis, and graph data on logout/401. */
+export function resetRequestState(): void {
+    useRequestStore.getState().reset();
+}
+
+registerProtectedStateReset(resetRequestState);

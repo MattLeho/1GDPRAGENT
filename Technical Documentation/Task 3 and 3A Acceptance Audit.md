@@ -1,5 +1,7 @@
 # Task 3 and Task 3A Acceptance Audit
 
+> **PROVISIONAL — superseded by R0 evidence pending revalidation (2026-07-17).** Historical evidence is retained below but does not prove current integrated or authenticated runtime behaviour.
+
 Date: 2026-07-11  
 Scope: Task 3 and mandatory Task 3A only. Task 4 was not started.
 

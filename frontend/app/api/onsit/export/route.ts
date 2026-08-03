@@ -1,4 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import { getDriver } from '@/lib/graph';
 
 /**
@@ -36,6 +37,8 @@ interface Finding {
 }
 
 export async function GET(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     const driver = getDriver();
     const session = driver.session();
     const { format, discoveryId, dateFrom, dateTo } = parseExportParams(request);

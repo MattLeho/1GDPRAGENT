@@ -7,6 +7,8 @@ status: predecessor-repair-in-progress
 
 # Task 5 Final Self-Audit
 
+> **PROVISIONAL — R0 revalidation required (2026-07-17).** The existing predecessor warning remains historical evidence; this report does not prove current authenticated integration.
+
 > [!warning] Superseded completion determination
 > The mandatory Task 6 predecessor audit found that this report overstated integrated completion. Source deletion lacked a separately granted destructive permission; live retention evaluation and recurring dispatch were disconnected; destructive APIs lacked signed profile-scoped authority; and controller-erasure drafting could precede the grace gate. Repairs are recorded in [[Task 6 Predecessor Audit Ledger]]. This document must not be used as current completion evidence until the repaired full suite and runtime gate are recorded.
 

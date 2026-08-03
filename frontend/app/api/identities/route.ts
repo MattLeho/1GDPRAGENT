@@ -1,8 +1,11 @@
 
-import { NextResponse } from 'next/server'
+import { requireApiSession } from '@/lib/api-session';
+import { NextResponse, NextRequest } from 'next/server';
 import { runCypher } from '@/lib/graph'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         // Fetch all Personas and their linked Emails
         // Returns: { name: "Gamer", emails: ["...", "..."] }

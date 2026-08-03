@@ -1,7 +1,10 @@
 'use server';
 
-import { safeQuery } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
+import { requireServerSessionAuthority } from '@/lib/api-session';
+import { RequestService } from '@/lib/requests/service';
+
+const requests=new RequestService();
 
 export interface Message {
     id: string;
@@ -16,18 +19,8 @@ export interface Message {
  * Fetches all messages for a specific request
  */
 export async function getMessages(requestId: string): Promise<Message[]> {
-    const result = await safeQuery<Message>(
-        `SELECT * FROM messages 
-         WHERE request_id = $1 
-         ORDER BY timestamp ASC`,
-        [requestId]
-    );
-
-    if (result.error) {
-        console.error('Failed to fetch messages:', result.error);
-    }
-
-    return result.rows;
+    const {profileId}=await requireServerSessionAuthority();
+    return requests.messages(profileId,requestId) as Promise<Message[]>;
 }
 
 /**
@@ -38,18 +31,14 @@ export async function sendMessage(
     content: string
 ): Promise<{ success: boolean; message?: Message }> {
     try {
-        const { db } = await import('@/lib/db');
-        const result = await db.query<Message>(
-            `INSERT INTO messages (request_id, sender, content, timestamp)
-             VALUES ($1, 'user', $2, NOW())
-             RETURNING *`,
-            [requestId, content]
-        );
+        const {profileId}=await requireServerSessionAuthority();
+        const created=await requests.appendMessage(profileId,requestId,'user',content);
+        if(!created)return {success:false};
 
         revalidatePath('/dashboard/requests');
         revalidatePath(`/dashboard/requests/${requestId}`);
 
-        return { success: true, message: result.rows[0] };
+        return { success: true, message: created as Message };
     } catch (error) {
         console.error('Failed to send message:', error);
         return { success: false };
@@ -69,6 +58,7 @@ export async function getUnreadItems(): Promise<{
     companyName?: string;
     data?: Record<string, unknown>;
 }[]> {
+    const {profileId}=await requireServerSessionAuthority();
     const items: {
         type: 'email' | 'file' | 'action';
         id: string;
@@ -81,39 +71,12 @@ export async function getUnreadItems(): Promise<{
     }[] = [];
 
     // Get unread messages from companies
-    const messagesResult = await safeQuery<{
-        id: string;
-        content: string;
-        timestamp: Date;
-        company_name: string;
-        request_id: string;
-    }>(`
-        SELECT m.id, m.content, m.timestamp, r.company_name, r.id as request_id
-        FROM messages m
-        JOIN requests r ON m.request_id = r.id
-        WHERE m.sender = 'company'
-        ORDER BY m.timestamp DESC
-        LIMIT 10
-    `);
-
-    // Get pending received data
-    const dataResult = await safeQuery<{
-        id: string;
-        file_name: string;
-        file_size_mb: number;
-        date_received: Date;
-        company_name: string;
-        request_id: string;
-    }>(`
-        SELECT rd.id, rd.file_name, rd.file_size_mb, rd.date_received, r.company_name, r.id as request_id
-        FROM received_data rd
-        JOIN requests r ON rd.request_id = r.id
-        ORDER BY rd.date_received DESC
-        LIMIT 5
-    `);
+    const review=await requests.reviewItems(profileId);
+    const messageRows=review.messages as unknown as Array<{id:string;content:string;timestamp:Date;company_name:string;request_id:string}>;
+    const dataRows=review.files as unknown as Array<{id:string;file_name:string;file_size_mb:number;date_received:Date;company_name:string;request_id:string}>;
 
     // Map messages to review items
-    messagesResult.rows.forEach((msg) => {
+    messageRows.forEach((msg) => {
         items.push({
             type: 'email',
             id: msg.id,
@@ -131,7 +94,7 @@ export async function getUnreadItems(): Promise<{
     });
 
     // Map data files to review items
-    dataResult.rows.forEach((data) => {
+    dataRows.forEach((data) => {
         items.push({
             type: 'file',
             id: data.id,

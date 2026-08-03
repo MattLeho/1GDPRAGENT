@@ -1,5 +1,7 @@
 'use client';
 
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
+
 /**
  * APICredentialsSection Component
  * 
@@ -124,7 +126,9 @@ export function APICredentialsSection() {
                     setSavedKeys(data.savedKeys || {});
                 }
             } catch (e) {
-                console.error('Failed to load API credentials', e);
+                if (!shouldSuppressProtectedRequestError(e)) {
+                    console.error('Failed to load API credentials', e);
+                }
             }
         }
         loadCredentials();
@@ -149,7 +153,9 @@ export function APICredentialsSection() {
                 toast.error('Failed to save credentials');
             }
         } catch (error) {
-            toast.error('Failed to save credentials');
+            if (!shouldSuppressProtectedRequestError(error)) {
+                toast.error('Failed to save credentials');
+            }
         } finally {
             setIsLoading(false);
         }

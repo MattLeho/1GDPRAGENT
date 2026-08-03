@@ -123,17 +123,17 @@ export function hasEnvAICredential(provider: AIProviderId): boolean {
  * @param provider - Provider name: 'google', 'openai', 'openrouter', 'ollama', 'huggingface', 'nvidia'
  * @returns Decrypted API key or null
  */
-export async function getAICredential(provider: string): Promise<string | null> {
+export async function getAICredential(provider: string, profileId?: string): Promise<string | null> {
     const normalizedProvider = normalizeAIProvider(provider);
     if (!normalizedProvider) {
         return null;
     }
 
     try {
-        const result = await pool.query(
-            'SELECT api_key_encrypted FROM ai_credentials WHERE provider = $1',
-            [normalizedProvider]
-        );
+        const result = profileId ? await pool.query(
+            'SELECT api_key_encrypted FROM ai_credentials WHERE provider = $1 AND profile_id = $2',
+            [normalizedProvider, profileId]
+        ) : { rows: [] };
 
         if (result.rows.length > 0 && result.rows[0].api_key_encrypted) {
             const credential = decrypt(result.rows[0].api_key_encrypted);
@@ -152,11 +152,11 @@ export async function getAICredential(provider: string): Promise<string | null> 
  * Get all configured AI credentials.
  * Returns an object with provider names as keys and API keys as values.
  */
-export async function getAllAICredentials(): Promise<Record<string, string | null>> {
+export async function getAllAICredentials(profileId?: string): Promise<Record<string, string | null>> {
     const credentials: Record<string, string | null> = {};
 
     for (const provider of AI_PROVIDER_IDS) {
-        credentials[provider] = await getAICredential(provider);
+        credentials[provider] = await getAICredential(provider, profileId);
     }
 
     return credentials;

@@ -147,7 +147,7 @@ def test_checkpoint_key_includes_stage_content_and_parser_version():
 def test_unknown_schema_route_uses_task2_router_and_never_auto_approves():
     route = (Path(__file__).resolve().parents[1] / "frontend/app/api/ingestion/schema-interpretation/route.ts").read_text(encoding="utf-8")
     helper = (Path(__file__).resolve().parents[1] / "frontend/lib/execution/task3.ts").read_text(encoding="utf-8")
-    assert "executeTask3Bundle(manifest)" in route
+    assert "executeTask3Bundle(manifest,authority.profileId)" in route
     assert "executeTask({" in helper and "taskKey:bundle.task_key" in helper
     assert "maximum_sample_bytes" in route and "Buffer.byteLength" in route
     assert "review_status:'proposed'" in route

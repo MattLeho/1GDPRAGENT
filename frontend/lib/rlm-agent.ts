@@ -21,6 +21,21 @@ export interface RLMResponse {
     error?: string;
 }
 
+/**
+ * The R0 browser stack must never make a paid or external model call.  This
+ * adapter is deliberately opt-in and is only enabled by the disposable CI
+ * harness; production continues to use the canonical task-router adapter.
+ */
+class R0NoProviderAgent {
+    async chat(): Promise<RLMResponse> {
+        return {
+            content: 'R0 browser baseline: provider execution disabled.',
+            toolsUsed: [],
+            iterations: 0,
+        };
+    }
+}
+
 interface ToolExecutionResult {
     id: string;
     name: string;
@@ -50,6 +65,7 @@ You have access to tools that let you:
 
 export class RLMAgent {
     async chat(
+        profileId: string,
         requestId: string,
         userMessage: string,
         conversationHistory: ChatMessage[] = [],
@@ -64,6 +80,7 @@ export class RLMAgent {
 
             if (!supportsTools) {
                 return this.chatWithRetrievedContext(
+                    profileId,
                     requestId,
                     userMessage,
                     messages,
@@ -90,6 +107,7 @@ export class RLMAgent {
                     if (error instanceof RLMProviderError && error.retryWithoutTools) {
                         console.warn(`[RLM] ${preferences.provider}/${preferences.model} rejected tools; using retrieved-context fallback.`);
                         const fallbackResponse = await this.chatWithRetrievedContext(
+                            profileId,
                             requestId,
                             userMessage,
                             this.buildMessages(conversationHistory, userMessage),
@@ -114,7 +132,7 @@ export class RLMAgent {
                     };
                 }
 
-                const toolResults = await this.executeToolCalls(requestId, modelResponse.toolCalls);
+                const toolResults = await this.executeToolCalls(profileId, requestId, modelResponse.toolCalls);
 
                 for (const result of toolResults) {
                     if (!toolsUsed.includes(result.name)) {
@@ -174,13 +192,14 @@ export class RLMAgent {
     }
 
     private async executeToolCalls(
+        profileId: string,
         requestId: string,
         toolCalls: RLMToolCall[],
     ): Promise<ToolExecutionResult[]> {
         return Promise.all(
             toolCalls.map(async (toolCall) => {
                 try {
-                    const result = await executeTool(requestId, toolCall.name, toolCall.args);
+                    const result = await executeTool(profileId, requestId, toolCall.name, toolCall.args);
                     return { ...toolCall, result };
                 } catch (err) {
                     const errorMsg = err instanceof Error ? err.message : 'Tool execution failed';
@@ -192,6 +211,7 @@ export class RLMAgent {
     }
 
     private async chatWithRetrievedContext(
+        profileId: string,
         requestId: string,
         userMessage: string,
         messages: RLMMessage[],
@@ -199,7 +219,7 @@ export class RLMAgent {
         model: string,
         toolsUsed: string[],
     ): Promise<RLMResponse> {
-        const contextResults = await this.collectFallbackContext(requestId, userMessage);
+        const contextResults = await this.collectFallbackContext(profileId, requestId, userMessage);
 
         for (const result of contextResults) {
             if (!toolsUsed.includes(result.name)) {
@@ -234,6 +254,7 @@ export class RLMAgent {
     }
 
     private async collectFallbackContext(
+        profileId: string,
         requestId: string,
         userMessage: string,
     ): Promise<ToolExecutionResult[]> {
@@ -260,13 +281,14 @@ export class RLMAgent {
             },
         ];
 
-        return this.executeToolCalls(requestId, fallbackCalls);
+        return this.executeToolCalls(profileId, requestId, fallbackCalls);
     }
 }
 
 let agentInstance: RLMAgent | null = null;
 
-export function getRLMAgent(): RLMAgent {
+export function getRLMAgent(): Pick<RLMAgent, 'chat'> {
+    if (process.env.R0_TEST_MODE === '1') return new R0NoProviderAgent();
     if (!agentInstance) {
         agentInstance = new RLMAgent();
     }

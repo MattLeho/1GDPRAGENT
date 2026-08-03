@@ -8,49 +8,50 @@ import { Label } from '@/components/ui/label';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { User, Mail, Key, Upload, Loader2, Save } from 'lucide-react';
 import { toast } from 'sonner';
-
-interface UserProfile {
-    id?: number;
-    username: string;
-    email: string;
-    profilePictureUrl?: string;
-}
+import { protectedApi, shouldSuppressProtectedRequestError } from '@/lib/api-client';
+import { getProfileInitials, useProfileStore } from '@/lib/stores/profile-store';
 
 export function UserProfileSection() {
-    const [isLoading, setIsLoading] = useState(false);
-    const [profile, setProfile] = useState<UserProfile>({
-        username: '',
-        email: '',
-        profilePictureUrl: undefined,
+    const [isChangingPassword, setIsChangingPassword] = useState(false);
+    const loadProfile = useProfileStore((state) => state.loadProfile);
+    const saveProfile = useProfileStore((state) => state.saveProfile);
+    const isSaving = useProfileStore((state) => state.isSaving);
+    const [profile, setProfile] = useState(() => {
+        const current = useProfileStore.getState().profile;
+        return {
+            username: current?.username ?? '',
+            email: current?.email ?? '',
+            profilePictureUrl: current?.profilePictureUrl ?? null,
+        };
     });
     const [passwords, setPasswords] = useState({
         current: '',
         new: '',
         confirm: '',
     });
-    const [preview, setPreview] = useState<string | null>(null);
+    const [preview, setPreview] = useState<string | null>(() => useProfileStore.getState().profile?.profilePictureUrl ?? null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Load profile on mount
     useEffect(() => {
-        async function loadProfile() {
-            try {
-                const res = await fetch('/api/settings/profile');
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.profile) {
-                        setProfile(data.profile);
-                        if (data.profile.profilePictureUrl) {
-                            setPreview(data.profile.profilePictureUrl);
-                        }
-                    }
-                }
-            } catch (error) {
+        return useProfileStore.subscribe((state, previousState) => {
+            if (state.profile === previousState.profile) return;
+            setProfile({
+                username: state.profile?.username ?? '',
+                email: state.profile?.email ?? '',
+                profilePictureUrl: state.profile?.profilePictureUrl ?? null,
+            });
+            setPreview(state.profile?.profilePictureUrl ?? null);
+        });
+    }, []);
+
+    useEffect(() => {
+        void loadProfile().catch((error: unknown) => {
+            if (shouldSuppressProtectedRequestError(error)) return;
+            if (!(error instanceof DOMException && error.name === 'AbortError')) {
                 console.error('Failed to load profile:', error);
             }
-        }
-        loadProfile();
-    }, []);
+        });
+    }, [loadProfile]);
 
     const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -82,7 +83,6 @@ export function UserProfileSection() {
             return;
         }
 
-        setIsLoading(true);
         try {
             const formData = new FormData();
             formData.append('username', profile.username);
@@ -93,28 +93,14 @@ export function UserProfileSection() {
                 formData.append('profilePicture', fileInputRef.current.files[0]);
             }
 
-            const res = await fetch('/api/settings/profile', {
-                method: 'POST',
-                body: formData,
-            });
-
-            const data = await res.json();
-
-            if (data.success) {
+            const updatedProfile = await saveProfile(formData);
+            if (updatedProfile) {
                 toast.success('Profile updated successfully');
-                if (data.profile) {
-                    setProfile(data.profile);
-                    if (data.profile.profilePictureUrl) {
-                        setPreview(data.profile.profilePictureUrl);
-                    }
-                }
-            } else {
-                toast.error(data.error || 'Failed to update profile');
+                setPreview(updatedProfile.profilePictureUrl ?? null);
             }
         } catch (error) {
-            toast.error('Failed to save profile');
-        } finally {
-            setIsLoading(false);
+            if (shouldSuppressProtectedRequestError(error)) return;
+            toast.error(error instanceof Error ? error.message : 'Failed to save profile');
         }
     };
 
@@ -134,18 +120,15 @@ export function UserProfileSection() {
             return;
         }
 
-        setIsLoading(true);
+        setIsChangingPassword(true);
         try {
-            const res = await fetch('/api/settings/profile/password', {
+            const data = await protectedApi<{ success: boolean; error?: string }>('/api/settings/profile/password', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     currentPassword: passwords.current,
                     newPassword: passwords.new,
                 }),
             });
-
-            const data = await res.json();
 
             if (data.success) {
                 toast.success('Password changed successfully');
@@ -154,19 +137,11 @@ export function UserProfileSection() {
                 toast.error(data.error || 'Failed to change password');
             }
         } catch (error) {
-            toast.error('Failed to change password');
+            if (shouldSuppressProtectedRequestError(error)) return;
+            toast.error(error instanceof Error ? error.message : 'Failed to change password');
         } finally {
-            setIsLoading(false);
+            setIsChangingPassword(false);
         }
-    };
-
-    const getInitials = (username: string) => {
-        return username
-            .split(' ')
-            .map(word => word[0])
-            .join('')
-            .toUpperCase()
-            .slice(0, 2) || 'U';
     };
 
     return (
@@ -184,9 +159,9 @@ export function UserProfileSection() {
                 {/* Profile Picture */}
                 <div className="flex items-center gap-6">
                     <Avatar className="h-24 w-24">
-                        <AvatarImage src={preview || profile.profilePictureUrl} />
+                        <AvatarImage src={preview || profile.profilePictureUrl || undefined} />
                         <AvatarFallback className="text-2xl">
-                            {getInitials(profile.username || 'User')}
+                            {getProfileInitials(profile.username) || <User className="h-6 w-6" />}
                         </AvatarFallback>
                     </Avatar>
                     <div className="flex-1">
@@ -284,15 +259,15 @@ export function UserProfileSection() {
                         variant="secondary"
                         className="mt-4"
                         onClick={handleChangePassword}
-                        disabled={isLoading || !passwords.current || !passwords.new || !passwords.confirm}
+                        disabled={isChangingPassword || !passwords.current || !passwords.new || !passwords.confirm}
                     >
                         Update Password
                     </Button>
                 </div>
             </CardContent>
             <CardFooter>
-                <Button onClick={handleSaveProfile} disabled={isLoading}>
-                    {isLoading ? (
+                <Button onClick={handleSaveProfile} disabled={isSaving}>
+                    {isSaving ? (
                         <>
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             Saving...

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client'
 import { useRequestStore, AnalysisResult } from "@/lib/stores/request-store"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -54,6 +55,7 @@ export function UrlAnalyzer() {
                     setExistingAnalysis(null)
                 }
             } catch (e) {
+                if (shouldSuppressProtectedRequestError(e)) return;
                 console.error("Policy check failed", e)
                 setExistingAnalysis(null)
             } finally {
@@ -115,6 +117,7 @@ export function UrlAnalyzer() {
             }, 1000)
 
         } catch (error) {
+            if (shouldSuppressProtectedRequestError(error)) return;
             console.error(error)
             const message = error instanceof Error ? error.message : 'Unknown error'
             toast.error("Analysis Failed", {

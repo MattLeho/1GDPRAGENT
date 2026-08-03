@@ -1,8 +1,11 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, NextRequest } from 'next/server';
+import { intelligenceAuthorityHeaders, requireApiSession } from '@/lib/api-session';
 
 const intelligenceUrl = process.env.INTELLIGENCE_URL || 'http://localhost:8001'
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
   const body = await request.json()
   const subjectRef = String(body?.personaName || body?.name || 'local-subject')
   const candidates = [
@@ -12,8 +15,10 @@ export async function POST(request: Request) {
   ]
   if (!candidates.length) candidates.push({ type: 'Subject', label: subjectRef, properties: { controller: 'manual' }, subject_ref: subjectRef })
   const results = []
+  const target = `${intelligenceUrl}/evidence/manual-node`
   for (const candidate of candidates) {
-    const response = await fetch(`${intelligenceUrl}/evidence/manual-node`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(candidate), cache: 'no-store' })
+    const body=JSON.stringify(candidate)
+    const response = await fetch(target, { method: 'POST', headers: intelligenceAuthorityHeaders(authority.profileId, target, 'POST','application/json',undefined,undefined,body), body, cache: 'no-store' })
     results.push(await response.json())
   }
   return NextResponse.json({ success: true, results })

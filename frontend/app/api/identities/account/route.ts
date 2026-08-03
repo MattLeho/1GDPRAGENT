@@ -1,8 +1,11 @@
 
-import { NextResponse } from 'next/server'
+import { requireApiSession } from '@/lib/api-session';
+import { NextResponse, NextRequest } from 'next/server';
 import { upsertAccount } from '@/lib/graph/upsert'
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const body = await request.json()
         const { persona, platform, attributes } = body
@@ -14,7 +17,7 @@ export async function POST(request: Request) {
             )
         }
 
-        const result = await upsertAccount(persona, platform, attributes)
+        const result = await upsertAccount(persona, platform, attributes, authority.profileId)
 
         return NextResponse.json(result)
     } catch (error: unknown) {

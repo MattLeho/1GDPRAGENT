@@ -8,6 +8,7 @@ import asyncio
 import uuid
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 from dataclasses import dataclass, field
 
 from .models import (
@@ -38,6 +39,7 @@ class DiscoveryScan:
     errors: list[str] = field(default_factory=list)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    profile_id: UUID | None = None
 
 
 class ONSITOrchestrator:
@@ -107,6 +109,7 @@ class ONSITOrchestrator:
         self,
         seeds: list[str],
         enrichers: Optional[list[str]] = None,
+        profile_id: UUID | None = None,
     ) -> str:
         """
         Start a discovery scan.
@@ -131,12 +134,14 @@ class ONSITOrchestrator:
             raise ValueError("No valid seeds provided")
         
         # Create scan record
+        if profile_id is None: raise ValueError("profile authority is required")
         scan = DiscoveryScan(
             scan_id=scan_id,
             seeds=parsed_seeds,
             enrichers=enrichers or [],
             status="running",
             started_at=datetime.utcnow(),
+            profile_id=profile_id,
         )
         self._scans[scan_id] = scan
         
@@ -200,10 +205,10 @@ class ONSITOrchestrator:
             scan.errors.append(str(e))
             scan.completed_at = datetime.utcnow()
     
-    async def get_status(self, scan_id: str) -> Optional[ScanStatus]:
+    async def get_status(self, scan_id: str, profile_id: UUID | None = None) -> Optional[ScanStatus]:
         """Get status of a discovery scan."""
         scan = self._scans.get(scan_id)
-        if not scan:
+        if not scan or profile_id is None or scan.profile_id != profile_id:
             return None
         
         return ScanStatus(
@@ -221,6 +226,7 @@ class ONSITOrchestrator:
         scan_id: str,
         entity_type: Optional[EntityType] = None,
         limit: int = 100,
+        profile_id: UUID | None = None,
     ) -> list[ONSITEntity]:
         """
         Get findings from a discovery scan.
@@ -234,7 +240,7 @@ class ONSITOrchestrator:
             List of discovered entities
         """
         scan = self._scans.get(scan_id)
-        if not scan:
+        if not scan or profile_id is None or scan.profile_id != profile_id:
             return []
         
         findings = scan.findings
@@ -244,12 +250,13 @@ class ONSITOrchestrator:
         
         return findings[:limit]
     
-    async def cancel_scan(self, scan_id: str) -> bool:
+    async def cancel_scan(self, scan_id: str, profile_id: UUID | None = None) -> bool:
         """Cancel a running scan."""
+        scan = self._scans.get(scan_id)
+        if not scan or profile_id is None or scan.profile_id != profile_id: return False
         task = self._tasks.get(scan_id)
         if task and not task.done():
             task.cancel()
-            scan = self._scans.get(scan_id)
             if scan:
                 scan.status = "cancelled"
                 scan.completed_at = datetime.utcnow()

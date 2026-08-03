@@ -4,10 +4,14 @@ Ingest API Endpoint
 Provides REST API for ingesting data into the knowledge graph.
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 from typing import Optional
 import uuid
+from uuid import UUID
+from api.security import require_profile_id
+from db.postgres import get_postgres_client
+from request_domain import RequestRepository
 
 from agents.kg_ingestor import KGIngestorAgent, IngestRequest
 
@@ -62,7 +66,7 @@ class IngestAsyncResponse(BaseModel):
 
 
 @router.post("", response_model=IngestResponse)
-async def ingest_data(body: IngestRequestBody):
+async def ingest_data(body: IngestRequestBody, profile_id: UUID = Depends(require_profile_id)):
     """
     Ingest extracted data into the knowledge graph.
     
@@ -70,7 +74,10 @@ async def ingest_data(body: IngestRequestBody):
     For large datasets, use the async endpoint.
     """
     # Generate request_id if not provided
-    request_id = body.request_id or str(uuid.uuid4())
+    request_id = body.request_id or f"standalone-{uuid.uuid4()}"
+    if body.request_id:
+        if not await RequestRepository().exists(profile_id,body.request_id):
+            raise HTTPException(status_code=404,detail="request does not exist")
     
     agent = KGIngestorAgent()
     request = IngestRequest(
@@ -80,6 +87,7 @@ async def ingest_data(body: IngestRequestBody):
         categories=body.categories,
         source=body.source,
         source_artifact=body.source_artifact,
+        profile_id=profile_id,
     )
     
     try:
@@ -102,6 +110,7 @@ async def ingest_data(body: IngestRequestBody):
 async def ingest_data_async(
     body: IngestRequestBody,
     background_tasks: BackgroundTasks,
+    profile_id: UUID = Depends(require_profile_id),
 ):
     """
     Queue data ingestion as a background task.
@@ -110,7 +119,10 @@ async def ingest_data_async(
     """
     from tasks import app as celery_app
     
-    request_id = body.request_id or str(uuid.uuid4())
+    request_id = body.request_id or f"standalone-{uuid.uuid4()}"
+    if body.request_id:
+        if not await RequestRepository().exists(profile_id,body.request_id):
+            raise HTTPException(status_code=404,detail="request does not exist")
     
     # Queue Celery task
     task = celery_app.send_task(
@@ -122,6 +134,7 @@ async def ingest_data_async(
             "categories": body.categories,
             "source": body.source,
             "source_artifact": body.source_artifact,
+            "profile_id": str(profile_id),
         }],
     )
     

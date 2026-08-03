@@ -1,11 +1,19 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import { cookies } from 'next/headers';
-import { createSessionToken } from '@/lib/auth-session';
+import {
+    createSessionToken,
+    SESSION_COOKIE_NAME,
+    SESSION_TTL_MS,
+    sessionCookieOptions,
+} from '@/lib/auth-session';
+import { enforceSameOriginMutation } from '@/lib/api-session';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
     try {
+        const csrfFailure = enforceSameOriginMutation(request);
+        if (csrfFailure) return csrfFailure;
         const { username, password } = await request.json();
 
         if (!username || !password) {
@@ -17,7 +25,10 @@ export async function POST(request: Request) {
 
         // Check if user exists
         const result = await pool.query(
-            'SELECT id, username, password_hash, default_profile_id FROM user_profiles WHERE username = $1',
+            `SELECT up.id, up.username, up.password_hash, up.default_profile_id
+               FROM user_profiles up
+               INNER JOIN profiles p ON p.id = up.default_profile_id
+              WHERE up.username = $1`,
             [username]
         );
 
@@ -41,18 +52,15 @@ export async function POST(request: Request) {
         }
 
         // Create session token
-        const token = createSessionToken(String(user.id),String(user.default_profile_id));
+        const issuedAt = Date.now();
+        const expiresAt = issuedAt + SESSION_TTL_MS;
+        const token = createSessionToken(String(user.id), String(user.default_profile_id), issuedAt, expiresAt);
 
         // Set HTTP-only cookie - await cookies() for Next.js 16+
         const cookieStore = await cookies();
-        cookieStore.set('gdpr-session', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            maxAge: 60 * 60 * 24 * 7, // 7 days
-        });
+        cookieStore.set(SESSION_COOKIE_NAME, token, sessionCookieOptions(expiresAt, issuedAt));
 
-        return NextResponse.json({ success: true, token });
+        return NextResponse.json({ success: true });
     } catch (error) {
         console.error('[Login] Error:', error);
         return NextResponse.json(

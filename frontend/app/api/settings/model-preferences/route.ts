@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import { getModelPreferences, saveModelPreferences } from '@/lib/model-preferences';
 
 interface ModelPreferencesBody {
@@ -8,12 +9,16 @@ interface ModelPreferencesBody {
     workflowModels?: unknown;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     const preferences = await getModelPreferences();
     return NextResponse.json(preferences);
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const body: ModelPreferencesBody = await request.json();
 

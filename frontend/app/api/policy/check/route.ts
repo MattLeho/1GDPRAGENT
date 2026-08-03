@@ -1,8 +1,11 @@
 
-import { NextRequest, NextResponse } from 'next/server'
+import { requireApiSession } from '@/lib/api-session';
+import { NextRequest, NextResponse } from 'next/server';
 import { getPolicyAnalysis } from '@/lib/actions/policy'
 
 export async function POST(req: NextRequest) {
+    const authority = await requireApiSession(req);
+    if (authority instanceof NextResponse) return authority;
     try {
         const body = await req.json()
         const { url } = body

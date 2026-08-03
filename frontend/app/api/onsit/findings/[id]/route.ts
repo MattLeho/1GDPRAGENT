@@ -7,7 +7,8 @@
  * @see https://github.com/reconurge/flowsint - Entity types
  */
 
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { intelligenceAuthorityHeaders, requireApiSession } from '@/lib/api-session';
 
 const INTELLIGENCE_URL = process.env.INTELLIGENCE_SERVICE_URL || 'http://localhost:8000';
 
@@ -121,9 +122,11 @@ function transformFinding(finding: IntelligenceFinding): Finding {
  * The [id] can be either a scan ID (returns all findings) or a finding ID.
  */
 export async function GET(
-    request: Request,
+    request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const { id } = await params;
 
@@ -135,10 +138,12 @@ export async function GET(
         }
 
         // Try fetching as scan ID first (get all findings for scan)
+        const target = `${INTELLIGENCE_URL}/onsit/discover/${id}/findings`;
         const response = await fetch(
-            `${INTELLIGENCE_URL}/onsit/discover/${id}/findings`,
+            target,
             {
                 method: 'GET',
+                headers: intelligenceAuthorityHeaders(authority.profileId, target, 'GET'),
                 cache: 'no-store',
             }
         );
@@ -193,9 +198,11 @@ export async function GET(
  * For finding IDs - dismisses the finding.
  */
 export async function DELETE(
-    request: Request,
+    request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const { id } = await params;
 
@@ -207,9 +214,10 @@ export async function DELETE(
         }
 
         // Try to cancel/dismiss via intelligence service
+        const target = `${INTELLIGENCE_URL}/onsit/discover/${id}`;
         const response = await fetch(
-            `${INTELLIGENCE_URL}/onsit/discover/${id}`,
-            { method: 'DELETE' }
+            target,
+            { method: 'DELETE', headers: intelligenceAuthorityHeaders(authority.profileId, target, 'DELETE') }
         );
 
         if (!response.ok && response.status !== 404) {

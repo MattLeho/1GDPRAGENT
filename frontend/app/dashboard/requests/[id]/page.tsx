@@ -327,7 +327,7 @@ export default async function RequestDetailPage({ params }: PageProps) {
                                 </div>
                                 <div className="flex justify-between text-sm">
                                     <span className="text-muted-foreground">Deadline</span>
-                                    <span>{formatDate(request.deadline_date)}</span>
+                                    <span>{formatDate(request.deadline_at)}</span>
                                 </div>
                                 <div className="flex justify-between text-sm">
                                     <span className="text-muted-foreground">Type</span>

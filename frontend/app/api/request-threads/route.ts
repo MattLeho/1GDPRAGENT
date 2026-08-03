@@ -12,12 +12,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import { Pool } from 'pg';
+import { RequestService } from '@/lib/requests/service';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const requests=new RequestService();
 
 // GET: Fetch thread for a company
 export async function GET(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const { searchParams } = new URL(request.url);
         const company = searchParams.get('company');
@@ -35,13 +40,13 @@ export async function GET(request: NextRequest) {
             let result;
             if (threadId) {
                 result = await client.query(
-                    'SELECT * FROM request_threads WHERE thread_id = $1',
-                    [threadId]
+                    'SELECT * FROM request_threads WHERE thread_id = $1 AND profile_id = $2',
+                    [threadId, authority.profileId]
                 );
             } else {
                 result = await client.query(
-                    'SELECT * FROM request_threads WHERE LOWER(company) = LOWER($1) ORDER BY created_at DESC LIMIT 1',
-                    [company]
+                    'SELECT * FROM request_threads WHERE LOWER(company) = LOWER($1) AND profile_id = $2 ORDER BY created_at DESC LIMIT 1',
+                    [company, authority.profileId]
                 );
             }
 
@@ -72,9 +77,11 @@ export async function GET(request: NextRequest) {
 
 // POST: Create or update thread
 export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const body = await request.json();
-        const { company, domain, action, data } = body;
+        const { company, domain, action, data, requestId } = body;
 
         if (!company) {
             return NextResponse.json(
@@ -85,10 +92,13 @@ export async function POST(request: NextRequest) {
 
         const client = await pool.connect();
         try {
+            if(requestId&&!await requests.get(authority.profileId,String(requestId))){
+                return NextResponse.json({success:false,error:'Request not found'},{status:404});
+            }
             // Check if thread exists
             const existing = await client.query(
-                'SELECT * FROM request_threads WHERE LOWER(company) = LOWER($1) AND domain = $2',
-                [company, domain || '']
+                'SELECT * FROM request_threads WHERE LOWER(company) = LOWER($1) AND domain = $2 AND profile_id = $3',
+                [company, domain || '', authority.profileId]
             );
 
             let threadId;
@@ -96,14 +106,20 @@ export async function POST(request: NextRequest) {
             if (existing.rows.length === 0) {
                 // Create new thread
                 const result = await client.query(
-                    `INSERT INTO request_threads (company, domain, status, conversation_history)
-                     VALUES ($1, $2, $3, $4)
-                     RETURNING thread_id, id`,
-                    [company, domain || null, 'initialized', JSON.stringify([])]
+                    `INSERT INTO request_threads (company, domain, status, conversation_history, profile_id,request_id)
+                     VALUES ($1, $2, $3, $4, $5,$6)
+                     RETURNING thread_id, id,request_id`,
+                    [company, domain || null, 'initialized', JSON.stringify([]), authority.profileId,requestId||null]
                 );
                 threadId = result.rows[0].thread_id;
             } else {
                 threadId = existing.rows[0].thread_id;
+            }
+
+            const linked=await client.query('SELECT request_id FROM request_threads WHERE thread_id=$1 AND profile_id=$2',[threadId,authority.profileId]);
+            const canonicalRequestId=linked.rows[0]?.request_id?String(linked.rows[0].request_id):null;
+            if(['request_drafted','email_sent','response_received'].includes(action)&&!canonicalRequestId){
+                return NextResponse.json({success:false,error:'Lifecycle actions require a canonical request link'},{status:409});
             }
 
             // Update thread based on action
@@ -159,6 +175,9 @@ export async function POST(request: NextRequest) {
                             threadId
                         ]
                     );
+                    await requests.transition(authority.profileId,{request_id:canonicalRequestId!,next_state:'ready_for_review',
+                        actor:`user:${authority.userId}`,reason:'Request thread draft recorded',
+                        evidence_reference:`request_thread:${threadId}`,transitioned_at:new Date()});
                     break;
 
                 case 'email_sent':
@@ -181,6 +200,10 @@ export async function POST(request: NextRequest) {
                             threadId
                         ]
                     );
+                    const sentAt=new Date();
+                    await requests.transition(authority.profileId,{request_id:canonicalRequestId!,next_state:'sent',
+                        actor:`user:${authority.userId}`,reason:'Request thread recorded successful send',
+                        evidence_reference:`request_thread:${threadId}`,transitioned_at:sentAt,sent_at:sentAt});
                     break;
 
                 case 'response_received':
@@ -204,6 +227,10 @@ export async function POST(request: NextRequest) {
                             threadId
                         ]
                     );
+                    const responseAt=new Date();
+                    await requests.transition(authority.profileId,{request_id:canonicalRequestId!,next_state:'response_received',
+                        actor:`user:${authority.userId}`,reason:'Controller response recorded in request thread',
+                        evidence_reference:`request_thread:${threadId}`,transitioned_at:responseAt,response_received_at:responseAt});
                     break;
 
                 case 'follow_up':
@@ -242,8 +269,8 @@ export async function POST(request: NextRequest) {
 
             // Fetch updated thread
             const updated = await client.query(
-                'SELECT * FROM request_threads WHERE thread_id = $1',
-                [threadId]
+                'SELECT * FROM request_threads WHERE thread_id = $1 AND profile_id = $2',
+                [threadId, authority.profileId]
             );
 
             return NextResponse.json({

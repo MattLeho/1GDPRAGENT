@@ -1,8 +1,12 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { safeQuery, db } from '@/lib/db';
 import { Request } from './requests';
+import { requireServerSessionAuthority } from '@/lib/api-session';
+import { RequestService } from '@/lib/requests/service';
+import type { CanonicalRequestState } from '@/lib/requests/types';
+
+const requests = new RequestService();
 
 export interface RequestAccountDetail {
     id: string;
@@ -15,17 +19,8 @@ export interface RequestAccountDetail {
  * Gets a single request by ID
  */
 export async function getRequestById(id: string): Promise<Request | null> {
-    const result = await safeQuery<Request>(
-        `SELECT * FROM requests WHERE id = $1`,
-        [id]
-    );
-
-    if (result.error) {
-        console.error('Failed to fetch request:', result.error);
-        return null;
-    }
-
-    return result.rows[0] || null;
+    const { profileId } = await requireServerSessionAuthority();
+    return requests.get(profileId,id);
 }
 
 /**
@@ -36,10 +31,12 @@ export async function updateRequestStatus(
     status: 'draft' | 'scheduled' | 'processing' | 'action_required' | 'completed'
 ): Promise<{ success: boolean }> {
     try {
-        await db.query(
-            `UPDATE requests SET status = $1 WHERE id = $2`,
-            [status, id]
-        );
+        const { profileId,userId } = await requireServerSessionAuthority();
+        const nextState = status === 'processing' ? 'processing_response'
+            : status === 'action_required' ? 'ready_for_review' : status as CanonicalRequestState;
+        await requests.transition(profileId,{request_id:id,next_state:nextState,actor:`user:${userId}`,
+            reason:'Request state changed in request details',transitioned_at:new Date(),
+            completed_at:nextState==='completed'?new Date():null});
         revalidatePath('/dashboard/requests');
         revalidatePath(`/dashboard/requests/${id}`);
         revalidatePath('/dashboard/home');
@@ -54,19 +51,8 @@ export async function updateRequestStatus(
  * Gets encrypted account details attached to a request
  */
 export async function getRequestAccountDetails(requestId: string): Promise<RequestAccountDetail[]> {
-    const result = await safeQuery<RequestAccountDetail>(
-        `SELECT id, request_id, field_key, field_value_encrypted
-         FROM request_details
-         WHERE request_id = $1
-         ORDER BY field_key ASC`,
-        [requestId]
-    );
-
-    if (result.error) {
-        console.error('Failed to fetch request account details:', result.error);
-    }
-
-    return result.rows;
+    const { profileId } = await requireServerSessionAuthority();
+    return requests.requestDetails(profileId,requestId) as Promise<unknown> as Promise<RequestAccountDetail[]>;
 }
 
 /**
@@ -77,10 +63,8 @@ export async function updateRequestProgress(
     progress: number
 ): Promise<{ success: boolean }> {
     try {
-        await db.query(
-            `UPDATE requests SET progress = $1 WHERE id = $2`,
-            [Math.min(100, Math.max(0, progress)), id]
-        );
+        const { profileId } = await requireServerSessionAuthority();
+        if(!await requests.updateProgress(profileId,id,progress))return {success:false};
         return { success: true };
     } catch (error) {
         console.error('Failed to update request progress:', error);
@@ -96,10 +80,8 @@ export async function updateRequestNotes(
     notes: string
 ): Promise<{ success: boolean }> {
     try {
-        await db.query(
-            `UPDATE requests SET notes = $1 WHERE id = $2`,
-            [notes, id]
-        );
+        const { profileId } = await requireServerSessionAuthority();
+        if(!await requests.updateNotes(profileId,id,notes))return {success:false};
         return { success: true };
     } catch (error) {
         console.error('Failed to update notes:', error);
@@ -112,7 +94,8 @@ export async function updateRequestNotes(
  */
 export async function deleteRequest(id: string): Promise<{ success: boolean }> {
     try {
-        await db.query(`DELETE FROM requests WHERE id = $1`, [id]);
+        const { profileId } = await requireServerSessionAuthority();
+        if(!await requests.delete(profileId,id))return {success:false};
         return { success: true };
     } catch (error) {
         console.error('Failed to delete request:', error);
@@ -124,16 +107,6 @@ export async function deleteRequest(id: string): Promise<{ success: boolean }> {
  * Gets requests history for a company (previous requests to same domain)
  */
 export async function getRequestHistory(domain: string, excludeId?: string): Promise<Request[]> {
-    const query = excludeId
-        ? `SELECT * FROM requests WHERE domain = $1 AND id != $2 ORDER BY created_at DESC LIMIT 10`
-        : `SELECT * FROM requests WHERE domain = $1 ORDER BY created_at DESC LIMIT 10`;
-
-    const params = excludeId ? [domain, excludeId] : [domain];
-    const result = await safeQuery<Request>(query, params);
-
-    if (result.error) {
-        console.error('Failed to fetch request history:', result.error);
-    }
-
-    return result.rows;
+    const { profileId } = await requireServerSessionAuthority();
+    return requests.history(profileId,domain,excludeId);
 }

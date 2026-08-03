@@ -1,0 +1,94 @@
+name: R0 truthful baseline
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  r0-baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gdpr_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d gdpr_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gdpr_ci
+      CI: "true"
+      R0_MANAGED_BROWSER_STACK: "1"
+      R0_TEST_MODE: "1"
+      R0_BASE_URL: http://127.0.0.1:3000
+      SESSION_SIGNING_KEY: r0-ci-session-signing-key
+      CREDENTIAL_KEY: r0-ci-credential-key
+      CREDENTIALS_ENCRYPTION_KEY: r0-ci-credential-key
+      INTERNAL_API_KEY: r0-ci-internal-key
+      NEXT_TELEMETRY_DISABLED: "1"
+      PLAYWRIGHT_JUNIT_OUTPUT_NAME: test-results/playwright-junit.xml
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            intelligence/requirements.txt
+            intelligence/requirements-dev.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r intelligence/requirements-dev.txt
+
+      - name: Install frontend dependencies reproducibly
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for authenticated browser baseline
+        working-directory: frontend
+        run: |
+          test -x node_modules/.bin/playwright || {
+            echo 'R0 prerequisite missing: @playwright/test must be declared in frontend/package.json.' >&2
+            exit 2
+          }
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Run every R0 gate and preserve all baseline results
+        run: bash scripts/r0-run-all.sh
+
+      - name: Upload R0 test artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r0-baseline-artefacts
+          if-no-files-found: warn
+          path: |
+            tests/browser/test-results/
+            tests/browser/playwright-report/
+            test-results/
+            .pytest_cache/

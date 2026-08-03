@@ -1,9 +1,10 @@
 import type {DeletionPlan,RetentionDecision} from './types';
+import {protectedApi} from '@/lib/api-client';
 
 export interface RetentionPolicyView{id:string;policy_version:number;name:string;action:string;minimum_age_seconds:number;grace_period_seconds:number;enabled:boolean;connector_keys:string[];data_classes:string[]}
 export interface DeletionPlanView extends Omit<DeletionPlan,'items'>{status:string;items:DeletionPlan['items']}
 export interface RetentionOverview{policies:RetentionPolicyView[];decisions:RetentionDecision[];plans:DeletionPlanView[]}
-async function request<T>(path:string,body?:unknown):Promise<T>{const response=await fetch(`/api/retention${path}`,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});const payload=await response.json();if(!response.ok)throw new Error(payload.detail||`Retention request failed (${response.status})`);return payload as T}
+async function request<T>(path:string,body?:unknown):Promise<T>{return protectedApi<T>(`/api/retention${path}`,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)})}
 export const fetchRetention=()=>request<RetentionOverview>('');
 export const createPolicy=(body:Record<string,unknown>)=>request('/policies',body);
 export const createDeletionPlan=(body:{policy_id:string;policy_version:number;analysis_run_id:string;decision_ids:string[]})=>request('/plans',body);

@@ -2,6 +2,7 @@ import { pool } from '@/lib/db';
 import { getAICredential } from '@/lib/ai-credentials';
 import { generateRLMResponse } from '@/lib/rlm/provider-adapters';
 import { resolveModelForProvider } from '@/lib/model-intents';
+import { intelligenceAuthorityHeaders } from '@/lib/api-session';
 import {
     ENGINES_BY_ID, ENGINE_DEFINITIONS, TASKS_BY_KEY, type EngineDefinition,
     type ExecutionLocation, type ProcessingMode,
@@ -36,6 +37,8 @@ export interface TaskInvocation {
     analysisRunId?: string;
     sourceArtifactIds?: string[];
     configuration?: Record<string, unknown>;
+    /** Canonical session-derived profile authority for local Intelligence calls. */
+    profileId?: string;
 }
 
 export interface EngineError {
@@ -235,7 +238,7 @@ async function invokeAndAudit(invocation: TaskInvocation, runId: string, engine:
     const recordId = await startExecutionRecord(invocation,runId,engine,model);
     try {
         const output = await Promise.race([
-            invokeEngine(engine,invocation.taskKey,invocation.input,model,configuration),
+            invokeEngine(engine,invocation.taskKey,invocation.input,model,configuration,invocation.profileId),
             new Promise((_,reject) => setTimeout(() => reject(new Error('Engine invocation timed out')),timeoutMs)),
         ]);
         await finishExecutionRecord(recordId,'completed',byteSize(output));
@@ -257,7 +260,7 @@ async function invokeAndAudit(invocation: TaskInvocation, runId: string, engine:
     }
 }
 
-async function invokeEngine(engine: EngineDefinition, taskKey: string, input: unknown, model: string | null, configuration: Record<string, unknown>): Promise<unknown> {
+async function invokeEngine(engine: EngineDefinition, taskKey: string, input: unknown, model: string | null, configuration: Record<string, unknown>, profileId?: string): Promise<unknown> {
     if (engine.adapter === 'generation') {
         if (taskKey === 'speech.transcription' || taskKey === 'speech.translation') throw new Error('General generation engines cannot perform speech recognition');
         const text = typeof input === 'string' ? input : (input as { text?: unknown })?.text;
@@ -269,9 +272,12 @@ async function invokeEngine(engine: EngineDefinition, taskKey: string, input: un
         return { text:result.content };
     }
     if (engine.adapter === 'intelligence_service') {
+        if (!profileId) throw new Error('Authenticated profile authority is required for Intelligence execution');
         const baseUrl = process.env.INTELLIGENCE_SERVICE_URL || 'http://intelligence:8000';
-        const response = await fetch(`${baseUrl}/execution/invoke`, { method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({ engine_id:engine.engine_id,task_key:taskKey,input,model,configuration }),signal:AbortSignal.timeout(120_000) });
+        const target = `${baseUrl}/execution/invoke`;
+        const body=JSON.stringify({ engine_id:engine.engine_id,task_key:taskKey,input,model,configuration });
+        const response = await fetch(target, { method:'POST',headers:intelligenceAuthorityHeaders(profileId,target,'POST','application/json',undefined,undefined,body),
+            body,signal:AbortSignal.timeout(120_000) });
         if (!response.ok) throw new Error(`Local intelligence adapter returned ${response.status}: ${await response.text()}`);
         return response.json();
     }
@@ -291,14 +297,16 @@ async function invokeEngine(engine: EngineDefinition, taskKey: string, input: un
     throw new Error(`No invocation adapter for ${engine.engine_id}`);
 }
 
-export async function getEngineHealth(engineId: string): Promise<{ status:'healthy'|'unavailable'|'unconfigured'|'unknown'; message:string; models:string[] }> {
+export async function getEngineHealth(engineId: string, profileId?: string): Promise<{ status:'healthy'|'unavailable'|'unconfigured'|'unknown'; message:string; models:string[] }> {
     const engine = ENGINES_BY_ID.get(engineId);
     if (!engine) return { status:'unavailable',message:'Unknown engine',models:[] };
     if (engine.adapter === 'deterministic') return { status:'healthy',message:'Built-in deterministic adapter is available',models:[] };
     if (engine.adapter === 'intelligence_service') {
+        if (!profileId) return { status:'unavailable',message:'Authenticated profile authority is required for Intelligence health checks',models:[] };
         try {
             const baseUrl = process.env.INTELLIGENCE_SERVICE_URL || 'http://intelligence:8000';
-            const response = await fetch(`${baseUrl}/execution/engines/${engineId}/health`,{signal:AbortSignal.timeout(3000)});
+            const target = `${baseUrl}/execution/engines/${engineId}/health`;
+            const response = await fetch(target,{headers:intelligenceAuthorityHeaders(profileId,target,'GET'),signal:AbortSignal.timeout(3000)});
             if (!response.ok) return { status:'unavailable',message:`Health check returned ${response.status}`,models:[] };
             return response.json();
         } catch (error) { return { status:'unavailable',message:error instanceof Error ? error.message : String(error),models:[] }; }
@@ -311,7 +319,7 @@ export async function getEngineHealth(engineId: string): Promise<{ status:'healt
                 : { status:'unavailable',message:`Ollama returned ${response.status}`,models:[] };
         } catch (error) { return { status:'unavailable',message:error instanceof Error ? error.message : String(error),models:[] }; }
     }
-    const credential=await getAICredential(engine.provider);
+    const credential=await getAICredential(engine.provider, profileId);
     if (!credential) return { status:'unconfigured',message:'No provider credential is configured',models:[] };
     const probes:Record<string,{url:string;headers:Record<string,string>}>= {
         google:{url:`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(credential)}`,headers:{}},

@@ -1,5 +1,7 @@
 'use client';
 
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
+
 /**
  * GraphCanvas Component - Enhanced Version
  * 
@@ -228,6 +230,7 @@ export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0, priva
                 setError(`Graph API returned ${res.status}`);
             }
         } catch (e) {
+            if (shouldSuppressProtectedRequestError(e)) return;
             console.error('Failed to load graph data', e);
             setError(e instanceof Error ? e.message : 'Failed to load graph data');
         } finally {
@@ -465,6 +468,7 @@ export function GraphCanvas({ onNodeClick, selectedNodeId, refreshKey = 0, priva
             setGraphData(prev => mergeGraphSlices(prev, neighborData));
             setError(null);
         } catch (expansionError) {
+            if (shouldSuppressProtectedRequestError(expansionError)) return;
             console.error('Failed to expand node neighbors', expansionError);
             setError(expansionError instanceof Error ? expansionError.message : 'Failed to expand node neighbors');
         } finally {

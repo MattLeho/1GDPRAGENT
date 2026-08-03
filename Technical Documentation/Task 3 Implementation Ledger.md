@@ -1,5 +1,7 @@
 # Task 3 implementation ledger
 
+> **PROVISIONAL — superseded by R0 evidence pending revalidation (2026-07-17).** Historical evidence is retained below but does not prove current integrated or authenticated runtime behaviour.
+
 This ledger is the canonical implementation record for Task 3 and mandatory Task 3A. It is updated at every wave gate.
 
 | Requirement | Owner | Dependency | Implementation location | Status | Tests | Integration status | Migration/backfill note | Blocker |

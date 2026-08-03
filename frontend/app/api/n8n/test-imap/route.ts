@@ -1,7 +1,10 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import { testImapConnection as testImap } from '@/lib/n8n-client';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const body = await request.json();
         const { email, host, port = 993, password } = body;

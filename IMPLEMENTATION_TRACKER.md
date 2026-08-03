@@ -1,6 +1,8 @@
 # Implementation Tracker
 
-Updated: 2026-07-13
+Updated: 2026-07-17
+
+> **R0 baseline status: historical completion marks below are provisional.** See `docs/remediation/R0_BASELINE.md`, `docs/remediation/ledgers/R0_REQUIREMENT_LEDGER.md`, and `docs/remediation/issue-registry.json`. Current code, migrations, automated tests and authenticated runtime are separate evidence classes; no current plan is accepted solely on the historical marks in this tracker.
 
 ## Current Focus
 

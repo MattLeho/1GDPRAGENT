@@ -1,5 +1,7 @@
 'use client';
 
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
+
 /**
  * ONSIT Discovery Page
  * 
@@ -65,6 +67,7 @@ export default function ONSITPage() {
                 description: 'Searching public sources for your digital footprint',
             });
         } catch (error) {
+            if (shouldSuppressProtectedRequestError(error)) return;
             console.error('Discovery error:', error);
             toast.error('Failed to start discovery', {
                 description: 'Please try again later',
@@ -88,6 +91,7 @@ export default function ONSITPage() {
                 setFindings(data.findings || []);
             }
         } catch (e) {
+            if (shouldSuppressProtectedRequestError(e)) return;
             console.error('Failed to fetch findings', e);
         }
     }, []);
@@ -111,6 +115,7 @@ export default function ONSITPage() {
             setFindings(prev => prev.filter(f => f.id !== finding.id));
             toast.success('Finding dismissed');
         } catch (e) {
+            if (shouldSuppressProtectedRequestError(e)) return;
             toast.error('Failed to dismiss finding');
         }
     }, []);
@@ -143,6 +148,7 @@ export default function ONSITPage() {
                 });
             }
         } catch (e) {
+            if (shouldSuppressProtectedRequestError(e)) return;
             toast.error('Failed to add to graph');
         }
     }, [router]);
@@ -175,6 +181,7 @@ export default function ONSITPage() {
                 toast.success(`Added ${findingsToAdd.length} items to graph`);
             }
         } catch (e) {
+            if (shouldSuppressProtectedRequestError(e)) return;
             toast.error('Failed to add items to graph');
         }
     }, []);

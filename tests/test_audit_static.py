@@ -43,7 +43,7 @@ def test_next_proxy_convention_replaces_deprecated_middleware():
 
     proxy = read("frontend/proxy.ts")
 
-    assert "export function proxy" in proxy, "frontend/proxy.ts should export a proxy function."
+    assert ("export function proxy" in proxy or "export async function proxy" in proxy), "frontend/proxy.ts should export a proxy function."
     assert "export function middleware" not in proxy, "Deprecated middleware export should not remain."
 
 

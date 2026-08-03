@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useTheme } from 'next-themes';
 import {
     LayoutDashboard,
@@ -17,19 +17,16 @@ import {
     Moon,
     Search,
     ChartNoAxesCombined,
+    LogOut,
 } from 'lucide-react';
+import { logout, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { NotificationsBell } from './NotificationsBell';
-
-interface UserProfile {
-    username: string;
-    email: string;
-    profilePictureUrl?: string;
-}
+import { getProfileInitials, useProfileStore } from '@/lib/stores/profile-store';
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -79,39 +76,23 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [mounted, setMounted] = useState(false);
     const { theme, setTheme } = useTheme();
-    const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+    const userProfile = useProfileStore((state) => state.profile);
+    const profileStatus = useProfileStore((state) => state.status);
+    const loadProfile = useProfileStore((state) => state.loadProfile);
 
-    // Fetch user profile on mount
     useEffect(() => {
-        const loadProfile = async () => {
-            try {
-                const res = await fetch('/api/settings/profile');
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.profile) {
-                        setUserProfile(data.profile);
-                    }
-                }
-            } catch (error) {
+        void loadProfile().catch((error: unknown) => {
+            if (shouldSuppressProtectedRequestError(error)) return;
+            if (!(error instanceof DOMException && error.name === 'AbortError')) {
                 console.error('Failed to load user profile:', error);
             }
-        };
-        loadProfile();
-    }, []);
+        });
+    }, [loadProfile]);
 
     // Prevent hydration mismatch by only rendering theme icon after mount
     useEffect(() => {
         setMounted(true);
     }, []);
-
-    // Helper function to get initials from username
-    const getInitials = (name: string): string => {
-        return name
-            .split(' ')
-            .map((word) => word.charAt(0).toUpperCase())
-            .slice(0, 2)
-            .join('');
-    };
 
     return (
         <div className="min-h-screen bg-gray-50 dark:bg-zinc-950 flex flex-col md:flex-row font-sans text-gray-900 dark:text-zinc-100">
@@ -155,16 +136,31 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                             {mounted ? (theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />) : <Sun className="h-5 w-5 opacity-0" />}
                         </Button>
                         <NotificationsBell />
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Sign out"
+                            title="Sign out"
+                            onClick={() => void logout().catch((error: unknown) => console.error('Logout failed:', error))}
+                        >
+                            <LogOut className="h-5 w-5" />
+                        </Button>
                         <Separator orientation="vertical" className="h-6" />
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2" aria-busy={profileStatus === 'loading'}>
                             <div className="text-right hidden lg:block">
-                                <p className="text-sm font-medium leading-none">{userProfile?.username || 'User Name'}</p>
-                                <p className="text-xs text-muted-foreground">{userProfile?.email || 'user@example.com'}</p>
+                                {userProfile ? (
+                                    <>
+                                        <p className="text-sm font-medium leading-none">{userProfile.username}</p>
+                                        {userProfile.email && <p className="text-xs text-muted-foreground">{userProfile.email}</p>}
+                                    </>
+                                ) : (
+                                    <span className="sr-only">{profileStatus === 'loading' ? 'Loading profile' : 'No authenticated profile'}</span>
+                                )}
                             </div>
                             <Avatar className="h-8 w-8 cursor-pointer hover:ring-2 hover:ring-blue-100 transition-all">
                                 <AvatarImage src={userProfile?.profilePictureUrl || ''} />
                                 <AvatarFallback className="bg-blue-100 text-blue-700">
-                                    {userProfile?.username ? getInitials(userProfile.username) : <User className="h-4 w-4" />}
+                                    {getProfileInitials(userProfile?.username) || <User className="h-4 w-4" />}
                                 </AvatarFallback>
                             </Avatar>
                         </div>
@@ -241,6 +237,14 @@ function SidebarContent({
                         <span className="text-xs font-medium text-slate-700 dark:text-zinc-300">System Online</span>
                     </div>
                 </div>
+                <Button
+                    variant="ghost"
+                    className="mt-2 w-full justify-start"
+                    onClick={() => void logout().catch((error: unknown) => console.error('Logout failed:', error))}
+                >
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Sign out
+                </Button>
             </div>
         </div>
     );

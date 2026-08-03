@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client'
 import { useForm, useFieldArray } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
@@ -71,6 +72,7 @@ export function IdentitySelector() {
                     }
                 }
             } catch (e) {
+                if (shouldSuppressProtectedRequestError(e)) return;
                 console.error("Failed to fetch personas:", e)
                 toast.error("Could not load personas from graph")
             } finally {
@@ -172,6 +174,7 @@ export function IdentitySelector() {
                 throw new Error(result.error)
             }
         } catch (e) {
+            if (shouldSuppressProtectedRequestError(e)) return;
             console.error("Graph Sync Failed", e)
             toast.error("Graph sync failed", { description: "Local profile saved, but graph update failed." })
         }

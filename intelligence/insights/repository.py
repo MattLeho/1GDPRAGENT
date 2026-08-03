@@ -185,7 +185,7 @@ class InsightRepository:
         rows = await self.connection.fetch(
             """SELECT delta.* FROM export_snapshot_deltas delta
                JOIN analysis_runs run ON run.id=delta.analysis_run_id
-               WHERE (run.profile_id::text=$1 OR run.profile_id IS NULL)
+               WHERE run.profile_id::text=$1
                  AND delta.created_at>=$2 AND delta.created_at<$3
                ORDER BY delta.created_at,delta.id""", subject_id, from_at, to_at,
         )

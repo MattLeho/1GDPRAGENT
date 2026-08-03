@@ -16,7 +16,7 @@ from api.security import require_internal_request, require_profile_id
 from connectors.scheduler import ConnectorScheduler
 
 
-router = APIRouter(prefix="/connectors", tags=["Source connectors"], dependencies=[Depends(require_internal_request)])
+router = APIRouter(prefix="/connectors", tags=["Source connectors"])
 
 
 class CreateBrowserPairing(BaseModel):
@@ -65,9 +65,9 @@ async def create_connector(body: CreateConnectorInstance, profile_id: UUID = Dep
             rows = await app.postgres.execute(
                 """SELECT id FROM connector_credentials
                    WHERE connector_key IN ('email.imap','email') AND account_key=$1
-                     AND secret_ciphertext IS NOT NULL AND NOT needs_reentry
+                     AND profile_id=$2 AND secret_ciphertext IS NOT NULL AND NOT needs_reentry
                    ORDER BY (connector_key='email.imap') DESC,updated_at DESC LIMIT 1""",
-                body.account_key.strip().casefold(),
+                body.account_key.strip().casefold(), profile_id,
             )
             credential_id = rows[0]["id"] if rows else None
         initial_status = (
@@ -100,6 +100,7 @@ async def sync_connector(instance_id: UUID, backfill: bool = False, profile_id: 
         from tasks import connector_sync as connector_sync_task
         task = connector_sync_task.delay({
             "connector_instance_id": str(instance_id),
+            "profile_id": str(profile_id),
             "kind": (SyncRunKind.BACKFILL if backfill else SyncRunKind.SYNC).value,
             "cursor_key": "backfill" if backfill else "default",
         })

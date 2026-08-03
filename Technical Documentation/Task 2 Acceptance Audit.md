@@ -1,5 +1,7 @@
 # Task 2 Acceptance Audit
 
+> **PROVISIONAL — superseded by R0 evidence pending revalidation (2026-07-17).** Historical evidence is retained below but does not prove current integrated or authenticated runtime behaviour.
+
 Audited: 2026-07-10 against current code, migration 010, disposable PostgreSQL, production build output, and the live Compose stack.
 
 ## Requirement audit

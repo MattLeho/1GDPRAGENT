@@ -1,6 +1,7 @@
 'use server'
 
 import { db } from '@/lib/db'
+import { requireServerSessionAuthority } from '@/lib/api-session'
 
 export type PolicyAnalysis = {
     id: string
@@ -18,6 +19,7 @@ export type PolicyAnalysis = {
  * "Recent" is defined as within the last 3 months.
  */
 export async function getPolicyAnalysis(url: string): Promise<PolicyAnalysis | null> {
+    await requireServerSessionAuthority()
     try {
         // Simple domain extraction (could be more robust)
         let domain = url.toLowerCase()
@@ -58,6 +60,7 @@ export async function savePolicyAnalysis(data: {
     data_collected: string[],
     dpo_email: string
 }) {
+    await requireServerSessionAuthority()
     try {
         // Extract domain
         let domain = data.url

@@ -34,10 +34,13 @@ def route_functions(relative_path: str) -> dict[tuple[str, str], ast.AsyncFuncti
 
 
 def test_connector_and_retention_routers_fail_closed_on_internal_authority():
-    for relative_path in ("intelligence/api/connectors.py", "intelligence/api/retention.py"):
-        source = read(relative_path)
-        assert "dependencies=[Depends(require_internal_request)]" in source
-        assert "require_internal_request" in source
+    main = read("intelligence/main.py")
+    assert "verify_internal_request(request, body=await request.body())" in main
+    assert "not is_separately_authorized_ingress(request)" in main
+    connectors = read("intelligence/api/connectors.py")
+    retention = read("intelligence/api/retention.py")
+    assert "Depends(require_profile_id)" in connectors
+    assert "Depends(require_profile_id)" in retention
 
     security = read("intelligence/api/security.py")
     assert "hmac.compare_digest" in security
@@ -92,21 +95,21 @@ def test_profile_ownership_checks_cover_connector_and_retention_mutations():
 
 def test_frontend_uses_signed_sessions_and_authenticated_authority_proxies():
     auth = read("frontend/lib/auth-session.ts")
-    assert "createHmac('sha256',secret())" in auth
+    assert "createHmac('sha256', signingKey())" in auth
     assert "timingSafeEqual" in auth
-    assert "issuedAt>Date.now()+60_000" in auth
-    assert "Date.now()-value.issuedAt>maxAgeMs" in auth
+    assert "authority.issuedAt > now" in auth
+    assert "authority.expiresAt <= now" in auth
 
     api_session = read("frontend/lib/api-session.ts")
     assert "verifySessionToken(token)" in api_session
-    assert "default_profile_id=$2" in api_session
-    assert "'x-gdpr-internal-key':key" in api_session
-    assert "'x-gdpr-profile-id':profileId" in api_session
+    assert "up.default_profile_id = $2" in api_session
+    assert "'x-gdpr-content-sha256': bodyDigest" in api_session
+    assert "createHmac('sha256', key).update(payload" in api_session
+    assert "'x-gdpr-profile-id': canonicalProfileId" in api_session
 
     proxy_guard = read("frontend/proxy.ts")
-    for path in ("/api/connectors", "/api/retention"):
-        assert path in proxy_guard
-    assert "gdpr-session" in proxy_guard
+    assert "SESSION_COOKIE_NAME" in proxy_guard
+    assert "resolveSessionAuthority" in proxy_guard
 
     for relative_path in (
         "frontend/app/api/connectors/[[...path]]/route.ts",

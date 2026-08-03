@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import { GraphCanvas } from '@/components/graph/GraphCanvas';
 import { InspectorPanel } from '@/components/graph/InspectorPanel';
 import { ShadowProfileChat } from '@/components/graph/ShadowProfileChat';
@@ -35,23 +36,29 @@ export default function GraphPage() {
             return;
         }
 
-        const response = await fetch(`/api/graph/nodes?id=${encodeURIComponent(nodeId)}`, {
-            method: 'DELETE',
-        });
-        const data = await response.json();
-
-        if (!response.ok || !data.success) {
-            toast.error('Failed to delete node', {
-                description: data.error || `Node ${nodeId} was not deleted.`,
+        try {
+            const response = await fetch(`/api/graph/nodes?id=${encodeURIComponent(nodeId)}`, {
+                method: 'DELETE',
             });
-            return;
-        }
+            const data = await response.json();
 
-        toast.success('Node deleted', {
-            description: data.label || `Node ${nodeId} removed from graph.`,
-        });
-        setSelectedNode(null);
-        setGraphRefreshKey(key => key + 1);
+            if (!response.ok || !data.success) {
+                toast.error('Failed to delete node', {
+                    description: data.error || `Node ${nodeId} was not deleted.`,
+                });
+                return;
+            }
+
+            toast.success('Node deleted', {
+                description: data.label || `Node ${nodeId} removed from graph.`,
+            });
+            setSelectedNode(null);
+            setGraphRefreshKey(key => key + 1);
+        } catch (error) {
+            if (!shouldSuppressProtectedRequestError(error)) {
+                toast.error('Failed to delete node');
+            }
+        }
     }, []);
 
     const handleMergeNode = useCallback(async (nodeId: string) => {
@@ -60,25 +67,31 @@ export default function GraphPage() {
             return;
         }
 
-        const response = await fetch('/api/graph/nodes/merge', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sourceId: nodeId, targetId }),
-        });
-        const data = await response.json();
-
-        if (!response.ok || !data.success) {
-            toast.error('Failed to merge nodes', {
-                description: data.error || `Node ${nodeId} was not merged.`,
+        try {
+            const response = await fetch('/api/graph/nodes/merge', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sourceId: nodeId, targetId }),
             });
-            return;
-        }
+            const data = await response.json();
 
-        toast.success('Nodes merged', {
-            description: `${data.relationshipsRewired} relationships rewired.`,
-        });
-        setSelectedNode(null);
-        setGraphRefreshKey(key => key + 1);
+            if (!response.ok || !data.success) {
+                toast.error('Failed to merge nodes', {
+                    description: data.error || `Node ${nodeId} was not merged.`,
+                });
+                return;
+            }
+
+            toast.success('Nodes merged', {
+                description: `${data.relationshipsRewired} relationships rewired.`,
+            });
+            setSelectedNode(null);
+            setGraphRefreshKey(key => key + 1);
+        } catch (error) {
+            if (!shouldSuppressProtectedRequestError(error)) {
+                toast.error('Failed to merge nodes');
+            }
+        }
     }, []);
 
     const handleFlagNode = useCallback((nodeId: string) => {

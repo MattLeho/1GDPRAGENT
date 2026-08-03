@@ -10,6 +10,7 @@ from uuid import UUID,uuid4
 
 from db.postgres import PostgresClient, get_postgres_client
 from evidence.ledger import EvidenceLedger
+from request_domain import RequestRepository
 
 from .catalogue import record_ingestion_status
 from .checkpoints import CheckpointStore
@@ -153,6 +154,7 @@ class BulkIngestionService:
         import_roots: Iterable[Path] | None = None, processor: LocalFileProcessor | None = None,
     ) -> None:
         self.postgres = postgres or get_postgres_client()
+        self.requests = RequestRepository(self.postgres)
         self.ledger = EvidenceLedger(self.postgres)
         self.roots = (roots or StorageRoots.from_env()).ensure()
         self.import_roots = tuple(import_roots or allowed_import_roots())
@@ -382,15 +384,12 @@ class BulkIngestionService:
             received_data_id=received_data_id,
         )
         if received_data_id is not None:
-            await self.postgres.execute(
-                """UPDATE received_data SET status=$2,processing_stage=$3,processing_progress=$4,
-                error_message=$5,derived_content_basis='task3_deterministic_pipeline',
-                provenance_status='source_artifact_registered' WHERE id=$1""",
-                received_data_id,
-                "completed" if ingestion_status == "completed" and not specialist else ("processing" if specialist else "error"),
-                "specialist_tasks" if specialist else ingestion_status,
-                80 if specialist else 100,
-                None if ingestion_status == "completed" else processed.dispatch.reason,
+            await self.requests.update_received_processing(
+                received_data_id, analysis_run_id,
+                status="completed" if ingestion_status == "completed" and not specialist else ("processing" if specialist else "error"),
+                processing_stage="specialist_tasks" if specialist else ingestion_status,
+                processing_progress=80 if specialist else 100,
+                error_message=None if ingestion_status == "completed" else processed.dispatch.reason,
             )
         result = BulkProcessResult(
             analysis_run_id=analysis_run_id, export_snapshot_id=export_snapshot_id,

@@ -1,5 +1,7 @@
 'use client';
 
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
+
 /**
  * N8NWebhooksSection Component
  * 
@@ -173,7 +175,9 @@ export function N8NWebhooksSection() {
                     }
                 }
             } catch (e) {
-                console.error('Failed to load N8N webhooks', e);
+                if (!shouldSuppressProtectedRequestError(e)) {
+                    console.error('Failed to load N8N webhooks', e);
+                }
             }
         }
         loadWebhooks();
@@ -196,8 +200,10 @@ export function N8NWebhooksSection() {
                 const error = await res.json();
                 toast.error(error.message || 'Failed to save webhooks');
             }
-        } catch {
-            toast.error('Failed to save webhooks');
+        } catch (error) {
+            if (!shouldSuppressProtectedRequestError(error)) {
+                toast.error('Failed to save webhooks');
+            }
         } finally {
             setIsLoading(false);
         }
@@ -216,8 +222,10 @@ export function N8NWebhooksSection() {
             } else {
                 toast.warning(`${result.passed}/${result.total} webhooks responding`);
             }
-        } catch {
-            toast.error('Failed to test webhooks');
+        } catch (error) {
+            if (!shouldSuppressProtectedRequestError(error)) {
+                toast.error('Failed to test webhooks');
+            }
         } finally {
             setIsTestingAll(false);
         }

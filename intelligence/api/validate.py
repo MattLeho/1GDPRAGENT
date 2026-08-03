@@ -4,12 +4,14 @@ Validate API Endpoint
 Provides REST API for validating triples using MAKGED.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Optional
 
 from validators.makged import MAKGEDValidator, Triple
 from evidence.ledger import EvidenceLedger
+from api.security import require_profile_id
+from uuid import UUID
 
 
 router = APIRouter(prefix="/validate", tags=["Validation"])
@@ -65,7 +67,7 @@ class ValidateResponse(BaseModel):
 
 
 @router.post("", response_model=ValidateResponse)
-async def validate_triple(body: ValidateRequestBody):
+async def validate_triple(body: ValidateRequestBody, profile_id: UUID = Depends(require_profile_id)):
     """
     Validate a knowledge graph triple using MAKGED.
     
@@ -84,7 +86,7 @@ async def validate_triple(body: ValidateRequestBody):
     )
     
     ledger=EvidenceLedger()
-    run_id=await ledger.create_analysis_run("makged_validation","task1-makged-v1",configuration={"max_rounds":body.max_rounds})
+    run_id=await ledger.create_analysis_run("makged_validation","task1-makged-v1",profile_id=profile_id,configuration={"max_rounds":body.max_rounds})
     validator = MAKGEDValidator(max_rounds=body.max_rounds)
     
     try:
@@ -114,14 +116,14 @@ async def validate_triple(body: ValidateRequestBody):
 
 
 @router.post("/batch")
-async def validate_triples_batch(triples: list[ValidateRequestBody]):
+async def validate_triples_batch(triples: list[ValidateRequestBody], profile_id: UUID = Depends(require_profile_id)):
     """
     Validate multiple triples.
     
     Processes triples sequentially and returns all results.
     """
     ledger=EvidenceLedger()
-    run_id=await ledger.create_analysis_run("makged_batch_validation","task1-makged-v1",configuration={"count":len(triples)})
+    run_id=await ledger.create_analysis_run("makged_batch_validation","task1-makged-v1",profile_id=profile_id,configuration={"count":len(triples)})
     results = []
     
     for body in triples:

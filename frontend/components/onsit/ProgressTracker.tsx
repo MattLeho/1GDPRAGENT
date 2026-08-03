@@ -1,5 +1,7 @@
 'use client';
 
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
+
 /**
  * ProgressTracker Component
  * 
@@ -149,7 +151,9 @@ export function ProgressTracker({
                     }
                 }
             } catch (e) {
-                console.error('Failed to fetch discovery status', e);
+                if (!shouldSuppressProtectedRequestError(e)) {
+                    console.error('Failed to fetch discovery status', e);
+                }
             }
         }
 

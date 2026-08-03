@@ -1,10 +1,17 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { writeFile, mkdir } from 'fs/promises';
+import { requireApiSession } from '@/lib/api-session';
+import { writeFile, mkdir, unlink } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { pool } from '@/lib/db';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'id_documents');
+const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+const ALLOWED_DOCUMENT_TYPES = new Set(['passport', 'drivers_license', 'national_id', 'utility_bill']);
+const ALLOWED_MIME_EXTENSIONS = new Map([
+    ['application/pdf', '.pdf'], ['image/jpeg', '.jpg'], ['image/png', '.png'], ['image/webp', '.webp'],
+]);
 
 async function ensureUploadDir() {
     if (!existsSync(UPLOAD_DIR)) {
@@ -24,12 +31,16 @@ async function createCensoredVersion(originalPath: string, documentType: string)
 /**
  * GET /api/settings/id-documents - Get all ID documents
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const result = await pool.query(
             `SELECT id, document_type, file_name, file_url, censored_url, uploaded_at
              FROM id_documents
+             WHERE profile_id = $1
              ORDER BY uploaded_at DESC`
+            , [authority.profileId]
         );
 
         return NextResponse.json({
@@ -56,6 +67,8 @@ export async function GET() {
  * POST /api/settings/id-documents - Upload a new ID document
  */
 export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const formData = await request.formData();
         const file = formData.get('file') as File;
@@ -67,6 +80,13 @@ export async function POST(request: NextRequest) {
                 { status: 400 }
             );
         }
+        if (!ALLOWED_DOCUMENT_TYPES.has(documentType)) {
+            return NextResponse.json({ success: false, error: 'Unsupported document type' }, { status: 400 });
+        }
+        const safeExtension = ALLOWED_MIME_EXTENSIONS.get(file.type);
+        if (!safeExtension || file.size <= 0 || file.size > MAX_DOCUMENT_BYTES) {
+            return NextResponse.json({ success: false, error: 'Only PDF, JPEG, PNG, or WebP files up to 10 MB are accepted' }, { status: 400 });
+        }
 
         await ensureUploadDir();
 
@@ -74,8 +94,7 @@ export async function POST(request: NextRequest) {
         const bytes = await file.arrayBuffer();
         const buffer = Buffer.from(bytes);
 
-        const ext = path.extname(file.name);
-        const filename = `${documentType}_${Date.now()}${ext}`;
+        const filename = `${randomUUID()}${safeExtension}`;
         const filepath = path.join(UPLOAD_DIR, filename);
 
         await writeFile(filepath, buffer);
@@ -86,12 +105,18 @@ export async function POST(request: NextRequest) {
         const censoredUrl = await createCensoredVersion(filepath, documentType);
 
         // Insert into database
-        const result = await pool.query(
-            `INSERT INTO id_documents (document_type, file_name, file_url, censored_url)
-             VALUES ($1, $2, $3, $4)
-             RETURNING id, document_type, file_name, file_url, censored_url, uploaded_at`,
-            [documentType, file.name, fileUrl, censoredUrl]
-        );
+        let result;
+        try {
+            result = await pool.query(
+                `INSERT INTO id_documents (document_type, file_name, file_url, censored_url, profile_id)
+                 VALUES ($1, $2, $3, $4, $5)
+                 RETURNING id, document_type, file_name, file_url, censored_url, uploaded_at`,
+                [documentType, path.basename(file.name), fileUrl, censoredUrl, authority.profileId]
+            );
+        } catch (error) {
+            await unlink(filepath).catch(() => undefined);
+            throw error;
+        }
 
         return NextResponse.json({
             success: true,
@@ -117,6 +142,8 @@ export async function POST(request: NextRequest) {
  * DELETE /api/settings/id-documents - Delete an ID document
  */
 export async function DELETE(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');
@@ -128,7 +155,21 @@ export async function DELETE(request: NextRequest) {
             );
         }
 
-        await pool.query('DELETE FROM id_documents WHERE id = $1', [id]);
+        const owned = await pool.query(
+            'SELECT id, file_url, censored_url FROM id_documents WHERE id = $1 AND profile_id = $2',
+            [id, authority.profileId],
+        );
+        if (owned.rowCount !== 1) {
+            return NextResponse.json({ success: false, error: 'Document not found' }, { status: 404 });
+        }
+        for (const url of [owned.rows[0].file_url, owned.rows[0].censored_url]) {
+            if (!url) continue;
+            const candidate = path.join(UPLOAD_DIR, path.basename(String(url)));
+            try { await unlink(candidate); } catch (error: any) {
+                if (error?.code !== 'ENOENT') throw error;
+            }
+        }
+        await pool.query('DELETE FROM id_documents WHERE id = $1 AND profile_id = $2', [id, authority.profileId]);
 
         return NextResponse.json({
             success: true,

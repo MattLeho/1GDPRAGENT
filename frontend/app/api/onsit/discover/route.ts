@@ -8,7 +8,8 @@
  * @see https://github.com/s0md3v/Photon - Crawler patterns
  */
 
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { intelligenceAuthorityHeaders, requireApiSession } from '@/lib/api-session';
 
 // Intelligence service URL - configurable for Docker vs local development
 const INTELLIGENCE_URL = process.env.INTELLIGENCE_SERVICE_URL || 'http://localhost:8000';
@@ -90,7 +91,9 @@ function buildSeeds(data: DiscoverRequestBody): string[] {
  * Initiates an ONSIT discovery scan. The scan runs asynchronously
  * and the client should poll /api/onsit/status/[taskId] for updates.
  */
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const body: DiscoverRequestBody = await request.json();
 
@@ -108,13 +111,12 @@ export async function POST(request: Request) {
         const enrichers = body.enrichers || getEnrichersForDepth(body.depth || 'standard', body);
 
         // Forward to intelligence service
-        const response = await fetch(`${INTELLIGENCE_URL}/onsit/discover`, {
+        const target = `${INTELLIGENCE_URL}/onsit/discover`;
+        const encodedBody=JSON.stringify({ seeds, enrichers });
+        const response = await fetch(target, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                seeds,
-                enrichers,
-            }),
+            headers: intelligenceAuthorityHeaders(authority.profileId, target, 'POST','application/json',undefined,undefined,encodedBody),
+            body: encodedBody,
         });
 
         if (!response.ok) {

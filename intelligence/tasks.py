@@ -56,6 +56,26 @@ def run_async(coro):
         loop.close()
 
 
+async def _require_bulk_job_profile(data: dict):
+    """Revalidate queued run/snapshot/file linkage at worker execution time."""
+    from uuid import UUID
+    from db.postgres import get_postgres_client
+    profile_id = UUID(data["profile_id"])
+    received_data_id = UUID(data["received_data_id"]) if data.get("received_data_id") else None
+    rows = await get_postgres_client().execute(
+        """SELECT 1 FROM analysis_runs ar
+           JOIN export_snapshots es ON es.id=$2 AND es.analysis_run_id=ar.id AND es.profile_id=ar.profile_id
+           WHERE ar.id=$1 AND ar.profile_id=$3
+             AND ($4::uuid IS NULL OR EXISTS (
+                 SELECT 1 FROM received_data rd WHERE rd.id=$4 AND rd.profile_id=$3
+             ))""",
+        UUID(data["analysis_run_id"]), UUID(data["export_snapshot_id"]), profile_id, received_data_id,
+    )
+    if not rows:
+        raise LookupError("bulk ingestion job authority linkage is invalid")
+    return profile_id
+
+
 # === IMPLEMENTED TASKS (Phase 2) ===
 
 
@@ -71,6 +91,7 @@ def bulk_ingestion_process_file(self, data: dict) -> dict:
     from dataclasses import asdict
     from uuid import UUID
     from ingestion.bulk import BulkIngestionService
+    run_async(_require_bulk_job_profile(data))
     result=run_async(BulkIngestionService().process_file(
         data["file_path"],analysis_run_id=UUID(data["analysis_run_id"]),
         export_snapshot_id=UUID(data["export_snapshot_id"]),
@@ -91,11 +112,16 @@ def connector_sync(self, data: dict) -> dict:
     from uuid import UUID
     from connectors.application import ConnectorApplication
     from connectors.models import SyncRunKind
-    result = run_async(ConnectorApplication().run_instance(
-        UUID(data["connector_instance_id"]),
-        kind=SyncRunKind(data.get("kind", "sync")),
-        cursor_key=data.get("cursor_key", "default"),
-    ))
+    async def owned_run():
+        application=ConnectorApplication()
+        instance_id=UUID(data["connector_instance_id"]); profile_id=UUID(data["profile_id"])
+        instance=await application.repository.get_instance(instance_id)
+        if instance.profile_id != profile_id: raise LookupError("connector instance does not exist")
+        return await application.run_instance(
+            instance_id, kind=SyncRunKind(data.get("kind", "sync")),
+            cursor_key=data.get("cursor_key", "default"),
+        )
+    result = run_async(owned_run())
     return result.model_dump(mode="json")
 
 
@@ -132,6 +158,7 @@ def ingest_to_graph_task(self, data: dict) -> dict:
         categories=data.get("categories", {}),
         source=data.get("source", "celery"),
         source_artifact=data.get("source_artifact", {}),
+        profile_id=__import__("uuid").UUID(data["profile_id"]),
     )
     
     result = run_async(agent.ingest(request))
@@ -208,7 +235,7 @@ def shadow_query_task(self, data: dict) -> dict:
 
 
 @app.task(bind=True, name="intelligence.onsit.discover")
-def onsit_discover(self, seeds: list, enrichers: list = None) -> dict:
+def onsit_discover(self, seeds: list, enrichers: list = None, profile_id: str | None = None) -> dict:
     """
     ONSIT Discovery Task.
     
@@ -226,22 +253,25 @@ def onsit_discover(self, seeds: list, enrichers: list = None) -> dict:
     orchestrator = ONSITOrchestrator()
     
     async def run_discovery():
+        if not profile_id: raise ValueError("profile authority is required")
+        authority_profile=__import__("uuid").UUID(profile_id)
         scan_id = await orchestrator.start_discovery(
             seeds=seeds,
             enrichers=enrichers,
+            profile_id=authority_profile,
         )
         
         # Wait for completion (poll status)
         import asyncio
         for _ in range(60):  # Max 60 seconds
-            status = await orchestrator.get_status(scan_id)
+            status = await orchestrator.get_status(scan_id,authority_profile)
             if status and status.status in ("completed", "failed"):
                 break
             await asyncio.sleep(1)
         
         # Get results
-        findings = await orchestrator.get_findings(scan_id, limit=500)
-        status = await orchestrator.get_status(scan_id)
+        findings = await orchestrator.get_findings(scan_id, limit=500,profile_id=authority_profile)
+        status = await orchestrator.get_status(scan_id,authority_profile)
         
         return {
             "scan_id": scan_id,

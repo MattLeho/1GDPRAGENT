@@ -6,6 +6,7 @@ import json
 from uuid import UUID, uuid4
 
 from db.postgres import PostgresClient, get_postgres_client
+from request_domain import RequestRepository
 
 from .models import ControllerErasureCandidate, ReviewStatus
 
@@ -19,6 +20,7 @@ class ControllerErasureService:
 
     def __init__(self, postgres: PostgresClient | None = None) -> None:
         self.postgres = postgres or get_postgres_client()
+        self.requests = RequestRepository(self.postgres)
 
     async def create_candidate(
         self, deletion_plan_item_id: UUID, *, controller_key: str,
@@ -62,9 +64,11 @@ class ControllerErasureService:
         pool = await self.postgres._get_pool()
         async with pool.acquire() as connection, connection.transaction():
             row = await connection.fetchrow(
-                """SELECT cec.*,dpi.stage deletion_stage
+                """SELECT cec.*,dpi.stage deletion_stage,ar.profile_id
                    FROM controller_erasure_candidates cec
                    JOIN deletion_plan_items dpi ON dpi.id=cec.deletion_plan_item_id
+                   JOIN deletion_plans dp ON dp.id=dpi.deletion_plan_id
+                   JOIN analysis_runs ar ON ar.id=dp.analysis_run_id
                    WHERE cec.id=$1 FOR UPDATE OF cec,dpi""", candidate_id,
             )
             if not row:
@@ -84,11 +88,10 @@ class ControllerErasureService:
                 configuration.get("reviewed_auto_erasure_enabled") is True
             )
             controller = row["controller_key"]
-            request_id = await connection.fetchval(
-                """INSERT INTO requests(company_name,company_url,domain,status,request_type)
-                   VALUES($1,$2,$3,'draft','erasure') RETURNING id""",
-                (company_name or controller).strip(), company_url,
-                controller,
+            request_id = await self.requests.create_draft(
+                row["profile_id"], company_name=(company_name or controller).strip(),
+                company_url=company_url, domain=controller, request_type="erasure",
+                connection=connection,
             )
             row = await connection.fetchrow(
                 """UPDATE controller_erasure_candidates SET review_status='approved',

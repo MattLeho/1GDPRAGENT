@@ -107,7 +107,10 @@ async def _artifact_fixture(url, tmp_path, *, content=b"important excerpt then d
     roots = StorageRoots.from_base(tmp_path / "data").ensure()
     blob = write_raw_blob(roots.blobs, content)
     client = PostgresClient(url); ledger = EvidenceLedger(client)
-    run_id = await ledger.create_analysis_run("retention", "task5-wave6-v1")
+    profiles = await client.execute("SELECT id FROM profiles ORDER BY created_at,id LIMIT 1")
+    run_id = await ledger.create_analysis_run(
+        "retention", "task5-wave6-v1", profile_id=profiles[0]["id"],
+    )
     snapshot_id = await ledger.create_export_snapshot(run_id, "manual_import")
     _, artifact_id = await ledger.record_source_occurrence(
         snapshot_id, blob.sha256, blob.byte_size, storage_uri=blob.path.as_uri(),

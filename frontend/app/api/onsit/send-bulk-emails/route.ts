@@ -6,12 +6,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import { getWebhookUrl } from '@/lib/n8n-webhooks';
-import { Pool } from 'pg';
+import { RequestService } from '@/lib/requests/service';
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const requests = new RequestService();
 
 export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const body = await request.json();
         const { vendors, requestType = 'access', userDetails } = body;
@@ -31,7 +34,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Check which vendors have already been contacted
-        const alreadyContacted = await checkContactedVendors(vendors);
+        const alreadyContacted = await checkContactedVendors(vendors, authority.profileId);
 
         // Filter out already contacted vendors
         const vendorsToContact = vendors.filter(
@@ -79,7 +82,9 @@ export async function POST(request: NextRequest) {
                             vendorData.vendor,
                             vendorData.dpoEmail,
                             requestType,
-                            userDetails.email
+                            userDetails.email,
+                            authority.profileId,
+                            authority.userId,
                         );
                         return { vendor: vendorData.vendor, status: 'sent' };
                     } else {
@@ -87,7 +92,7 @@ export async function POST(request: NextRequest) {
                     }
                 } catch (error) {
                     console.error(`Failed to send email to ${vendorData.vendor}:`, error);
-                    return { vendor: vendorData.vendor, status: 'error' };
+                    return { vendor: vendorData.vendor, status: 'error', error: 'Delivery or audit persistence failed' };
                 }
             })
         );
@@ -96,7 +101,7 @@ export async function POST(request: NextRequest) {
         const failed = results.filter(r => r.status !== 'sent').length;
 
         return NextResponse.json({
-            success: true,
+            success: failed === 0,
             sent,
             failed,
             skipped: alreadyContacted.length,
@@ -115,26 +120,8 @@ export async function POST(request: NextRequest) {
 /**
  * Check which vendors have already been contacted
  */
-async function checkContactedVendors(vendors: any[]): Promise<string[]> {
-    const client = await pool.connect();
-    try {
-        const vendorNames = vendors.map(v => v.vendor.toLowerCase());
-
-        const result = await client.query(
-            `SELECT DISTINCT LOWER(company_name) as company 
-             FROM requests 
-             WHERE LOWER(company_name) = ANY($1::text[])
-             AND status IN ('sent', 'pending')`,
-            [vendorNames]
-        );
-
-        return result.rows.map(row => row.company);
-    } catch (error) {
-        console.error('[Bulk Email] Error checking contacted vendors:', error);
-        return [];
-    } finally {
-        client.release();
-    }
+async function checkContactedVendors(vendors: any[], profileId: string): Promise<string[]> {
+    return requests.contactedCompanyNames(profileId,vendors.map(v=>String(v.vendor)));
 }
 
 /**
@@ -144,24 +131,15 @@ async function recordSentEmail(
     company: string,
     dpoEmail: string,
     requestType: string,
-    userEmail: string
+    userEmail: string,
+    profileId: string,
+    userId: string,
 ) {
-    const client = await pool.connect();
-    try {
-        await client.query(
-            `INSERT INTO requests (company_name, domain, status, request_type, notes, created_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())`,
-            [
-                company,
-                dpoEmail.split('@')[1] || '',
-                'sent',
-                requestType,
-                `Bulk email sent via vendor discovery to ${dpoEmail}`,
-            ]
-        );
-    } catch (error) {
-        console.error(`[Bulk Email] Error recording email for ${company}:`, error);
-    } finally {
-        client.release();
-    }
+    void userEmail;
+    const sentAt=new Date();
+    const created=await requests.create(profileId,{company_name:company,domain:dpoEmail.split('@')[1]||'',
+        status:'ready_for_review',request_type:requestType,notes:`Bulk email sent via vendor discovery to ${dpoEmail}`});
+    await requests.transition(profileId,{request_id:created.id,next_state:'sent',actor:`user:${userId}`,
+        reason:'Vendor-discovery transport recorded successful send',evidence_reference:`recipient:${dpoEmail}`,
+        transitioned_at:sentAt,sent_at:sentAt});
 }

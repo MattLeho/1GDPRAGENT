@@ -6,8 +6,7 @@ Provides async database operations for logging and state management.
 
 import asyncpg
 from typing import Optional
-from functools import lru_cache
-from datetime import datetime
+from uuid import UUID
 
 from config import get_settings
 
@@ -47,51 +46,28 @@ class PostgresClient:
     
     async def log_message(
         self,
-        request_id: str,
+        profile_id: UUID,
+        request_id: UUID,
         content: str,
         sender: str = "agent",
     ) -> None:
-        """
-        Log a message to the messages table.
-        
-        Args:
-            request_id: UUID of the associated request
-            content: Message content
-            sender: Message sender (default: 'agent')
-        """
-        pool = await self._get_pool()
-        
-        query = """
-            INSERT INTO messages (request_id, sender, content, timestamp)
-            VALUES ($1::uuid, $2, $3, NOW())
-        """
-        
-        async with pool.acquire() as conn:
-            await conn.execute(query, request_id, sender, content)
+        """Append a message through the canonical profile-owned boundary."""
+        from request_domain import RequestRepository
+        if not await RequestRepository(self).append_message(
+            profile_id, request_id, sender=sender, content=content,
+        ):
+            raise LookupError("request does not exist for canonical profile")
     
     async def update_request_notes(
         self,
-        request_id: str,
+        profile_id: UUID,
+        request_id: UUID,
         notes: str,
     ) -> None:
-        """
-        Append notes to a request.
-        
-        Args:
-            request_id: UUID of the request
-            notes: Notes to append
-        """
-        pool = await self._get_pool()
-        
-        query = """
-            UPDATE requests
-            SET notes = COALESCE(notes, '') || E'\n\n[' || NOW() || '] ' || $2,
-                updated_at = NOW()
-            WHERE id = $1::uuid
-        """
-        
-        async with pool.acquire() as conn:
-            await conn.execute(query, request_id, notes)
+        """Append operational notes through the canonical boundary."""
+        from request_domain import RequestRepository
+        if not await RequestRepository(self).append_notes(profile_id, request_id, notes):
+            raise LookupError("request does not exist for canonical profile")
     
     async def execute(
         self,

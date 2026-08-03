@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -153,7 +154,9 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
                                     method: 'PUT',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ fileId: file.id }),
-                                }).catch(err => console.error('Graph ingestion failed:', err));
+                                }).catch(err => {
+                                    if (!shouldSuppressProtectedRequestError(err)) console.error('Graph ingestion failed:', err);
+                                });
                             }
                         }
                     }
@@ -179,7 +182,8 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
             } else {
                 toast.error('Failed to delete file');
             }
-        } catch {
+        } catch (error) {
+            if (shouldSuppressProtectedRequestError(error)) return;
             toast.error('Failed to delete file');
         }
     }, [previewFile]);
@@ -199,7 +203,8 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
             } else {
                 toast.error(data.error || 'Scan failed');
             }
-        } catch {
+        } catch (error) {
+            if (shouldSuppressProtectedRequestError(error)) return;
             toast.error('Scan failed');
         } finally {
             setScanning(false);
@@ -260,7 +265,9 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ fileId: file.id }),
-                    }).catch(err => console.error('Failed to trigger processing:', err));
+                    }).catch(err => {
+                        if (!shouldSuppressProtectedRequestError(err)) console.error('Failed to trigger processing:', err);
+                    });
                 }
 
                 // Refresh files list
@@ -273,6 +280,7 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
                 toast.error('Upload failed', { description: data.error });
             }
         } catch (error) {
+            if (shouldSuppressProtectedRequestError(error)) return;
             toast.error('Upload failed', { description: 'Network error' });
         } finally {
             setUploading(false);
@@ -301,7 +309,8 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
                     timestamp: new Date().toISOString()
                 }]);
             }
-        } catch {
+        } catch (error) {
+            if (shouldSuppressProtectedRequestError(error)) return;
             toast.error('Failed to send message');
         } finally {
             setChatLoading(false);
@@ -1024,8 +1033,10 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
                                                         } else {
                                                             toast.error(data.error || 'Analysis failed');
                                                         }
-                                                    } catch {
-                                                        toast.error('Failed to scan privacy policy');
+                                                    } catch (error) {
+                                                        if (!shouldSuppressProtectedRequestError(error)) {
+                                                            toast.error('Failed to scan privacy policy');
+                                                        }
                                                     }
                                                 }}
                                             >

@@ -58,7 +58,7 @@ export default function LoginPage() {
             const endpoint = isFirstTime ? '/api/auth/register' : '/api/auth/login';
             const res = await fetch(endpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-gdpr-csrf': '1' },
                 body: JSON.stringify({
                     username: formData.username,
                     password: formData.password,
@@ -184,15 +184,6 @@ export default function LoginPage() {
                             )}
                         </Button>
 
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            className="w-full"
-                            onClick={() => setIsFirstTime(!isFirstTime)}
-                            disabled={isLoading}
-                        >
-                            {isFirstTime ? 'Already have an account? Sign in' : 'Need an account? Create one'}
-                        </Button>
                     </CardFooter>
                 </form>
             </Card>

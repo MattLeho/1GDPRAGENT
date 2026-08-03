@@ -65,7 +65,7 @@ def test_metadata_only_returns_before_provenance_resolution_or_task_execution():
 def test_selective_visual_is_staged_from_origin_and_never_runs_all_tasks_blindly():
     post = compact(function_body(read(ROUTE_PATH), "export async function POST"))
 
-    origin_call = "constorigin=awaitinvokeAndPersist('image.origin_classification',resolved,input);"
+    origin_call = "constorigin=awaitinvokeAndPersist('image.origin_classification',resolved,input,authority.profileId);"
     assert origin_call in post
     assert post.index(origin_call) < post.index("constremaining=")
     assert "originValue==='screenshot'?['image.ocr','image.caption']" in post

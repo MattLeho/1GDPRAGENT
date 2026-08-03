@@ -6,9 +6,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import { getAICredential } from '@/lib/ai-credentials';
 
 export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const body = await request.json();
         const { vendors } = body;
@@ -21,7 +24,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Get API key
-        const apiKey = await getAICredential('google') ||
+        const apiKey = await getAICredential('google', authority.profileId) ||
             process.env.GOOGLE_API_KEY ||
             process.env.GEMINI_API_KEY;
 

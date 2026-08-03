@@ -2,13 +2,21 @@ import { NextResponse, NextRequest } from 'next/server';
 import { pool } from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import { cookies } from 'next/headers';
-import { createSessionToken } from '@/lib/auth-session';
+import {
+    createSessionToken,
+    SESSION_COOKIE_NAME,
+    SESSION_TTL_MS,
+    sessionCookieOptions,
+} from '@/lib/auth-session';
+import { enforceSameOriginMutation } from '@/lib/api-session';
 
 /**
  * POST /api/auth/register - Register first-time user
  */
 export async function POST(request: NextRequest) {
     try {
+        const csrfFailure = enforceSameOriginMutation(request);
+        if (csrfFailure) return csrfFailure;
         const body = await request.json();
         const { username, password } = body;
 
@@ -27,6 +35,17 @@ export async function POST(request: NextRequest) {
         let createdUser:{id:string;username:string;default_profile_id:string}|null=null;
         try{
             await client.query('BEGIN');
+            // Public registration is bootstrap-only. The transaction-scoped lock
+            // makes the empty-install check safe when two setup requests race.
+            await client.query("SELECT pg_advisory_xact_lock(hashtext('gdpr-agent-initial-registration'))");
+            const existingUsers = await client.query('SELECT 1 FROM user_profiles LIMIT 1');
+            if (existingUsers.rowCount) {
+                await client.query('ROLLBACK');
+                return NextResponse.json(
+                    { success: false, error: 'Account setup is already complete' },
+                    { status: 409 },
+                );
+            }
             const profile=await client.query('INSERT INTO profiles(identity_name) VALUES($1) RETURNING id',[username]);
             const userResult=await client.query(
                 `INSERT INTO user_profiles (username, email, password_hash, default_profile_id)
@@ -42,20 +61,21 @@ export async function POST(request: NextRequest) {
         const userId = createdUser.id;
 
         // Create session token
-        const token = createSessionToken(String(userId),String(createdUser.default_profile_id));
+        const issuedAt = Date.now();
+        const expiresAt = issuedAt + SESSION_TTL_MS;
+        const token = createSessionToken(
+            String(userId),
+            String(createdUser.default_profile_id),
+            issuedAt,
+            expiresAt,
+        );
 
         // Set session cookie - await cookies() for Next.js 16+
         const cookieStore = await cookies();
-        cookieStore.set('gdpr-session', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            maxAge: 60 * 60 * 24 * 30, // 30 days
-        });
+        cookieStore.set(SESSION_COOKIE_NAME, token, sessionCookieOptions(expiresAt, issuedAt));
 
         return NextResponse.json({
             success: true,
-            token,
             user: {
                 id: userId,
                 username: createdUser.username,

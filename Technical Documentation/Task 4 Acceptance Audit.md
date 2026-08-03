@@ -5,10 +5,12 @@ tags:
   - gdpr-agent
   - task-4
   - acceptance
-status: accepted
+status: provisional-r0-revalidation-required
 ---
 
 # Task 4 Acceptance Audit
+
+> **PROVISIONAL — superseded by R0 evidence pending revalidation (2026-07-17).** Historical evidence is retained below but does not prove current integrated or authenticated runtime behaviour.
 
 The remediation closes all implementation, automated-verification and authenticated-runtime gaps found by the first independent audit. Task 4 is accepted. The user's live profile contained no event partitions, so the evidence-drawer interaction was verified with an isolated local synthetic subject, `task4-browser-smoke`, rather than altering or seeding the user's profile.
 

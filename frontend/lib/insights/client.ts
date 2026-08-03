@@ -3,6 +3,7 @@ import type {
     ObservedInterestState, PlaceInsight, SearchInsight, TemporalCorrelationCandidate,
 } from './types';
 import { serializeInsightSelection, type InsightTemporalSelection } from './query';
+import { protectedFetch as fetch } from '@/lib/api-client';
 
 export type InsightModule = 'overview' | 'interests' | 'search' | 'ai-conversations' | 'places' | 'changes' | 'context';
 

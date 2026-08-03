@@ -5,10 +5,12 @@ tags:
   - gdpr-agent
   - task-5
   - implementation-ledger
-status: wave-8-verified
+status: provisional-r0-revalidation-required
 ---
 
 # Task 5 Implementation Ledger
+
+> **PROVISIONAL — superseded by R0 evidence pending revalidation (2026-07-17).** Historical evidence is retained below but does not prove current integrated or authenticated runtime behaviour.
 
 This is the single integration ledger for Task 5. Status values are `pending`, `in-progress`, `blocked`, `delivered`, or `verified`. A UI card, placeholder route, mock-only result, or connector without cursor, deduplication, provenance and restart behaviour is not delivered.
 

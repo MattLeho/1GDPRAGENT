@@ -5,11 +5,11 @@ import { getUnreadItems } from '@/lib/actions/messages';
 
 // Components
 import { StatsOverview } from '@/components/dashboard/StatsOverview';
-import { PrivacyScoreCard } from '@/components/dashboard/PrivacyScoreCard';
+import { RequestStateCard } from '@/components/dashboard/PrivacyScoreCard';
 import { RequestsTimeline } from '@/components/dashboard/RequestsTimeline';
-import { TopDataHolders } from '@/components/dashboard/TopDataHolders';
+import { ReceivedArtefactsByCompany } from '@/components/dashboard/TopDataHolders';
 import { QuickActions } from '@/components/dashboard/QuickActions';
-import { ComplianceGauge } from '@/components/dashboard/ComplianceGauge';
+import { DeadlineEvidenceCard } from '@/components/dashboard/ComplianceGauge';
 import { DataVolumeChart } from '@/components/dashboard/DataVolumeChart';
 import { TaskWidget } from '@/components/dashboard/TaskWidget';
 import { ReviewQueue } from '@/components/dashboard/ReviewQueue';
@@ -17,7 +17,7 @@ import { AgentManager } from '@/components/dashboard/AgentManager';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Sparkles, ArrowRight, Shield, Zap } from 'lucide-react';
+import { Sparkles, ArrowRight, Inbox, Zap } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,7 +33,8 @@ export default async function DashboardHome() {
     const taskData = pendingRequests.slice(0, 5).map(r => ({
         id: r.id,
         companyName: r.company_name,
-        status: r.status,
+        status: (r.status === 'ready_for_review' || r.status === 'identity_action_required' || r.status === 'clarification_action_required'
+            ? 'action_required' : r.status === 'processing_response' || r.status === 'awaiting_response' ? 'processing' : r.status) as 'draft'|'scheduled'|'completed'|'processing'|'pending'|'action_required'|'action_needed',
         dueDate: 'Action Required'
     }));
 
@@ -83,15 +84,16 @@ export default async function DashboardHome() {
                         </div>
                     </div>
 
-                    {/* Privacy Score Preview */}
+                    {/* Explicit lifecycle evidence preview */}
                     <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 min-w-[200px]">
                         <div className="flex items-center gap-3">
                             <div className="p-3 rounded-full bg-white/20">
-                                <Shield className="h-6 w-6" />
+                                <Inbox className="h-6 w-6" />
                             </div>
                             <div>
-                                <p className="text-sm text-white/70">Privacy Score</p>
-                                <p className="text-4xl font-bold">{stats.privacyScore}</p>
+                                <p className="text-sm text-white/70">Responses recorded</p>
+                                <p className="text-4xl font-bold">{stats.responsesReceived}</p>
+                                <p className="text-xs text-white/70">Explicit receipt dates</p>
                             </div>
                         </div>
                     </div>
@@ -103,9 +105,9 @@ export default async function DashboardHome() {
                 totalRequests={stats.totalRequests}
                 pendingActions={stats.pendingActions}
                 completedRequests={stats.completedRequests}
-                dataRetrievedGB={stats.dataRetrievedGB}
-                avgResponseDays={stats.avgResponseDays}
-                gdprDeadlinesMet={stats.gdprDeadlinesMet}
+                responsesReceived={stats.responsesReceived}
+                receivedArtefactCount={stats.receivedArtefactCount}
+                failedWorkflows={stats.failedWorkflows}
             />
 
             {/* Main Grid */}
@@ -120,7 +122,7 @@ export default async function DashboardHome() {
                         {/* Data Volume */}
                         <Card>
                             <CardHeader className="pb-2">
-                                <CardTitle className="text-sm font-medium">Data Retrieved by Company</CardTitle>
+                                <CardTitle className="text-sm font-medium">Received artefact volume by company</CardTitle>
                             </CardHeader>
                             <CardContent>
                                 <DataVolumeChart data={stats.volumeByCompany} />
@@ -138,12 +140,10 @@ export default async function DashboardHome() {
                             </CardContent>
                         </Card>
 
-                        {/* Compliance Gauge */}
-                        <ComplianceGauge
-                            deadlinesMet={stats.gdprDeadlinesMet}
-                            deadlinesMissed={stats.gdprDeadlinesMissed}
-                            avgResponseDays={stats.avgResponseDays}
-                            fastestResponseDays={stats.fastestResponseDays}
+                        <DeadlineEvidenceCard
+                            knownUpcoming={stats.knownUpcomingDeadlines}
+                            unknown={stats.unknownDeadlines}
+                            responseDuration={stats.responseDurationScreening}
                         />
                     </div>
 
@@ -153,17 +153,12 @@ export default async function DashboardHome() {
 
                 {/* Right Column - Sidebar */}
                 <div className="lg:col-span-4 space-y-6">
-                    {/* Privacy Score Card */}
-                    <PrivacyScoreCard
-                        score={stats.privacyScore}
-                        breakdown={stats.privacyScoreBreakdown}
-                    />
+                    <RequestStateCard states={stats.requestsByState} />
 
                     {/* Quick Actions */}
                     <QuickActions />
 
-                    {/* Top Data Holders */}
-                    <TopDataHolders data={stats.topDataHolders} />
+                    <ReceivedArtefactsByCompany data={stats.receivedArtefactsByCompany} />
                 </div>
             </div>
 

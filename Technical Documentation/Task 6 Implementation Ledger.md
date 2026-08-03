@@ -5,10 +5,12 @@ tags:
   - gdpr-agent
   - task-6
   - implementation
-status: active
+status: provisional-r0-revalidation-required
 ---
 
 # Task 6 Implementation Ledger
+
+> **PROVISIONAL — superseded by R0 evidence pending revalidation (2026-07-17).** Historical evidence is retained below but does not prove current integrated or authenticated runtime behaviour.
 
 Shared-file owner: orchestrator. PostgreSQL is authoritative; Neo4j is a derived high-value projection. Model output may explain typed evidence bundles but may not promote epistemic or legal status.
 

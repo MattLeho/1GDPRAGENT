@@ -140,7 +140,11 @@ async def test_bulk_pipeline_persists_source_units_unknown_schema_and_resumes(tm
 
         image_path=imports/"screenshot.png"
         Image.new("RGB",(32,18),"white").save(image_path)
-        media_run,media_snapshot=await service.prepare_run(request_id=request_id,source_type="manual_import")
+        profile_rows=await client.execute("SELECT profile_id FROM requests WHERE id=$1",request_id)
+        profile_id=profile_rows[0]["profile_id"]
+        media_run,media_snapshot=await service.prepare_run(
+            request_id=request_id,profile_id=profile_id,source_type="manual_import",
+        )
         media=await service.process_file(
             str(image_path),analysis_run_id=media_run,export_snapshot_id=media_snapshot,
             declared_mime="image/png",original_path="screenshot.png",
@@ -151,7 +155,7 @@ async def test_bulk_pipeline_persists_source_units_unknown_schema_and_resumes(tm
         await _persist_specialist_units(client,dict(request_rows[0]),{
             "text":"Hello","words":[{"text":"Hello","confidence":98.0,"left":2,"top":3,"width":10,"height":5}],
             "engine":"local_ocr","model":"tesseract","derivation_version":"task2-ocr-v1",
-        })
+        },profile_id)
         connection=await asyncpg.connect(url)
         try:
             assert await connection.fetchval("SELECT count(*) FROM extraction_units WHERE artifact_id=$1 AND unit_type='ocr_word'",media.artifact_id)==1

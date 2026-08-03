@@ -27,6 +27,7 @@ class IngestRequest:
     categories: dict=field(default_factory=dict)
     source: str="manual"
     source_artifact: dict[str,Any]=field(default_factory=dict)
+    profile_id: UUID | None=None
 
 
 @dataclass
@@ -48,7 +49,8 @@ class KGIngestorAgent:
         ledger=EvidenceLedger(); errors=[]; assertion_ids=[]
         try: request_uuid=UUID(request.request_id)
         except (ValueError,TypeError): request_uuid=None
-        run_id=await ledger.create_analysis_run("legacy_kg_ingestion_adapter","task1-kg-adapter-v1",request_id=request_uuid,configuration={"source":request.source,"model_output":True,"legacy_file_id":str(request.source_artifact.get("legacy_file_id") or request.source_artifact.get("file_id") or "")})
+        if request.profile_id is None: raise ValueError("profile authority is required")
+        run_id=await ledger.create_analysis_run("legacy_kg_ingestion_adapter","task1-kg-adapter-v1",request_id=request_uuid,profile_id=request.profile_id,configuration={"source":request.source,"model_output":True,"legacy_file_id":str(request.source_artifact.get("legacy_file_id") or request.source_artifact.get("file_id") or "")})
         artifact_id=None; source_bytes=None
         try:
             artifact_id,source_bytes=await self._record_source(request,ledger,run_id,request_uuid)
@@ -83,7 +85,8 @@ class KGIngestorAgent:
         details=request.source_artifact or {}; legacy_id=details.get("legacy_file_id") or details.get("file_id")
         row=None
         if legacy_id:
-            rows=await ledger.postgres.execute("SELECT * FROM received_data WHERE id=$1::uuid",str(legacy_id)); row=dict(rows[0]) if rows else None
+            rows=await ledger.postgres.execute("SELECT * FROM received_data WHERE id=$1::uuid AND profile_id=$2",str(legacy_id),request.profile_id); row=dict(rows[0]) if rows else None
+            if not row: raise LookupError("source artifact does not exist")
         raw_path=Path(str(row.get("file_path"))) if row and row.get("file_path") else None
         shared_path=None
         if raw_path:
@@ -96,7 +99,7 @@ class KGIngestorAgent:
         elif details.get("exact_text") is not None:
             content=str(details["exact_text"]).encode(); storage_uri=f"legacy-extracted-text://{legacy_id or run_id}"; original_path=str(row.get("file_name") if row else legacy_id or "legacy-extracted-text")
         else: return None,None
-        snapshot_id=await ledger.create_export_snapshot(run_id,"dsar_response" if request_id else "manual_import",request_id=request_id,controller_key=request.company_name,metadata={"legacy_file_id":str(legacy_id) if legacy_id else None})
+        snapshot_id=await ledger.create_export_snapshot(run_id,"dsar_response" if request_id else "manual_import",request_id=request_id,profile_id=request.profile_id,controller_key=request.company_name,metadata={"legacy_file_id":str(legacy_id) if legacy_id else None})
         _,artifact_id=await ledger.record_source_artifact(snapshot_id,content,storage_uri=storage_uri,original_path=original_path,file_name=str(row.get("file_name") if row else Path(original_path).name),declared_mime=str(row.get("file_type") or "") if row else None,extension=Path(original_path).suffix.lower() or None,file_type_status="declared",source_organisation=request.company_name)
         return artifact_id,content
 

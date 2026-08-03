@@ -5,10 +5,12 @@ tags:
   - gdpr-agent
   - task-4
   - implementation-ledger
-status: complete
+status: provisional-r0-revalidation-required
 ---
 
 # Task 4 Implementation Ledger
+
+> **PROVISIONAL — superseded by R0 evidence pending revalidation (2026-07-17).** Historical evidence is retained below but does not prove current integrated or authenticated runtime behaviour.
 
 Task 4 implementation, automated verification and authenticated `/dashboard/insights` verification are delivered and accepted. Because the user's live profile had zero event partitions, the evidence-drawer interaction was verified with the isolated local `task4-browser-smoke` subject instead of changing the user's profile. The orchestrator retained ownership of shared contracts, migrations, evidence semantics, temporal selection, privacy, integration and acceptance; delegates implemented bounded modules against the frozen contracts in `intelligence/insights/models.py`, `frontend/lib/insights/types.ts` and migrations 017, 019 and 020.
 

@@ -1,5 +1,7 @@
 # Task 1 Implementation Ledger
 
+> **PROVISIONAL — superseded by R0 evidence pending revalidation (2026-07-17).** Historical evidence is retained below but does not prove current integrated or authenticated runtime behaviour.
+
 | Requirement | Implementation location | Status | Tests | Migration/backfill notes | Blockers |
 |---|---|---|---|---|---|
 | One migration source of truth | `database/migrate.py`, `database/migrations/`, `docker-compose.yml` | Implemented | disposable DB idempotency and preservation tests | Existing schemas reconciled non-destructively; history/checksums recorded | None |

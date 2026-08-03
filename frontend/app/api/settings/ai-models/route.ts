@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import {
     AI_PROVIDER_IDS,
     getAICredential,
@@ -147,8 +148,8 @@ function formatOpenRouterPriceLabel(promptPrice: string | null, completionPrice:
     return promptPrice ? `${promptPrice} input` : `${completionPrice} output`;
 }
 
-async function fetchGoogleModels(): Promise<ModelFetchResult> {
-    const apiKey = await getAICredential('google');
+async function fetchGoogleModels(profileId: string): Promise<ModelFetchResult> {
+    const apiKey = await getAICredential('google', profileId);
     if (!apiKey) {
         return {
             models: fallbackModels.google,
@@ -188,8 +189,8 @@ async function fetchGoogleModels(): Promise<ModelFetchResult> {
     };
 }
 
-async function fetchOpenAIModels(): Promise<ModelFetchResult> {
-    const apiKey = await getAICredential('openai');
+async function fetchOpenAIModels(profileId: string): Promise<ModelFetchResult> {
+    const apiKey = await getAICredential('openai', profileId);
     if (!apiKey) {
         return {
             models: fallbackModels.openai,
@@ -219,7 +220,7 @@ async function fetchOpenAIModels(): Promise<ModelFetchResult> {
     return { models };
 }
 
-async function fetchOllamaModels(): Promise<ModelFetchResult> {
+async function fetchOllamaModels(_profileId: string): Promise<ModelFetchResult> {
     const response = await fetch(`${getOllamaBaseUrl()}/api/tags`, withDiscoveryTimeout());
     if (!response.ok) {
         throw new Error(`Ollama returned ${response.status}`);
@@ -237,8 +238,8 @@ async function fetchOllamaModels(): Promise<ModelFetchResult> {
     return { models };
 }
 
-async function fetchOpenRouterModels(): Promise<ModelFetchResult> {
-    const apiKey = await getAICredential('openrouter');
+async function fetchOpenRouterModels(profileId: string): Promise<ModelFetchResult> {
+    const apiKey = await getAICredential('openrouter', profileId);
     const response = await fetch('https://openrouter.ai/api/v1/models', {
         headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
         ...withDiscoveryTimeout(),
@@ -270,8 +271,8 @@ async function fetchOpenRouterModels(): Promise<ModelFetchResult> {
     return { models };
 }
 
-async function fetchHuggingFaceModels(): Promise<ModelFetchResult> {
-    const apiKey = await getAICredential('huggingface');
+async function fetchHuggingFaceModels(profileId: string): Promise<ModelFetchResult> {
+    const apiKey = await getAICredential('huggingface', profileId);
     const response = await fetch('https://huggingface.co/api/models?pipeline_tag=text-generation&sort=trending&limit=50', {
         headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
         ...withDiscoveryTimeout(),
@@ -292,8 +293,8 @@ async function fetchHuggingFaceModels(): Promise<ModelFetchResult> {
     return { models };
 }
 
-async function fetchNvidiaModels(): Promise<ModelFetchResult> {
-    const apiKey = await getAICredential('nvidia');
+async function fetchNvidiaModels(profileId: string): Promise<ModelFetchResult> {
+    const apiKey = await getAICredential('nvidia', profileId);
     if (!apiKey) {
         return {
             models: fallbackModels.nvidia,
@@ -323,6 +324,8 @@ async function fetchNvidiaModels(): Promise<ModelFetchResult> {
 }
 
 export async function GET(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     const provider = normalizeAIProvider(request.nextUrl.searchParams.get('provider') || 'google');
     if (!provider) {
         return NextResponse.json(
@@ -334,7 +337,7 @@ export async function GET(request: NextRequest) {
         );
     }
 
-    const fetchers: Record<AIProviderId, () => Promise<ModelFetchResult>> = {
+    const fetchers: Record<AIProviderId, (profileId: string) => Promise<ModelFetchResult>> = {
         google: fetchGoogleModels,
         openai: fetchOpenAIModels,
         ollama: fetchOllamaModels,
@@ -344,7 +347,7 @@ export async function GET(request: NextRequest) {
     };
 
     try {
-        const result = await fetchers[provider]();
+        const result = await fetchers[provider](authority.profileId);
         const models = normalizeModelOptions(result.models, provider);
 
         if (models.length === 0) {

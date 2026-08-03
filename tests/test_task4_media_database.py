@@ -107,6 +107,7 @@ async def test_metadata_pipeline_preserves_camera_screenshot_and_landmark_eviden
         confirmed=await InsightService(client).confirm_media_location(
             artifact_id=camera_id,evidence_locator_id=camera_locator,reviewed_by="fixture-user",
             occurred_at=occurred,place_label="Confirmed UCL",analysis_run_id=run_id,
+            profile_id=profile_id,
         )
         assert confirmed.evidence_class is LocationEvidenceClass.USER_CONFIRMED
         refreshed=await InsightService(client).get_place_insights(subject_id=str(profile_id),period=period)
@@ -126,7 +127,9 @@ async def test_metadata_pipeline_preserves_camera_screenshot_and_landmark_eviden
         assert content.application_candidates==("github",)
         assert content.webpage_candidates==("ucl.ac.uk",)
         assert content.visible_topic_candidates==("software",)
-        content_trace=await InsightService(client).trace_insight(content.insight_id)
+        content_trace=await InsightService(client).trace_insight(
+            content.insight_id,profile_id=profile_id,
+        )
         assert content_trace.detector_id==content.detector_id
         assert content_trace.evidence_locators[0]["resolvable"] is True
     finally:
@@ -183,20 +186,31 @@ async def test_media_reads_are_isolated_by_artifact_snapshot_profile_ownership(m
                 run_id,artifact_id,json.dumps({"evidence_locator_id":str(locator_id)}),
                 json.dumps({"text":f"{label} dashboard","topics":[label]}),
             )
-            return str(profile_id),artifact_id
+            return profile_id,artifact_id,locator_id,run_id
 
-        first_subject,first_artifact=await subject_image("alpha-subject",51.5)
-        second_subject,second_artifact=await subject_image("beta-subject",48.8)
+        first_profile,first_artifact,first_locator,first_run=await subject_image("alpha-subject",51.5)
+        second_profile,second_artifact,second_locator,second_run=await subject_image("beta-subject",48.8)
         period=InsightPeriod(
             mode=TemporalMode.PERIOD,granularity=PeriodGranularity.MONTH,
             from_at=occurred-timedelta(days=1),to_at=occurred+timedelta(days=2),
         )
-        first=await InsightService(client).get_place_insights(subject_id=first_subject,period=period)
-        second=await InsightService(client).get_place_insights(subject_id=second_subject,period=period)
+        service=InsightService(client)
+        first=await service.get_place_insights(subject_id=str(first_profile),period=period)
+        second=await service.get_place_insights(subject_id=str(second_profile),period=period)
         assert {item.artifact_id for item in first.candidates}=={first_artifact}
         assert {item.artifact_id for item in second.candidates}=={second_artifact}
         assert {item.artifact_id for item in first.media_content_candidates}=={first_artifact}
         assert {item.artifact_id for item in second.media_content_candidates}=={second_artifact}
+        with pytest.raises(LookupError,match="artifact evidence locator not found"):
+            await service.confirm_media_location(
+                artifact_id=second_artifact,evidence_locator_id=second_locator,
+                reviewed_by="alpha",place_label="must not cross profiles",
+                analysis_run_id=second_run,profile_id=first_profile,
+            )
+        with pytest.raises(LookupError,match="insight catalogue entry not found"):
+            await service.trace_insight(
+                second.candidates[0].insight_id,profile_id=first_profile,
+            )
     finally:
         await client.close()
         await connection.close()

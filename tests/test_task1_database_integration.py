@@ -145,12 +145,13 @@ async def test_data_artifact_versions_are_retained_and_latest_view_is_current(mi
 @pytest.mark.asyncio
 async def test_speculation_excluded_and_projection_idempotent_with_stable_ids(migrated_database):
     url,request_id,_=migrated_database; client=PostgresClient(url); ledger=EvidenceLedger(client)
-    run=await ledger.create_analysis_run("fixture","1",request_id=request_id)
+    profile_id=(await client.execute("SELECT profile_id FROM requests WHERE id=$1",request_id))[0]["profile_id"]
+    run=await ledger.create_analysis_run("fixture","1",request_id=request_id,profile_id=profile_id)
     candidate=await ledger.create_assertion(_assertion(run))
     service=GraphProjectionService(client,get_neo4j_client())
-    with pytest.raises(ValueError): await service.project_assertion(candidate)
+    with pytest.raises(ValueError): await service.project_assertion(candidate,profile_id)
     human=await ledger.create_assertion(_assertion(run,status=AssertionStatus.ACCEPTED,epistemic_basis=EpistemicBasis.HUMAN_CONFIRMED,data_class=DataClass.DECLARED,assertion_type="relationship",object_type="node_ref",object_ref="DataPoint:task1-fixture",object_value=None))
-    first=await service.project_assertion(human); second=await service.project_assertion(human)
+    first=await service.project_assertion(human,profile_id); second=await service.project_assertion(human,profile_id)
     assert first["subject_id"]==second["subject_id"] and first["object_id"]==second["object_id"]
     rows=await service.neo4j.query("MATCH (:GraphNode)-[r {assertion_id:$id}]->(:GraphNode) RETURN count(r) AS count",{"id":str(human)})
     assert rows[0]["count"]==1
@@ -172,11 +173,12 @@ async def test_legacy_graph_backfill_stable_across_reloads(migrated_database):
 @pytest.mark.asyncio
 async def test_subject_and_controller_profile_cannot_be_merged(migrated_database):
     url,request_id,_=migrated_database; client=PostgresClient(url); ledger=EvidenceLedger(client); neo=get_neo4j_client()
-    run=await ledger.create_analysis_run("fixture","1",request_id=request_id)
+    profile_id=(await client.execute("SELECT profile_id FROM requests WHERE id=$1",request_id))[0]["profile_id"]
+    run=await ledger.create_analysis_run("fixture","1",request_id=request_id,profile_id=profile_id)
     approval=await ledger.create_assertion(_assertion(run,status=AssertionStatus.ACCEPTED,epistemic_basis=EpistemicBasis.HUMAN_CONFIRMED,data_class=DataClass.DECLARED,assertion_type="relationship",object_type="node_ref",object_ref="Claim:merge-test",object_value=None))
-    subject=str(uuid.uuid4()); controller=str(uuid.uuid4())
-    await neo.execute("CREATE (:GraphNode:Subject {node_id:$subject}),(:GraphNode:ControllerProfile {node_id:$controller})",{"subject":subject,"controller":controller})
+    subject=str(uuid.uuid4()); controller=str(uuid.uuid4()); helper=str(uuid.uuid4())
+    await neo.execute("CREATE (s:GraphNode:Subject {node_id:$subject}),(c:GraphNode:ControllerProfile {node_id:$controller}),(h:GraphNode:Claim {node_id:$helper}), (s)-[:FIXTURE {profile_id:$profile_id}]->(h), (c)-[:FIXTURE {profile_id:$profile_id}]->(h)",{"subject":subject,"controller":controller,"helper":helper,"profile_id":str(profile_id)})
     with pytest.raises(ValueError,match="different ontology types"):
-        await GraphProjectionService(client,neo).merge_nodes(approval,subject,controller)
-    await neo.execute("MATCH (n:GraphNode) WHERE n.node_id IN $ids DETACH DELETE n",{"ids":[subject,controller]})
+        await GraphProjectionService(client,neo).merge_nodes(approval,subject,controller,profile_id)
+    await neo.execute("MATCH (n:GraphNode) WHERE n.node_id IN $ids DETACH DELETE n",{"ids":[subject,controller,helper]})
     await client.close()

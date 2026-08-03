@@ -1,0 +1,186 @@
+{
+  "schema_version": "r0-static-scan-v1",
+  "audited_at": "2026-07-17",
+  "commit": "67e50b85daa923366d3bec80db6582edcc3ba134",
+  "scope": "Read-only static architecture and security baseline. Findings are candidate issues, not final severity decisions.",
+  "commands": [
+    "rg --files -g !node_modules -g !**/.next/**",
+    "rg -n patterns for model_preferences, LIMIT 1, DDL, provider endpoints, Neo4j, credential encryption and authority guards",
+    "PowerShell route inventory of frontend/app/api/**/route.ts and intelligence/api/*.py"
+  ],
+  "findings": [
+    {
+      "id": "R0-STATIC-AUTH-ROUTES",
+      "category": "unauthenticated_api_routes",
+      "candidate_priority": "high",
+      "evidence": {
+        "inventory": "61 Next route files; only connectors, graph root, graph chat, gdpr-agent/analyze-policy and retention import/call requireApiSession.",
+        "representative_paths": [
+          "frontend/app/api/settings/profile/route.ts",
+          "frontend/app/api/settings/ai-credentials/route.ts",
+          "frontend/app/api/settings/api-credentials/route.ts",
+          "frontend/app/api/requests/[id]/route.ts",
+          "frontend/app/api/upload/route.ts",
+          "frontend/app/api/graph/nodes/route.ts",
+          "frontend/app/api/execution/route.ts"
+        ],
+        "detail": "Protected-state handlers do not import or invoke requireApiSession. Auth endpoints are expected exemptions; every other route needs an explicit route-inventory exemption or a guard."
+      },
+      "candidate_invariant": "Fail static CI if a frontend API route outside a narrow documented public/auth allowlist neither imports nor awaits requireApiSession; require the authority's profileId in personal-data queries and internal forwards.",
+      "remediation_assignment": "R1"
+    },
+    {
+      "id": "R0-STATIC-PYTHON-AUTHORITY",
+      "category": "python_routes_without_internal_authority",
+      "candidate_priority": "high",
+      "evidence": {
+        "guarded_routers": [
+          "intelligence/api/connectors.py",
+          "intelligence/api/extract.py",
+          "intelligence/api/query.py",
+          "intelligence/api/retention.py"
+        ],
+        "unguarded_routers": [
+          "intelligence/api/bulk_ingestion.py",
+          "intelligence/api/evidence.py",
+          "intelligence/api/execution.py",
+          "intelligence/api/ingest.py",
+          "intelligence/api/insights.py",
+          "intelligence/api/onsit.py",
+          "intelligence/api/validate.py"
+        ],
+        "detail": "main.py includes all routers. Evidence exposes graph mutation endpoints; execution exposes engine invocation; insights accepts arbitrary subject_id, all without require_internal_request."
+      },
+      "candidate_invariant": "Every Python router except explicitly documented health/readiness must declare dependencies=[Depends(require_internal_request)]; profile-bearing endpoints must derive/validate profile scope from the trusted internal header rather than a user-controlled query/body field.",
+      "remediation_assignment": "R1"
+    },
+    {
+      "id": "R0-STATIC-PROXY-AUTHORITY",
+      "category": "frontend_to_python_without_internal_authority",
+      "candidate_priority": "high",
+      "evidence": {
+        "paths": [
+          "frontend/app/api/graph/nodes/route.ts",
+          "frontend/app/api/graph/nodes/bulk/route.ts",
+          "frontend/app/api/graph/nodes/merge/route.ts",
+          "frontend/app/api/graph/upsert-identity/route.ts",
+          "frontend/app/api/insights/[module]/route.ts"
+        ],
+        "detail": "These proxies forward JSON/query parameters to the intelligence service with content-type only; they neither authenticate the browser request nor send intelligenceAuthorityHeaders."
+      },
+      "candidate_invariant": "All frontend calls to the intelligence service must await requireApiSession and include intelligenceAuthorityHeaders(authority.profileId); reject direct localhost/intelligence forwarding without both.",
+      "remediation_assignment": "R1"
+    },
+    {
+      "id": "R0-STATIC-MODEL-PREFERENCES",
+      "category": "active_model_preferences_reads",
+      "candidate_priority": "high",
+      "evidence": {
+        "paths": ["frontend/lib/model-preferences.ts:114", "frontend/app/api/settings/model-preferences/route.ts"],
+        "detail": "getModelPreferences reads model_preferences WHERE id=1 and applies Google defaults to extraction, graph and policy. The legacy route remains active."
+      },
+      "candidate_invariant": "No runtime source outside a migration/compatibility quarantine may contain a SELECT/INSERT/UPDATE against model_preferences. Task execution must resolve only through the canonical Task Router.",
+      "remediation_assignment": "R3"
+    },
+    {
+      "id": "R0-STATIC-DIRECT-PROVIDER-CALLS",
+      "category": "direct_provider_calls",
+      "candidate_priority": "high",
+      "evidence": {
+        "approved_candidate": ["frontend/lib/rlm/provider-adapters.ts", "frontend/lib/execution/router.ts"],
+        "unapproved_candidate": [
+          "frontend/app/api/onsit/discover-dpo/route.ts:24,59-60",
+          "frontend/lib/model-intents.ts:65",
+          "frontend/app/api/settings/ai-models/route.ts:160,201,223,242,275,305",
+          "agents/python/gdpr_agent.py:21,90",
+          "intelligence/llm/gemini.py:13,53"
+        ],
+        "detail": "discover-dpo directly selects Google credentials and creates GoogleGenAI. Discovery/model listing endpoints also call providers directly. Python Gemini clients are not visibly mediated by frontend Task Router/execution record creation."
+      },
+      "candidate_invariant": "Provider-generation SDK imports and provider completion endpoints may occur only in approved Task Router adapters; each invocation path must have an execution record assertion. Discovery-only endpoints need a separately approved allowlist.",
+      "remediation_assignment": "R3"
+    },
+    {
+      "id": "R0-STATIC-NEO4J-WRITERS",
+      "category": "direct_neo4j_mutation_and_runtime_ddl",
+      "candidate_priority": "high",
+      "evidence": {
+        "canonical_writer": "intelligence/graph/projection.py declares GraphProjectionService as sole writer.",
+        "runtime_ddl": ["intelligence/graph/projection.py:29-30 ensure_schema executes CREATE CONSTRAINT and CREATE INDEX during projection."],
+        "mutation_entrypoint": "intelligence/api/evidence.py has manual-node, manual-retire, manual-merge, backfill-graph and onsit-bulk endpoints without router authority.",
+        "additional_graph_access": ["frontend/lib/graph.ts", "frontend/app/api/graph/route.ts", "frontend/app/api/identities/route.ts"]
+      },
+      "candidate_invariant": "Cypher DDL belongs only in an explicit migration/bootstrap mechanism. Mutating Cypher must be confined to GraphProjectionService and only reachable through authenticated, profile-scoped evidence commands.",
+      "remediation_assignment": "R1/R7"
+    },
+    {
+      "id": "R0-STATIC-PROFILE-LIMIT-ONE",
+      "category": "limit_one_profile_lookup",
+      "candidate_priority": "high",
+      "evidence": {
+        "paths": [
+          "frontend/app/api/settings/profile/route.ts:24,88",
+          "frontend/app/api/settings/profile/password/route.ts:28",
+          "frontend/app/api/insights/[module]/route.ts:8",
+          "frontend/app/api/auth/check-setup/route.ts:9",
+          "frontend/lib/connectors/email.ts:24,37,44"
+        ],
+        "detail": "Settings and insight routes explicitly select the first profile rather than the authenticated canonical profile."
+      },
+      "candidate_invariant": "Forbid SELECT from user_profiles/profiles with LIMIT 1 in runtime sources except a documented setup-only migration path. Profile-scoped data access must predicate by authority.profileId.",
+      "remediation_assignment": "R1"
+    },
+    {
+      "id": "R0-STATIC-UNSCOPED-PERSONAL-DATA",
+      "category": "unscoped_personal_data_queries",
+      "candidate_priority": "high",
+      "evidence": {
+        "paths": [
+          "frontend/app/api/requests/[id]/route.ts",
+          "frontend/app/api/request-threads/route.ts",
+          "frontend/app/api/request-threads/[id]/chat/route.ts",
+          "frontend/app/api/upload/route.ts",
+          "frontend/app/api/settings/id-documents/route.ts",
+          "frontend/app/api/insights/[module]/route.ts",
+          "intelligence/api/insights.py"
+        ],
+        "detail": "Candidate personal-data routes issue database queries or accept IDs/subject_id but have no session authority in the route. Static review cannot prove all underlying table joins, so this is a mandatory dynamic/API-scope test target."
+      },
+      "candidate_invariant": "Authenticated integration tests must create two profiles and prove reads, writes, deletes and forwarded subject identifiers cannot cross profile boundaries. Static route guard inventory provides the first gate.",
+      "remediation_assignment": "R1/R2"
+    },
+    {
+      "id": "R0-STATIC-HARDCODED-HEALTH",
+      "category": "hardcoded_health_indicator",
+      "candidate_priority": "medium",
+      "evidence": {
+        "path": "frontend/components/layout/DashboardLayout.tsx:241",
+        "detail": "The rendered status text is literal 'System Online'; no health-state data flow is adjacent to it."
+      },
+      "candidate_invariant": "Forbid literal operational-health labels in UI status surfaces; component/browser tests must inject a failed dependency and assert non-green aggregate health.",
+      "remediation_assignment": "R5/R7"
+    },
+    {
+      "id": "R0-STATIC-DUPLICATE-SECRETS",
+      "category": "duplicate_secret_stores_and_encryption",
+      "candidate_priority": "high",
+      "evidence": {
+        "stores": [
+          "frontend/lib/secure-credentials.ts: AES-256-GCM, PostgreSQL-compatible canonical-looking format",
+          "frontend/lib/ai-credentials.ts: AES-256-CBC decrypt for ai_credentials",
+          "frontend/app/api/settings/ai-credentials/route.ts: duplicate AES-256-CBC encrypt implementation",
+          "frontend/lib/credentials.ts: reversible XOR/base64 obfuscation, documented as Neo4j ONSIT credentials",
+          "frontend/app/api/settings/api-credentials/route.ts: stores obfuscated values in app_settings"
+        ],
+        "detail": "Credentials are split across ai_credentials, app_settings and Neo4j-oriented helper terminology, with incompatible formats. CBC has no authentication; XOR is not encryption."
+      },
+      "candidate_invariant": "Ban createCipheriv aes-256-cbc and custom XOR obfuscation in runtime source. Permit secret persistence only through one AES-GCM helper/versioned ciphertext and one canonical store; require round-trip and tamper-rejection tests.",
+      "remediation_assignment": "R3/R7"
+    }
+  ],
+  "limitations": [
+    "This is source evidence only; it does not establish authenticated runtime behaviour, actual database contents, deployed network exposure, or exploitability.",
+    "The route inventory intentionally treats auth/setup routes as possible exemptions; the lead agent must establish and document the exact public allowlist.",
+    "Existing user changes were present before this scan and were not modified."
+  ]
+}

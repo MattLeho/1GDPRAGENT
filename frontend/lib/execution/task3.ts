@@ -45,7 +45,7 @@ export function validateTask3Bundle(bundle: Task3BoundedBundle): void {
     if (!Number.isInteger(bundle.omitted_record_count) || bundle.omitted_record_count < 0) throw new Error('Invalid omitted record count');
 }
 
-export async function executeTask3Bundle(bundle: Task3BoundedBundle): Promise<TaskResult> {
+export async function executeTask3Bundle(bundle: Task3BoundedBundle, profileId: string): Promise<TaskResult> {
     validateTask3Bundle(bundle);
     const result = await executeTask({
         taskKey:bundle.task_key, workflowKey:'file.ingestion',
@@ -56,6 +56,7 @@ export async function executeTask3Bundle(bundle: Task3BoundedBundle): Promise<Ta
             fingerprint_id:bundle.fingerprint_id || null,
         }) },
         configuration:{ systemPrompt:TASK_PROMPTS[bundle.task_key], temperature:0 },
+        profileId,
     });
     if (!result.ok) return result;
     const raw = result.output as { text?:unknown };

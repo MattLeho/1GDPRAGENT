@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import { useDropzone } from 'react-dropzone';
 import JSZip from 'jszip';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -346,6 +347,7 @@ export function ZipImporter({ requestId, onComplete }: ZipImporterProps) {
                         throw new Error(result.error || 'Processing failed');
                     }
                 } catch (err) {
+                    if (shouldSuppressProtectedRequestError(err)) throw err;
                     addLog(`✗ Error: ${file.name} - ${err}`, 'error', file.id);
                     setFiles(prev => prev.map(f =>
                         f.id === file.id ? {
@@ -388,6 +390,7 @@ export function ZipImporter({ requestId, onComplete }: ZipImporterProps) {
                         addLog(`⚠ Skipped graph ingestion: ${file.name}`, 'progress', file.id);
                     }
                 } catch (err) {
+                    if (shouldSuppressProtectedRequestError(err)) throw err;
                     addLog(`⚠ Graph ingestion failed: ${file.name}`, 'error', file.id);
                 }
             }
@@ -405,9 +408,11 @@ export function ZipImporter({ requestId, onComplete }: ZipImporterProps) {
 
             onComplete?.(files.filter(f => f.status === 'completed'));
         } catch (error) {
-            console.error('Processing failed:', error);
-            addLog(`Fatal error: ${error}`, 'error');
-            toast.error('Failed to process files');
+            if (!shouldSuppressProtectedRequestError(error)) {
+                console.error('Processing failed:', error);
+                addLog(`Fatal error: ${error}`, 'error');
+                toast.error('Failed to process files');
+            }
         } finally {
             setIsProcessing(false);
         }

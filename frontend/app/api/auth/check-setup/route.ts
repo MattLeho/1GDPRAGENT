@@ -6,11 +6,11 @@ import { pool } from '@/lib/db';
  */
 export async function GET() {
     try {
-        const result = await pool.query('SELECT id FROM user_profiles LIMIT 1');
+        const result = await pool.query('SELECT EXISTS(SELECT 1 FROM user_profiles) AS has_profile');
 
         return NextResponse.json({
             success: true,
-            hasProfile: result.rows.length > 0,
+            hasProfile: Boolean(result.rows[0]?.has_profile),
         });
     } catch (error) {
         console.error('Failed to check setup:', error);

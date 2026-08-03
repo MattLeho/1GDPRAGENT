@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -49,7 +50,7 @@ export function VendorDiscoverySection() {
                 toast.error(data.error || 'Failed to search vendors');
             }
         } catch (error) {
-            toast.error('Search failed');
+            if (!shouldSuppressProtectedRequestError(error)) toast.error('Search failed');
         } finally {
             setIsSearching(false);
         }
@@ -84,7 +85,7 @@ export function VendorDiscoverySection() {
                 toast.error(data.error || 'DPO discovery failed');
             }
         } catch (error) {
-            toast.error('DPO discovery failed');
+            if (!shouldSuppressProtectedRequestError(error)) toast.error('DPO discovery failed');
         } finally {
             setIsFindingDPO(false);
         }
@@ -124,7 +125,7 @@ export function VendorDiscoverySection() {
                 toast.error(data.error || 'Failed to send emails');
             }
         } catch (error) {
-            toast.error('Email sending failed');
+            if (!shouldSuppressProtectedRequestError(error)) toast.error('Email sending failed');
         } finally {
             setIsSendingEmails(false);
         }

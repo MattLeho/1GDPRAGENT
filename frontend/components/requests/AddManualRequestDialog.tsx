@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -99,8 +100,10 @@ export function AddManualRequestDialog({ onRequestCreated }: AddManualRequestDia
                 toast.error(result.error || "Failed to create request");
             }
         } catch (error) {
-            console.error("Failed to create manual request:", error);
-            toast.error("An unexpected error occurred");
+            if (!shouldSuppressProtectedRequestError(error)) {
+                console.error("Failed to create manual request:", error);
+                toast.error("An unexpected error occurred");
+            }
         } finally {
             setLoading(false);
         }
@@ -150,8 +153,10 @@ export function AddManualRequestDialog({ onRequestCreated }: AddManualRequestDia
                 throw new Error(result.error || 'Failed to analyze policy');
             }
         } catch (error) {
-            console.error('Policy scan failed:', error);
-            toast.error("Failed to scan privacy policy");
+            if (!shouldSuppressProtectedRequestError(error)) {
+                console.error('Policy scan failed:', error);
+                toast.error("Failed to scan privacy policy");
+            }
         } finally {
             setScanningPolicy(false);
         }

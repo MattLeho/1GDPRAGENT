@@ -1,0 +1,17 @@
+[
+  {
+    "target": "/insights/search?z=two&a=hello+world&a=alpha&empty=",
+    "path": "/insights/search",
+    "query": "a=alpha&a=hello%20world&empty=&z=two"
+  },
+  {
+    "target": "/a%2Fb/%E2%98%83?q=%2F&blank&dup=b&dup=a",
+    "path": "/a%2Fb/%E2%98%83",
+    "query": "blank=&dup=a&dup=b&q=%2F"
+  },
+  {
+    "target": "/a/../b/./c?space=%20&plus=+",
+    "path": "/b/c",
+    "query": "plus=%20&space=%20"
+  }
+]

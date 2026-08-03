@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import {
     Sheet,
     SheetContent,
@@ -384,8 +385,8 @@ export function RequestDetailSheet({
                                                     if (assistantResponse) {
                                                         setChatMessages(prev => [...prev, { role: 'assistant', content: assistantResponse }]);
                                                     }
-                                                }).catch(() => {
-                                                    toast.error('Failed to send message');
+                                                }).catch((error) => {
+                                                    if (!shouldSuppressProtectedRequestError(error)) toast.error('Failed to send message');
                                                 }).finally(() => {
                                                     setChatLoading(false);
                                                 });

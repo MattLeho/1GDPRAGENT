@@ -6,6 +6,7 @@ from enum import Enum
 from uuid import NAMESPACE_URL,UUID,uuid5
 
 from db.postgres import PostgresClient,get_postgres_client
+from request_domain import RequestRepository
 from .contracts import HypothesisStatus,PrivacyHypothesis
 
 DETECTOR_VERSION="task6-hypothesis-detectors-v1"
@@ -59,7 +60,9 @@ def resolve_with_evidence(hypothesis:PrivacyHypothesis,*,outcome:ResolutionOutco
     return hypothesis.model_copy(update={"status":HypothesisStatus(outcome.value),"updated_at":at or datetime.now(timezone.utc)})
 
 class HypothesisRepository:
-    def __init__(self,postgres:PostgresClient|None=None):self.postgres=postgres or get_postgres_client()
+    def __init__(self,postgres:PostgresClient|None=None):
+        self.postgres=postgres or get_postgres_client()
+        self.requests=RequestRepository(self.postgres)
     async def save(self,value:PrivacyHypothesis,analysis_run_id:UUID)->None:
         await self.postgres.execute("""INSERT INTO privacy_hypotheses(id,profile_id,detector_id,detector_version,
           statement,unresolved_question,status,supporting_assertion_ids,request_id,supersedes_id,analysis_run_id,
@@ -74,9 +77,10 @@ class HypothesisRepository:
             if not row: raise LookupError("privacy hypothesis does not exist")
             if row["request_id"]: request_id=row["request_id"]
             else:
-                request_id=await connection.fetchval("""INSERT INTO requests(company_name,company_url,domain,status,
-                  request_type,notes) VALUES($1,$2,$3,'draft','access',$4) RETURNING id""",
-                  company_name,company_url,company_name.casefold(),f"Targeted evidence question:\n{value.unresolved_question}")
+                request_id=await self.requests.create_draft(
+                  value.profile_id,company_name=company_name,company_url=company_url,
+                  domain=company_name.casefold(),request_type="access",
+                  notes=f"Targeted evidence question:\n{value.unresolved_question}",connection=connection)
                 await connection.execute("""UPDATE privacy_hypotheses SET status='request_drafted',request_id=$2,
                   updated_at=NOW() WHERE id=$1""",value.id,request_id)
                 await connection.execute("""INSERT INTO privacy_hypothesis_transitions(hypothesis_id,status_before,

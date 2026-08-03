@@ -8,17 +8,21 @@
 
 import { pool } from '@/lib/db';
 import { searchGraph, searchDocuments as searchDocs, hybridRetrieve } from './retriever';
+import { RequestService } from '@/lib/requests/service';
+
+const requests = new RequestService();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: search_knowledge_graph
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function searchKnowledgeGraph(
+    profileId: string,
     requestId: string,
     args: { query: string; entity_type?: string; relationship_type?: string },
 ): Promise<string> {
     const results = await searchGraph(
-        requestId,
+        profileId, requestId,
         args.query,
         args.entity_type,
         args.relationship_type,
@@ -40,11 +44,12 @@ export async function searchKnowledgeGraph(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function searchDocumentsImpl(
+    profileId: string,
     requestId: string,
     args: { query: string; file_type?: string },
 ): Promise<string> {
     const results = await searchDocs(
-        requestId,
+        profileId, requestId,
         args.query,
         args.file_type,
     );
@@ -64,30 +69,22 @@ export async function searchDocumentsImpl(
 // Tool: lookup_privacy_policy
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function lookupPrivacyPolicy(requestId: string): Promise<string> {
+export async function lookupPrivacyPolicy(profileId: string,requestId: string): Promise<string> {
     try {
-        // Fetch request details
-        const { rows: reqRows } = await pool.query(
-            `SELECT id, company_name, domain, request_type, status, 
-                    policy_url, created_at, deadline
-             FROM access_requests WHERE id = $1`,
-            [requestId],
-        );
-
-        if (reqRows.length === 0) return 'Request not found.';
-        const req = reqRows[0] as Record<string, unknown>;
+        const req = await requests.context(profileId,requestId);
+        if (!req) return 'Request not found.';
 
         // Fetch analysis if available
         const { rows: analysisRows } = await pool.query(
-            `SELECT * FROM policy_analyses WHERE request_id = $1 ORDER BY created_at DESC LIMIT 1`,
-            [requestId],
+            `SELECT * FROM policy_analyses WHERE domain = $1 ORDER BY created_at DESC LIMIT 1`,
+            [req.domain],
         );
 
         // Fetch file count & status summary
         const { rows: fileStats } = await pool.query(
             `SELECT status, COUNT(*)::int as count 
-             FROM received_data WHERE request_id = $1 GROUP BY status`,
-            [requestId],
+             FROM received_data WHERE request_id = $1 AND profile_id=$2 GROUP BY status`,
+            [requestId,profileId],
         );
 
         let output = `## Request Details\n`;
@@ -95,9 +92,10 @@ export async function lookupPrivacyPolicy(requestId: string): Promise<string> {
         output += `- **Domain**: ${req.domain || 'N/A'}\n`;
         output += `- **Type**: ${req.request_type}\n`;
         output += `- **Status**: ${req.status}\n`;
-        output += `- **Policy URL**: ${req.policy_url || 'Not set'}\n`;
+        output += `- **Company URL**: ${req.company_url || 'Not set'}\n`;
         output += `- **Created**: ${req.created_at}\n`;
-        output += `- **Deadline**: ${req.deadline || 'Not set'}\n\n`;
+        output += `- **Screening deadline**: ${req.deadline_at || 'Unknown'}\n`;
+        output += `- **Deadline basis**: ${req.deadline_basis || 'Not recorded'}\n\n`;
 
         if (fileStats.length > 0) {
             output += `## File Summary\n`;
@@ -249,20 +247,21 @@ export function decomposeQuery(args: { query: string; reason: string }): string 
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function locateFile(
+    profileId: string,
     requestId: string,
     args: { file_name: string },
 ): Promise<string> {
     try {
         const { rows } = await pool.query(
-            `SELECT id, file_name, file_type, category, file_size, status, 
-                    processing_stage, date_received, graph_synced,
+            `SELECT id, file_name, file_type, category, file_size_mb, status, 
+                    processing_stage, date_received, graph_ingested,
                     ai_summary IS NOT NULL as has_summary,
                     extracted_text IS NOT NULL as has_text,
                     transcript IS NOT NULL as has_transcript
              FROM received_data 
-             WHERE request_id = $1 AND LOWER(file_name) LIKE LOWER($2)
+             WHERE request_id = $1 AND profile_id=$3 AND LOWER(file_name) LIKE LOWER($2)
              ORDER BY date_received DESC`,
-            [requestId, `%${args.file_name}%`],
+            [requestId, `%${args.file_name}%`,profileId],
         );
 
         if (rows.length === 0) {
@@ -270,7 +269,7 @@ export async function locateFile(
         }
 
         const formatted = rows.map((f: any, i: number) => {
-            const size = f.file_size ? `${(f.file_size / 1024).toFixed(1)} KB` : 'Unknown size';
+            const size = f.file_size_mb ? `${Number(f.file_size_mb).toFixed(2)} MB` : 'Unknown size';
             let output = `### ${i + 1}. ${f.file_name}\n`;
             output += `- **File ID**: ${f.id}\n`;
             output += `- **Type**: ${f.file_type || 'unknown'} (${f.category || 'uncategorized'})\n`;
@@ -278,7 +277,7 @@ export async function locateFile(
             output += `- **Status**: ${f.status || 'pending'}\n`;
             if (f.processing_stage) output += `- **Processing Stage**: ${f.processing_stage}\n`;
             output += `- **Received**: ${f.date_received || 'Unknown'}\n`;
-            output += `- **Graph Synced**: ${f.graph_synced ? 'Yes ✅' : 'No'}\n`;
+            output += `- **Graph Ingested**: ${f.graph_ingested ? 'Yes ✅' : 'No'}\n`;
             output += `- **Has Content**: `;
             const content = [];
             if (f.has_summary) content.push('AI Summary');
@@ -300,6 +299,7 @@ export async function locateFile(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function findInDocument(
+    profileId: string,
     requestId: string,
     args: { file_name: string; search_term: string },
 ): Promise<string> {
@@ -308,9 +308,9 @@ export async function findInDocument(
         const { rows } = await pool.query(
             `SELECT id, file_name, extracted_text, ai_summary, transcript
              FROM received_data 
-             WHERE request_id = $1 AND LOWER(file_name) LIKE LOWER($2)
+             WHERE request_id = $1 AND profile_id=$3 AND LOWER(file_name) LIKE LOWER($2)
              ORDER BY date_received DESC LIMIT 5`,
-            [requestId, `%${args.file_name}%`],
+            [requestId, `%${args.file_name}%`,profileId],
         );
 
         if (rows.length === 0) {
@@ -396,17 +396,17 @@ function escapeRegex(str: string): string {
 // Tool: list_all_files
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function listAllFiles(requestId: string): Promise<string> {
+export async function listAllFiles(profileId:string,requestId: string): Promise<string> {
     try {
         const { rows } = await pool.query(
-            `SELECT file_name, file_type, category, file_size, status, 
-                    processing_stage, date_received, graph_synced,
+            `SELECT file_name, file_type, category, file_size_mb, status, 
+                    processing_stage, date_received, graph_ingested,
                     ai_summary IS NOT NULL as has_summary,
                     extracted_text IS NOT NULL as has_text
              FROM received_data 
-             WHERE request_id = $1
+             WHERE request_id = $1 AND profile_id=$2
              ORDER BY date_received DESC`,
-            [requestId],
+            [requestId,profileId],
         );
 
         if (rows.length === 0) {
@@ -418,7 +418,7 @@ export async function listAllFiles(requestId: string): Promise<string> {
         const completed = rows.filter((r: any) => r.status === 'completed').length;
         const processing = rows.filter((r: any) => r.status === 'processing').length;
         const errors = rows.filter((r: any) => r.status === 'error').length;
-        const graphSynced = rows.filter((r: any) => r.graph_synced).length;
+        const graphSynced = rows.filter((r: any) => r.graph_ingested).length;
 
         let output = `## Files Overview\n`;
         output += `- **Total**: ${total} file(s)\n`;
@@ -457,6 +457,7 @@ export async function listAllFiles(requestId: string): Promise<string> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function executeTool(
+    profileId: string,
     requestId: string,
     toolName: string,
     args: Record<string, unknown>,
@@ -465,13 +466,13 @@ export async function executeTool(
 
     switch (toolName) {
         case 'search_knowledge_graph':
-            return searchKnowledgeGraph(requestId, args as { query: string; entity_type?: string; relationship_type?: string });
+            return searchKnowledgeGraph(profileId,requestId, args as { query: string; entity_type?: string; relationship_type?: string });
 
         case 'search_documents':
-            return searchDocumentsImpl(requestId, args as { query: string; file_type?: string });
+            return searchDocumentsImpl(profileId,requestId, args as { query: string; file_type?: string });
 
         case 'lookup_privacy_policy':
-            return lookupPrivacyPolicy(requestId);
+            return lookupPrivacyPolicy(profileId,requestId);
 
         case 'get_gdpr_reference':
             return getGDPRReference(args as { topic: string });
@@ -480,13 +481,13 @@ export async function executeTool(
             return decomposeQuery(args as { query: string; reason: string });
 
         case 'locate_file':
-            return locateFile(requestId, args as { file_name: string });
+            return locateFile(profileId,requestId, args as { file_name: string });
 
         case 'find_in_document':
-            return findInDocument(requestId, args as { file_name: string; search_term: string });
+            return findInDocument(profileId,requestId, args as { file_name: string; search_term: string });
 
         case 'list_all_files':
-            return listAllFiles(requestId);
+            return listAllFiles(profileId,requestId);
 
         default:
             return `Unknown tool: ${toolName}`;

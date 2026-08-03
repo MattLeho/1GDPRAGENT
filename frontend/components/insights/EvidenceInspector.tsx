@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Database, FileSearch } from "lucide-react";
 import { fetchInsightTrace } from "@/lib/insights/client";
+import { shouldSuppressProtectedRequestError } from "@/lib/api-client";
 import type { InsightTrace } from "@/lib/insights/types";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -30,7 +31,7 @@ export function EvidenceInspector({ insightId, open, onOpenChange }: EvidenceIns
     const controller = new AbortController();
     fetchInsightTrace(insightId, controller.signal)
       .then(trace => { if (!controller.signal.aborted) setResult({ id: insightId, trace, error: null }); })
-      .catch(value => { if (!controller.signal.aborted) setResult({ id: insightId, trace: null, error: value instanceof Error ? value.message : "Could not load evidence" }); });
+      .catch(value => { if (!controller.signal.aborted && !shouldSuppressProtectedRequestError(value)) setResult({ id: insightId, trace: null, error: value instanceof Error ? value.message : "Could not load evidence" }); });
     return () => controller.abort();
   }, [insightId, open]);
   const active = result?.id === insightId ? result : null;

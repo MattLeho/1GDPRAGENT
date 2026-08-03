@@ -24,8 +24,16 @@ async def test_every_insight_evidence_link_resolves_to_source(migrated_database,
     connection = await asyncpg.connect(url)
     try:
         ledger = EvidenceLedger(client)
-        run_id = await ledger.create_analysis_run("task4-evidence", "task4-v1", request_id=request_id)
-        snapshot_id = await ledger.create_export_snapshot(run_id, "manual_import", request_id=request_id)
+        profile_id=await connection.fetchval(
+            "INSERT INTO profiles(identity_name) VALUES('Evidence fixture') RETURNING id",
+        )
+        subject_id=str(profile_id)
+        run_id = await ledger.create_analysis_run(
+            "task4-evidence", "task4-v1", request_id=request_id,profile_id=profile_id,
+        )
+        snapshot_id = await ledger.create_export_snapshot(
+            run_id, "manual_import", request_id=request_id,profile_id=profile_id,
+        )
         source = {"records": [{"topic": "robotics", "action": "created"}]}
         content = json.dumps(source).encode()
         source_path = tmp_path / "source.json"
@@ -43,7 +51,7 @@ async def test_every_insight_evidence_link_resolves_to_source(migrated_database,
         occurred = datetime(2025, 4, 1, tzinfo=timezone.utc)
         event_id = uuid4()
         event = ActivityEvent(
-            event_id=event_id, record_signature=event_id.hex * 2, subject_id="subject-evidence",
+            event_id=event_id, record_signature=event_id.hex * 2, subject_id=subject_id,
             export_snapshot_id=snapshot_id, artifact_id=artifact_id, service="fixture",
             data_domain="projects", event_type="created", action_class=ActionClass.CREATED,
             occurred_at=occurred, temporal_precision=TemporalPrecision.SECOND,
@@ -65,9 +73,9 @@ async def test_every_insight_evidence_link_resolves_to_source(migrated_database,
             mode=TemporalMode.PERIOD,granularity=PeriodGranularity.MONTH,
             from_at=occurred-timedelta(days=1),to_at=occurred+timedelta(days=2),
         )
-        result = await service.get_snapshot(subject_id="subject-evidence",period=period)
+        result = await service.get_snapshot(subject_id=subject_id,period=period)
         assert result.interests
-        trace = await service.trace_insight(result.interests[0].insight_id)
+        trace = await service.trace_insight(result.interests[0].insight_id,profile_id=profile_id)
         assert trace.detector_id == result.interests[0].detector_id
         assert trace.detector_version == result.interests[0].detector_version
         assert trace.calculated_features == result.interests[0].calculated_features
@@ -80,7 +88,7 @@ async def test_every_insight_evidence_link_resolves_to_source(migrated_database,
         for item in service._derived_items(result):
             if not item.evidence:
                 continue
-            item_trace=await service.trace_insight(item.insight_id)
+            item_trace=await service.trace_insight(item.insight_id,profile_id=profile_id)
             assert item_trace.detector_id==item.detector_id
             assert item_trace.detector_version==item.detector_version
             assert item_trace.calculated_features==item.calculated_features

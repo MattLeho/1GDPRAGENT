@@ -6,7 +6,8 @@ Provides REST API endpoints for ONSIT discovery, graph extraction, and validatio
 """
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
@@ -22,6 +23,7 @@ from api.bulk_ingestion import router as bulk_ingestion_router
 from api.insights import router as insights_router
 from api.connectors import router as connectors_router
 from api.retention import router as retention_router
+from api.security import is_separately_authorized_ingress, verify_internal_request
 
 
 settings = get_settings()
@@ -81,6 +83,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_PUBLIC_PATHS = {"/", "/health", "/health/ready", "/docs", "/docs/oauth2-redirect", "/openapi.json", "/redoc"}
+
+
+@app.middleware("http")
+async def enforce_internal_authority(request: Request, call_next):
+    """Protect every service route except explicit operational/documentation surfaces.
+
+    Browser-extension sync is separately authenticated by its hashed, scoped pairing
+    bearer token in ``api.connectors``; it is not granted general internal authority.
+    """
+    if request.url.path not in _PUBLIC_PATHS and not is_separately_authorized_ingress(request):
+        try:
+            verify_internal_request(request, body=await request.body())
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"code": "INTERNAL_AUTHORITY_REJECTED", "message": str(exc.detail)}, "detail": exc.detail},
+            )
+    return await call_next(request)
 
 # Include routers
 app.include_router(health_router, tags=["Health"])

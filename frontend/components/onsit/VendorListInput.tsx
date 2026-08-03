@@ -1,5 +1,7 @@
 'use client';
 
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
+
 /**
  * Vendor List Input Dialog
  * 
@@ -117,8 +119,10 @@ export function VendorListInput({ onVendorsExtracted }: VendorListInputProps) {
                 throw new Error(result.error || 'Failed to extract vendors');
             }
         } catch (error) {
-            console.error('Screenshot processing failed:', error);
-            toast.error('Failed to process screenshot');
+            if (!shouldSuppressProtectedRequestError(error)) {
+                console.error('Screenshot processing failed:', error);
+                toast.error('Failed to process screenshot');
+            }
         } finally {
             setProcessing(false);
         }
@@ -151,8 +155,10 @@ export function VendorListInput({ onVendorsExtracted }: VendorListInputProps) {
                 throw new Error(result.error || 'Failed to extract vendors');
             }
         } catch (error) {
-            console.error('Video processing failed:', error);
-            toast.error('Failed to process video');
+            if (!shouldSuppressProtectedRequestError(error)) {
+                console.error('Video processing failed:', error);
+                toast.error('Failed to process video');
+            }
         } finally {
             setProcessing(false);
         }
@@ -186,8 +192,10 @@ export function VendorListInput({ onVendorsExtracted }: VendorListInputProps) {
                 throw new Error(result.error || 'Failed to extract vendors');
             }
         } catch (error) {
-            console.error('Text processing failed:', error);
-            toast.error('Failed to process text');
+            if (!shouldSuppressProtectedRequestError(error)) {
+                console.error('Text processing failed:', error);
+                toast.error('Failed to process text');
+            }
         } finally {
             setProcessing(false);
         }

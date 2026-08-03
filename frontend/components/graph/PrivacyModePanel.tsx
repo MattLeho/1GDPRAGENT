@@ -1,5 +1,6 @@
 'use client';
 import { useEffect,useState } from 'react';
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import type { PrivacyGraphFilters,PrivacyGraphMode,PrivacyQueryResult } from '@/lib/privacy/types';
 
 async function invoke(tool:string,arguments_:Record<string,unknown>={}):Promise<PrivacyQueryResult>{
@@ -20,7 +21,7 @@ export function PrivacyModePanel({mode,filters}:{mode:PrivacyGraphMode;filters:P
       : mode==='access'?[invoke('list_controller_assignments')]
       : [];
     if(!calls.length){setResults([]);return()=>{active=false};}
-    Promise.all(calls).then(value=>{if(active)setResults(value)}).catch(reason=>{if(active)setError(reason instanceof Error?reason.message:String(reason))});
+    Promise.all(calls).then(value=>{if(active)setResults(value)}).catch(reason=>{if(active&&!shouldSuppressProtectedRequestError(reason))setError(reason instanceof Error?reason.message:String(reason))});
     return()=>{active=false};
   },[mode,filters.asOf,filters.compareTo]);
   if(!results.length&&!error)return null;

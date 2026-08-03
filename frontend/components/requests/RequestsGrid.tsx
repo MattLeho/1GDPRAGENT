@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, Suspense } from "react";
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import { useSearchParams } from "next/navigation";
 import { Request } from "@/lib/actions/requests";
 import { RequestCard } from "./RequestCard";
@@ -96,7 +97,9 @@ function RequestsGridContent({ initialRequests }: RequestsGridProps) {
                 toast.error('Failed to delete', { description: data.error || 'Unknown error' });
             }
         } catch (error) {
-            toast.error('Failed to delete request', { description: 'Network error' });
+            if (!shouldSuppressProtectedRequestError(error)) {
+                toast.error('Failed to delete request', { description: 'Network error' });
+            }
         }
     }, []);
 

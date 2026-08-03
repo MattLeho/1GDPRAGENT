@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -58,7 +59,9 @@ export function IDDocumentsSection() {
                 }
             }
         } catch (error) {
-            console.error('Failed to load documents:', error);
+            if (!shouldSuppressProtectedRequestError(error)) {
+                console.error('Failed to load documents:', error);
+            }
         }
     };
 
@@ -99,7 +102,9 @@ export function IDDocumentsSection() {
                 toast.error(data.error || 'Failed to upload document');
             }
         } catch (error) {
-            toast.error('Failed to upload document');
+            if (!shouldSuppressProtectedRequestError(error)) {
+                toast.error('Failed to upload document');
+            }
         } finally {
             setIsUploading(false);
             e.target.value = ''; // Reset input
@@ -125,7 +130,9 @@ export function IDDocumentsSection() {
                 toast.error(data.error || 'Failed to delete document');
             }
         } catch (error) {
-            toast.error('Failed to delete document');
+            if (!shouldSuppressProtectedRequestError(error)) {
+                toast.error('Failed to delete document');
+            }
         }
     };
 

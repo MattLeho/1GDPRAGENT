@@ -9,7 +9,8 @@
  * @security All API keys are encrypted before storage using AES-256
  */
 
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import crypto from 'crypto';
 import { pool } from '@/lib/db';
 import {
@@ -78,13 +79,16 @@ function fieldForProvider(provider: unknown): string | null {
 // GET Handler
 // =============================================================================
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         // Check if table exists and has data
         const result = await pool.query(`
             SELECT provider, api_key_encrypted IS NOT NULL as has_key
             FROM ai_credentials
-        `);
+            WHERE profile_id = $1
+        `, [authority.profileId]);
 
         const savedKeys = emptyProviderKeyState();
 
@@ -132,7 +136,9 @@ const credentialFields: Array<{ provider: AIProviderId; field: keyof AICredentia
     { provider: 'nvidia', field: 'nvidiaApiKey' },
 ];
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const body: AICredentialsBody = await request.json();
 
@@ -143,12 +149,12 @@ export async function POST(request: Request) {
             if (key && key.trim()) {
                 const encryptedKey = encrypt(key.trim());
                 await pool.query(`
-                    INSERT INTO ai_credentials (provider, api_key_encrypted, updated_at)
-                    VALUES ($1, $2, NOW())
-                    ON CONFLICT (provider) DO UPDATE SET
+                    INSERT INTO ai_credentials (provider, api_key_encrypted, updated_at, profile_id)
+                    VALUES ($1, $2, NOW(), $3)
+                    ON CONFLICT (profile_id, provider) DO UPDATE SET
                         api_key_encrypted = EXCLUDED.api_key_encrypted,
                         updated_at = NOW()
-                `, [provider, encryptedKey]);
+                `, [provider, encryptedKey, authority.profileId]);
 
                 savedKeys[field] = true;
             }
@@ -158,7 +164,8 @@ export async function POST(request: Request) {
         const result = await pool.query(`
             SELECT provider, api_key_encrypted IS NOT NULL as has_key
             FROM ai_credentials
-        `);
+            WHERE profile_id = $1
+        `, [authority.profileId]);
 
         for (const row of result.rows) {
             const fieldName = fieldForProvider(row.provider);
@@ -187,4 +194,3 @@ export async function POST(request: Request) {
         );
     }
 }
-

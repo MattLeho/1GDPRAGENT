@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import { pool } from '@/lib/db';
 import { executeTask, type TaskResult } from '@/lib/execution/router';
 
@@ -13,12 +14,16 @@ interface MediaAnalysisBody {
 
 const MODES = new Set<MediaMode>(['metadata_only', 'selective_visual', 'full_visual']);
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     const result = await pool.query('SELECT media_analysis_mode,updated_at FROM insight_settings WHERE singleton=TRUE');
     return NextResponse.json(result.rows[0] || { media_analysis_mode:'metadata_only' });
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     const body = await request.json() as MediaAnalysisBody;
     if (!MODES.has(body.mode)) return NextResponse.json({ error:'Invalid media analysis mode' }, { status:400 });
     await pool.query('UPDATE insight_settings SET media_analysis_mode=$1,updated_at=NOW() WHERE singleton=TRUE', [body.mode]);
@@ -48,7 +53,7 @@ export async function POST(request: Request) {
     const input = { file_path:filePath, evidence_locator_id:body.evidenceLocatorId };
     const results: Array<{ task_key:string; result:TaskResult }> = [];
 
-    const origin = await invokeAndPersist('image.origin_classification', resolved, input);
+    const origin = await invokeAndPersist('image.origin_classification', resolved, input, authority.profileId);
     results.push({ task_key:'image.origin_classification', result:origin });
     if (!origin.ok) return NextResponse.json({ mode:body.mode, tasks:results }, { status:422 });
     const originValue = String((origin.output as { origin?:unknown })?.origin || 'unknown');
@@ -58,12 +63,12 @@ export async function POST(request: Request) {
             ? ['image.ocr','image.caption']
             : originValue === 'unknown' ? ['image.landmark_candidate'] : [];
     for (const taskKey of remaining) {
-        results.push({ task_key:taskKey, result:await invokeAndPersist(taskKey,resolved,input) });
+        results.push({ task_key:taskKey, result:await invokeAndPersist(taskKey,resolved,input,authority.profileId) });
     }
     return NextResponse.json({ mode:body.mode, media_origin:originValue, tasks:results });
 }
 
-async function invokeAndPersist(taskKey: string, body: Required<Pick<MediaAnalysisBody,'analysisRunId'|'artifactId'|'evidenceLocatorId'>>, input: Record<string,string>): Promise<TaskResult> {
+async function invokeAndPersist(taskKey: string, body: Required<Pick<MediaAnalysisBody,'analysisRunId'|'artifactId'|'evidenceLocatorId'>>, input: Record<string,string>, profileId: string): Promise<TaskResult> {
     await pool.query(`INSERT INTO specialist_task_requests(analysis_run_id,artifact_id,task_key,input_manifest,status)
         VALUES($1,$2,$3,$4::jsonb,'running')
         ON CONFLICT(analysis_run_id,artifact_id,task_key) DO UPDATE
@@ -71,7 +76,7 @@ async function invokeAndPersist(taskKey: string, body: Required<Pick<MediaAnalys
     [body.analysisRunId,body.artifactId,taskKey,JSON.stringify(input)]);
     const result = await executeTask({
         taskKey,input,analysisRunId:body.analysisRunId,
-        sourceArtifactIds:[body.artifactId],workflowKey:'task4.media-analysis',
+        sourceArtifactIds:[body.artifactId],workflowKey:'task4.media-analysis',profileId,
     });
     await pool.query(`UPDATE specialist_task_requests SET status=$4,execution_record_id=$5,
         output_manifest=$6::jsonb,error=$7::jsonb,completed_at=NOW()

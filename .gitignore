@@ -40,6 +40,9 @@ n8n-docs-main/
 
 # Logs and scratch output
 *.log
+test-results/
+tests/browser/test-results/
+tests/browser/playwright-report/
 frontend/lint_errors.txt
 frontend/lint_log*.txt
 

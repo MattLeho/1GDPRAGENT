@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -42,7 +43,8 @@ async function checkEmailConnected() {
         const data = await res.json();
         const hasEmail = data.webhooks?.some((w: any) => w.description?.includes('email') || w.description?.includes('IMAP'));
         return { enabled: hasEmail, reason: hasEmail ? undefined : 'Email not configured in Settings' };
-    } catch {
+    } catch (error) {
+        if (shouldSuppressProtectedRequestError(error)) throw error;
         return { enabled: false, reason: 'Failed to check email configuration' };
     }
 }
@@ -163,9 +165,11 @@ export function AgentManager() {
                 )
             );
         } catch (error) {
-            toast.error(`${agent.name} failed`, {
-                description: error instanceof Error ? error.message : 'Unknown error'
-            });
+            if (!shouldSuppressProtectedRequestError(error)) {
+                toast.error(`${agent.name} failed`, {
+                    description: error instanceof Error ? error.message : 'Unknown error'
+                });
+            }
             setAgents((prev) =>
                 prev.map((a) =>
                     a.id === agentId ? { ...a, status: 'error' as const } : a

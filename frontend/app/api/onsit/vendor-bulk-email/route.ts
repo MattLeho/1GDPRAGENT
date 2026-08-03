@@ -1,7 +1,10 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import { pool } from '@/lib/db';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
     try {
         const { vendorIds } = await request.json();
 
@@ -16,8 +19,8 @@ export async function POST(request: Request) {
         const result = await pool.query(
             `SELECT id, domain, company_name, dpo_email 
              FROM vendor_lists 
-             WHERE id = ANY($1) AND dpo_email IS NOT NULL`,
-            [vendorIds]
+             WHERE id = ANY($1) AND profile_id = $2 AND dpo_email IS NOT NULL`,
+            [vendorIds, authority.profileId]
         );
 
         const vendors = result.rows;
@@ -51,8 +54,8 @@ export async function POST(request: Request) {
                     await pool.query(
                         `UPDATE vendor_lists 
                          SET gdpr_email_sent = true, gdpr_email_sent_at = NOW()
-                         WHERE id = $1`,
-                        [vendor.id]
+                         WHERE id = $1 AND profile_id = $2`,
+                        [vendor.id, authority.profileId]
                     );
                     emailsSent++;
                 }

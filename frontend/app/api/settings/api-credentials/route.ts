@@ -1,13 +1,17 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, NextRequest } from 'next/server';
+import { requireApiSession } from '@/lib/api-session';
 import { pool } from '@/lib/db'
 import { obfuscate, type APICredentials } from '@/lib/credentials'
 
 const fields: Array<keyof APICredentials>=['hibpApiKey','hunterApiKey','shodanApiKey','whoisApiKey']
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
   try {
-    const result=await pool.query("SELECT key,value IS NOT NULL AND value<>'' AS has_key FROM app_settings WHERE key=ANY($1::text[])",[fields.map(field=>`onsit.${field}`)])
-    const present=new Set(result.rows.filter(row=>row.has_key).map(row=>String(row.key).replace('onsit.','')))
+    const prefix=`profile.${authority.profileId}.onsit.`
+    const result=await pool.query("SELECT key,value IS NOT NULL AND value<>'' AS has_key FROM app_settings WHERE key=ANY($1::text[])",[fields.map(field=>`${prefix}${field}`)])
+    const present=new Set(result.rows.filter(row=>row.has_key).map(row=>String(row.key).replace(prefix,'')))
     return NextResponse.json({savedKeys:Object.fromEntries(fields.map(field=>[field,present.has(field)]))})
   } catch(error) {
     console.error('[API Credentials GET] Error:',error)
@@ -15,12 +19,14 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    const authority = await requireApiSession(request);
+    if (authority instanceof NextResponse) return authority;
   try {
     const body:APICredentials=await request.json()
     for(const field of fields) {
       const value=body[field]
-      if(value) await pool.query("INSERT INTO app_settings(key,value,encrypted,updated_at) VALUES($1,$2,true,NOW()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,encrypted=true,updated_at=NOW()",[`onsit.${field}`,obfuscate(value)])
+      if(value) await pool.query("INSERT INTO app_settings(key,value,encrypted,updated_at) VALUES($1,$2,true,NOW()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,encrypted=true,updated_at=NOW()",[`profile.${authority.profileId}.onsit.${field}`,obfuscate(value)])
     }
     return NextResponse.json({success:true,savedKeys:Object.fromEntries(fields.map(field=>[field,Boolean(body[field])]))})
   } catch(error) {

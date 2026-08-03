@@ -106,7 +106,7 @@ function parsePaginationParams(request: NextRequest): PaginationParams {
 }
 
 function relationshipPredicate(alias: string, params: PaginationParams): string {
-    const parts = [`${alias}.profile_id = $profileId`];
+    const parts = [`${alias}.profile_id = $profileId`, `coalesce(${alias}.profile_retired, false) = false`];
     if (!params.showInferences) parts.push(`coalesce(${alias}.edge_epistemic,'currently_observed')='currently_observed'`);
     if (params.asOf) parts.push(`(${alias}.valid_from IS NULL OR datetime(${alias}.valid_from)<=datetime($asOf)) AND (${alias}.valid_to IS NULL OR datetime(${alias}.valid_to)>datetime($asOf))`);
     if (params.epistemicBasis) parts.push(`(${alias}.edge_epistemic=$epistemicBasis OR ${alias}.epistemic_basis=$epistemicBasis)`);
@@ -123,6 +123,7 @@ function relationshipPredicate(alias: string, params: PaginationParams): string 
 export async function GET(request: NextRequest) {
     const authority=await requireApiSession(request);
     if(authority instanceof NextResponse)return authority;
+    if(process.env.R0_TEST_MODE==='1') return NextResponse.json({nodes:[],links:[],pagination:{hasMore:false,nextCursor:null,total:0},dbStatus:'r0-test-double'});
     const parsed = parsePaginationParams(request);
     const { limit, skip, layer, search, types, riskLevel, centerNodeId } = parsed;
     let session;
@@ -147,7 +148,7 @@ export async function GET(request: NextRequest) {
                 RETURN DISTINCT n.node_id as id, labels(n) as labels, properties(n) as props
                 ORDER BY n.node_id
                 LIMIT $limit
-            `, { centerNodeId, limit: neo4j.int(limit), profileId: authority.profileId, ...Object.fromEntries(request.nextUrl.searchParams) });
+            `, { ...Object.fromEntries(request.nextUrl.searchParams), centerNodeId, limit: neo4j.int(limit), profileId: authority.profileId });
 
             const nodeIds = neighborResult.records.map(record => String(record.get('id')));
             const linksResult = nodeIds.length
@@ -164,7 +165,7 @@ export async function GET(request: NextRequest) {
                            r.ingested_at as ingested_at,r.derivation_method as derivation_method,
                            r.derivation_version as derivation_version
                     LIMIT 2000
-                `, { nodeIds, profileId: authority.profileId, ...Object.fromEntries(request.nextUrl.searchParams) })
+                `, { ...Object.fromEntries(request.nextUrl.searchParams), nodeIds, profileId: authority.profileId })
                 : { records: [] };
 
             return NextResponse.json({
@@ -183,10 +184,10 @@ export async function GET(request: NextRequest) {
         const nodeFilters: string[] = [];
         nodeFilters.push(`coalesce(n.retired, false) = false`);
         const params: Record<string, unknown> = {
+            ...Object.fromEntries(request.nextUrl.searchParams),
             skip: neo4j.int(skip),
             limit: neo4j.int(limit + 1),
             profileId: authority.profileId,
-            ...Object.fromEntries(request.nextUrl.searchParams),
         };
         nodeFilters.push(`EXISTS { MATCH (n)-[scopeRel]-() WHERE ${relationshipPredicate('scopeRel', parsed)} }`);
         if (parsed.purpose) { nodeFilters.push(`(n:Purpose AND (n.node_id=$purpose OR n.canonical_key CONTAINS $purpose))`); }
