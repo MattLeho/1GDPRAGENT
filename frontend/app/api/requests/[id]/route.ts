@@ -5,9 +5,7 @@ import { RequestService } from '@/lib/requests/service';
 const requests = new RequestService();
 
 /**
- * DELETE /api/requests/[id] — Delete a request and all associated data
- * 
- * Child rows are removed by canonical foreign-key cascades in one transaction.
+ * DELETE /api/requests/[id] — Cancel a request while retaining its audit record.
  */
 export async function DELETE(
     _request: NextRequest,
@@ -25,7 +23,7 @@ export async function DELETE(
             );
         }
 
-        if (!await requests.delete(authority.profileId, id)) {
+        if (!await requests.cancel(authority.profileId, id, `user:${authority.userId}`)) {
             return NextResponse.json(
                 { success: false, error: 'Request not found' },
                 { status: 404 }
@@ -34,12 +32,12 @@ export async function DELETE(
 
         return NextResponse.json({
             success: true,
-            message: `Request ${id} and all associated data deleted`,
+            message: `Request ${id} cancelled; its evidence was retained`,
         });
     } catch (error) {
-        console.error('Delete request error:', error);
+        console.error('Cancel request error:', error);
         return NextResponse.json(
-            { success: false, error: 'Failed to delete request' },
+            { success: false, error: 'Failed to cancel request' },
             { status: 500 }
         );
     }

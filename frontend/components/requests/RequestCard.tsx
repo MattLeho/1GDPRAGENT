@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Maximize2, Trash2 } from "lucide-react";
+import { Ban, Maximize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface RequestCardProps {
@@ -38,7 +38,7 @@ export function RequestCard({ request, onViewDetails, onDelete }: RequestCardPro
 
     const handleDelete = (e: React.MouseEvent) => {
         e.stopPropagation();
-        if (onDelete && confirm(`Delete request for "${request.company_name}"? This will permanently remove all associated files, chat messages, and data.`)) {
+        if (onDelete && confirm(`Cancel the request for "${request.company_name}"? Its history, files, messages, and evidence will be retained.`)) {
             onDelete(request.id);
         }
     };
@@ -74,9 +74,9 @@ export function RequestCard({ request, onViewDetails, onDelete }: RequestCardPro
                                 size="icon"
                                 className="h-8 w-8 text-zinc-400 hover:text-red-600"
                                 onClick={handleDelete}
-                                title="Delete request"
+                                title="Cancel request"
                             >
-                                <Trash2 className="h-4 w-4" />
+                                <Ban className="h-4 w-4" />
                             </Button>
                         )}
                         <Button

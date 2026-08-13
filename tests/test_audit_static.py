@@ -92,7 +92,7 @@ def test_chat_route_matches_canonical_chat_message_schema():
     chat_route = read("frontend/app/api/request-threads/[id]/chat/route.ts")
 
     schema_uses_sender_message = "sender TEXT NOT NULL" in schema and "message TEXT NOT NULL" in schema
-    route_uses_sender_message = "sender as role" in chat_route and "message as content" in chat_route
+    route_uses_sender_message = "row.sender" in chat_route and "row.message" in chat_route
 
     assert schema_uses_sender_message and route_uses_sender_message, (
         "request_chat_messages must use sender/message consistently between "

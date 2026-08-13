@@ -85,7 +85,8 @@ class KGIngestorAgent:
         details=request.source_artifact or {}; legacy_id=details.get("legacy_file_id") or details.get("file_id")
         row=None
         if legacy_id:
-            rows=await ledger.postgres.execute("SELECT * FROM received_data WHERE id=$1::uuid AND profile_id=$2",str(legacy_id),request.profile_id); row=dict(rows[0]) if rows else None
+            from request_domain import RequestRepository
+            row=await RequestRepository(ledger.postgres).get_received_data(request.profile_id,UUID(str(legacy_id)))
             if not row: raise LookupError("source artifact does not exist")
         raw_path=Path(str(row.get("file_path"))) if row and row.get("file_path") else None
         shared_path=None

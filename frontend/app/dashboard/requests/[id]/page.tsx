@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getRequestAccountDetails, getRequestById, getRequestHistory, updateRequestStatus } from "@/lib/actions/request-detail";
+import { getRequestAccountDetails, getRequestById, getRequestDeadlineScreening, getRequestHistory, updateRequestStatus } from "@/lib/actions/request-detail";
 import { getMessages } from "@/lib/actions/messages";
 import { getRequestAnalysis } from "@/lib/actions/policy-analysis";
 import { getReceivedData } from "@/lib/actions/data";
@@ -37,13 +37,14 @@ export default async function RequestDetailPage({ params }: PageProps) {
     const { id } = await params;
 
     // Fetch all data in parallel
-    const [request, messages, analysis, receivedData, history, requestDetails] = await Promise.all([
+    const [request, messages, analysis, receivedData, history, requestDetails, deadlineScreening] = await Promise.all([
         getRequestById(id),
         getMessages(id),
         getRequestAnalysis(id),
         getReceivedData(id),
         getRequestById(id).then(r => r?.domain ? getRequestHistory(r.domain, id) : []),
         getRequestAccountDetails(id),
+        getRequestDeadlineScreening(id),
     ]);
 
     if (!request) {
@@ -327,8 +328,20 @@ export default async function RequestDetailPage({ params }: PageProps) {
                                 </div>
                                 <div className="flex justify-between text-sm">
                                     <span className="text-muted-foreground">Deadline</span>
-                                    <span>{formatDate(request.deadline_at)}</span>
+                                    <span>{formatDate(deadlineScreening?.deadline_at ?? null)}</span>
                                 </div>
+                                {deadlineScreening && (
+                                    <div className="rounded-md border p-3 text-xs space-y-1">
+                                        <div className="flex justify-between gap-3">
+                                            <span className="text-muted-foreground">Screening state</span>
+                                            <span className="font-medium capitalize">{deadlineScreening.deadline_state.replace(/_/g, ' ')}</span>
+                                        </div>
+                                        <p className="text-muted-foreground">{deadlineScreening.basis}</p>
+                                        {deadlineScreening.human_review_required && (
+                                            <p className="text-amber-700">Human review required: {deadlineScreening.uncertainties.join(' ')}</p>
+                                        )}
+                                    </div>
+                                )}
                                 <div className="flex justify-between text-sm">
                                     <span className="text-muted-foreground">Type</span>
                                     <span className="capitalize">{request.request_type}</span>
@@ -365,7 +378,7 @@ export default async function RequestDetailPage({ params }: PageProps) {
                                 <CardTitle className="text-sm">Actions</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2">
-                                {request.status !== 'completed' && (
+                                {['response_received', 'processing_response'].includes(request.status) && (
                                     <form
                                         action={async () => {
                                             "use server";

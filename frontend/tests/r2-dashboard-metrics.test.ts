@@ -17,7 +17,9 @@ describe('R2 dashboard metric semantics', () => {
     it('does not derive response duration or deadline outcomes from operational dates or a fixed day limit', () => {
         expect(dashboardPersistence).not.toMatch(/updated_at\s*-\s*created_at/i);
         expect(dashboardPersistence).not.toMatch(/interval\s+['"]30\s+days?['"]/i);
-        expect(dashboardPersistence).not.toMatch(/status\s*=\s*['"]completed['"][\s\S]{0,160}(met|on.?time|deadline)/i);
+        for (const source of [dashboardAction, requestRepository]) {
+            expect(source).not.toMatch(/FILTER\s*\(\s*WHERE\s+status\s*=\s*['"]completed['"][^)]*(met|on.?time|deadline)/i);
+        }
         expect(requestRepository).toMatch(/response_received_at\s*-\s*controller_received_at/);
         expect(requestRepository).toContain('response_received_at IS NOT NULL');
         expect(requestRepository).toContain('controller_received_at IS NOT NULL');
@@ -29,8 +31,8 @@ describe('R2 dashboard metric semantics', () => {
         expect(requestRepository).toMatch(/rd\.profile_id\s*=\s*\$1/);
         expect(requestRepository).toMatch(/r\.profile_id\s*=\s*\$1/);
         expect(requestRepository).toMatch(/wl\.status\s*=\s*'failed'/);
-        expect(requestRepository).toMatch(/COALESCE\([\s\S]*extension_deadline_at[\s\S]*deadline_at\)\s+IS NULL/);
-        expect(requestRepository).toMatch(/extension_notified_at\s+IS NOT NULL\s+AND\s+extension_deadline_at\s+IS NOT NULL/);
+        expect(requestRepository).toMatch(/deadline_at\s+IS NULL\s+AND\s+status\s+NOT IN/);
+        expect(requestRepository).not.toMatch(/COALESCE\(\s*extension_deadline_at\s*,\s*deadline_at/i);
         expect(requestRepository).toContain('GROUP BY status');
     });
 

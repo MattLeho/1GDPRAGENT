@@ -1,5 +1,6 @@
 {
     "name": "Vendor OCR Extractor",
+    "active": false,
     "nodes": [
         {
             "parameters": {

@@ -195,6 +195,7 @@ export async function submitRequest(payload: RequestPayload) {
 
             if (useBuiltInDraft) {
                 const builtInLogId = await startWorkflowLog({
+                    profileId,
                     requestId: newRequestId,
                     workflowName: 'Built-in GDPR Request Drafter',
                     workflowType: 'built_in',
@@ -234,7 +235,7 @@ export async function submitRequest(payload: RequestPayload) {
                     };
                     draftCreated = true;
                     draftBackend = 'built_in';
-                    await completeWorkflowLog(builtInLogId, {
+                    await completeWorkflowLog(profileId, builtInLogId, {
                         subject: builtInDraft.subject,
                         emailTransport: sendingPreference.execution_mode,
                     });
@@ -246,7 +247,7 @@ export async function submitRequest(payload: RequestPayload) {
                         evidence_reference:`workflow_log:${builtInLogId}`,transitioned_at:new Date()});
                 } catch (builtInError) {
                     console.error("Built-in workflow failed:", builtInError);
-                    await failWorkflowLog(builtInLogId, builtInError, {
+                    await failWorkflowLog(profileId, builtInLogId, builtInError, {
                         workflowKey: 'request.drafting',
                         stage: 'draft',
                     });
@@ -260,6 +261,7 @@ export async function submitRequest(payload: RequestPayload) {
             let emailDraft: DraftEmail | null = builtInDraft;
             if (allowN8NDraft && !emailDraft) {
                     const n8nDraftLogId = await startWorkflowLog({
+                        profileId,
                         requestId: newRequestId,
                         workflowName: 'N8N Request Drafter',
                         workflowType: 'n8n',
@@ -294,7 +296,7 @@ export async function submitRequest(payload: RequestPayload) {
                         };
                         draftCreated = true;
                         draftBackend = 'n8n';
-                        await completeWorkflowLog(n8nDraftLogId, {
+                        await completeWorkflowLog(profileId, n8nDraftLogId, {
                             subject: emailDraft.subject,
                         });
                         await requests.updateProgress(profileId,newRequestId,15);
@@ -303,7 +305,7 @@ export async function submitRequest(payload: RequestPayload) {
                             evidence_reference:`workflow_log:${n8nDraftLogId}`,transitioned_at:new Date()});
                     } catch (n8nDraftError) {
                         console.error("N8N draft workflow failed:", n8nDraftError);
-                        await failWorkflowLog(n8nDraftLogId, n8nDraftError, {
+                        await failWorkflowLog(profileId, n8nDraftLogId, n8nDraftError, {
                             workflowKey: 'request.drafting',
                             stage: 'draft',
                         });
@@ -317,10 +319,10 @@ export async function submitRequest(payload: RequestPayload) {
             if (emailDraft && sendingPreference.enabled && sendingPreference.execution_mode !== 'disabled') {
                 const requireReview = sendingPreference.configuration.require_review === true;
                 if (!requireReview && (sendingPreference.execution_mode === 'built_in' || sendingPreference.execution_mode === 'hybrid')) {
-                    const builtInEmailLogId = await startWorkflowLog({requestId:newRequestId,workflowName:'Built-in SMTP Email Sender',workflowType:'built_in',details:{workflowKey:'email.sending',to:dpoEmail}});
+                    const builtInEmailLogId = await startWorkflowLog({profileId,requestId:newRequestId,workflowName:'Built-in SMTP Email Sender',workflowType:'built_in',details:{workflowKey:'email.sending',to:dpoEmail}});
                     try {
                         const sent=await sendBuiltInEmail(profileId,{requestId:newRequestId,to:dpoEmail,subject:emailDraft.subject,body:emailDraft.body});
-                        emailSent=true; await completeWorkflowLog(builtInEmailLogId,{messageId:sent.messageId,transport:sent.transport});
+                        emailSent=true; await completeWorkflowLog(profileId,builtInEmailLogId,{messageId:sent.messageId,transport:sent.transport});
                         await requests.appendMessage(profileId,newRequestId,'agent',`Built-in SMTP transport sent the GDPR request to ${dpoEmail}.`);
                         const sentAt=new Date();
                         await requests.transition(profileId,{request_id:newRequestId,next_state:'sent',actor:'workflow:email.sending',
@@ -332,12 +334,13 @@ export async function submitRequest(payload: RequestPayload) {
                         await requests.updateProgress(profileId,newRequestId,20);
                         // Prime the built-in monitor; a failed initial check does not undo a successful send.
                         monitorInboxBuiltIn().catch(error=>console.warn('Initial inbox monitor check failed:',error));
-                    } catch (error) { await failWorkflowLog(builtInEmailLogId,error,{workflowKey:'email.sending',stage:'smtp_send'}); }
+                    } catch (error) { await failWorkflowLog(profileId,builtInEmailLogId,error,{workflowKey:'email.sending',stage:'smtp_send'}); }
                 }
 
                 const useN8NTransport = !requireReview && !emailSent && (sendingPreference.execution_mode === 'n8n' || sendingPreference.execution_mode === 'hybrid');
                 if (useN8NTransport) {
                     const n8nEmailLogId = await startWorkflowLog({
+                        profileId,
                         requestId: newRequestId,
                         workflowName: 'N8N Email Sender',
                         workflowType: 'n8n',
@@ -360,7 +363,7 @@ export async function submitRequest(payload: RequestPayload) {
                         }
 
                         emailSent = true;
-                        await completeWorkflowLog(n8nEmailLogId, {
+                        await completeWorkflowLog(profileId, n8nEmailLogId, {
                             messageId: sendResult.data?.messageId || null,
                         });
 
@@ -375,7 +378,7 @@ export async function submitRequest(payload: RequestPayload) {
                         await requests.updateProgress(profileId,newRequestId,20);
                     } catch (n8nEmailError) {
                         console.error("N8N email workflow failed:", n8nEmailError);
-                        await failWorkflowLog(n8nEmailLogId, n8nEmailError, {
+                        await failWorkflowLog(profileId, n8nEmailLogId, n8nEmailError, {
                             workflowKey: 'email.sending',
                             stage: 'email_send',
                         });

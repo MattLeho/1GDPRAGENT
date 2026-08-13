@@ -88,17 +88,16 @@ function RequestsGridContent({ initialRequests }: RequestsGridProps) {
             const data = await res.json();
 
             if (data.success) {
-                // Remove from local state — triggers re-filter
-                setFilteredRequests(prev => prev.filter(r => r.id !== requestId));
-                toast.success('Request deleted', {
-                    description: 'The request and all associated data have been removed.',
+                setFilteredRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: 'cancelled' } : r));
+                toast.success('Request cancelled', {
+                    description: 'Its history, files, messages, and evidence were retained.',
                 });
             } else {
-                toast.error('Failed to delete', { description: data.error || 'Unknown error' });
+                toast.error('Failed to cancel', { description: data.error || 'Unknown error' });
             }
         } catch (error) {
             if (!shouldSuppressProtectedRequestError(error)) {
-                toast.error('Failed to delete request', { description: 'Network error' });
+                toast.error('Failed to cancel request', { description: 'Network error' });
             }
         }
     }, []);

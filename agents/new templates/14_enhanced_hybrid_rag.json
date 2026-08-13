@@ -1,5 +1,6 @@
 {
     "name": "Enhanced Hybrid RAG with Vector Ingestion",
+    "active": false,
     "nodes": [
         {
             "parameters": {

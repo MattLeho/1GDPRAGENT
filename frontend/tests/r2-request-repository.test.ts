@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     RequestRepository,
     type RequestDatabase,
-    type RequestDatabaseClient,
     type RequestQueryResult,
 } from '@/lib/requests/repository';
 import { RequestService } from '@/lib/requests/service';
@@ -13,7 +12,7 @@ import type { Request } from '@/lib/requests/types';
 const requestRow = {
     id: 'request-a', profile_id: 'profile-a', company_name: 'Example', company_url: null,
     domain: 'example.test', request_type: 'access', status: 'draft', progress: 0,
-    notes: null, deadline_basis: null, created_at: '2024-01-01T00:00:00.000Z',
+    notes: null, deadline_basis: null, extension_reason: null, created_at: '2024-01-01T00:00:00.000Z',
     updated_at: '2024-01-01T00:00:00.000Z', sent_at: null,
     controller_received_at: null, identity_requested_at: null, identity_verified_at: null,
     clarification_requested_at: null, clarification_resolved_at: null,
@@ -47,7 +46,7 @@ describe('R2 canonical request repository', () => {
             request_id: 'request-a', next_state: 'ready_for_review', actor: 'tester',
             reason: 'reviewed', transitioned_at: '2024-01-01T00:00:00Z',
         });
-        expect(query.mock.calls[0]?.[0]).toContain('WITH transitioned AS MATERIALIZED');
+        expect(query.mock.calls[0]?.[0]).toContain('transitioned AS MATERIALIZED');
     });
 
     it('parameterizes dynamic list filters and always scopes the profile', async () => {
@@ -167,52 +166,19 @@ describe('R2 canonical request repository', () => {
         expect(database.query.mock.calls[0][1]).toEqual([0, 'request-a', 'profile-a']);
     });
 
-    it('commits and releases a transactional owned delete', async () => {
-        const query = vi.fn()
-            .mockResolvedValueOnce(result([]))
-            .mockResolvedValueOnce(result([{ id: 'request-a' }]))
-            .mockResolvedValueOnce(result([{ id: 'request-a' }]))
-            .mockResolvedValueOnce(result([]));
-        const client = { query, release: vi.fn() } as RequestDatabaseClient;
-        const database: RequestDatabase = { query: vi.fn(), connect: vi.fn(async () => client) };
+    it('cancels through the audited state transition and never issues physical deletion SQL', async () => {
+        const cancelled = { ...requestRow, status: 'cancelled' as const };
+        const database = databaseWith(queryReturning([cancelled]));
 
-        await expect(new RequestRepository(database).delete('profile-a', 'request-a')).resolves.toBe(true);
-        expect(query.mock.calls.map(call => call[0].trim())).toEqual([
-            'BEGIN', expect.stringMatching(/^SELECT id FROM requests/),
-            expect.stringMatching(/^DELETE FROM requests/), 'COMMIT',
+        await expect(new RequestRepository(database).cancel('profile-a', 'request-a', 'user:1'))
+            .resolves.toMatchObject({ status: 'cancelled' });
+        const [sql, values] = database.query.mock.calls[1];
+        expect(sql).toContain('transition_request_state');
+        expect(database.query.mock.calls.map(call=>call[0]).join('\n')).not.toMatch(/DELETE\s+FROM\s+requests/i);
+        expect(values?.slice(0, 6)).toEqual([
+            'request-a', 'profile-a', 'cancelled', 'user:1',
+            'User cancelled request; request and evidence retained', null,
         ]);
-        expect(client.release).toHaveBeenCalledOnce();
-    });
-
-    it('rolls back without deleting when ownership fails', async () => {
-        const query = vi.fn()
-            .mockResolvedValueOnce(result([]))
-            .mockResolvedValueOnce(result([]))
-            .mockResolvedValueOnce(result([]));
-        const client = { query, release: vi.fn() } as RequestDatabaseClient;
-        const database: RequestDatabase = { query: vi.fn(), connect: vi.fn(async () => client) };
-
-        await expect(new RequestRepository(database).delete('profile-a', 'foreign')).resolves.toBe(false);
-        expect(query.mock.calls.map(call => call[0].trim())).toEqual([
-            'BEGIN', expect.stringMatching(/^SELECT id FROM requests/), 'ROLLBACK',
-        ]);
-        expect(query.mock.calls.some(call => /^DELETE/.test(call[0].trim()))).toBe(false);
-        expect(client.release).toHaveBeenCalledOnce();
-    });
-
-    it('rolls back and releases when deletion fails', async () => {
-        const failure = new Error('delete failed');
-        const query = vi.fn()
-            .mockResolvedValueOnce(result([]))
-            .mockResolvedValueOnce(result([{ id: 'request-a' }]))
-            .mockRejectedValueOnce(failure)
-            .mockResolvedValueOnce(result([]));
-        const client = { query, release: vi.fn() } as RequestDatabaseClient;
-        const database: RequestDatabase = { query: vi.fn(), connect: vi.fn(async () => client) };
-
-        await expect(new RequestRepository(database).delete('profile-a', 'request-a')).rejects.toThrow(failure);
-        expect(query.mock.calls.at(-1)?.[0]).toBe('ROLLBACK');
-        expect(client.release).toHaveBeenCalledOnce();
     });
 
     it('exposes deadline screening without using operational timestamps', () => {
@@ -224,7 +190,7 @@ describe('R2 canonical request repository', () => {
         }, '2024-02-01T00:00:00.000Z');
 
         expect(screened.deadline_state).toBe('known');
-        expect(screened.deadline_at).toBe('2024-02-29T00:00:00.000Z');
+        expect(screened.deadline_at).toBe('2024-02-29T23:59:59.999Z');
         expect(screened.input_dates).not.toHaveProperty('updated_at');
     });
 });

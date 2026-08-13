@@ -15,10 +15,10 @@ export async function GET(
     try {
         const { id } = await params;
 
-        const history = await requests.chat(authority.profileId, id);
         if (!await requests.get(authority.profileId, id)) {
             return NextResponse.json({ success: false, error: 'Request not found' }, { status: 404 });
         }
+        const history = await requests.chat(authority.profileId, id);
 
         return NextResponse.json({
             success: true,

@@ -1,5 +1,3 @@
-import { pool } from '@/lib/db';
-
 export type DataArtifactType =
     | 'table'
     | 'chart_spec'
@@ -47,76 +45,6 @@ const isoDatePattern = /\b(\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2})?(?:\.\
 const commonDatePattern = /\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b/g;
 const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const ipPattern = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
-
-export async function replaceArtifactsForFile(file: ArtifactSourceFile, content: string): Promise<DataArtifact[]> {
-    if (!file.request_id || !file.id) {
-        return [];
-    }
-
-    const artifacts = generateArtifacts(file, content);
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [file.id]);
-        const runResult = await client.query(
-            `INSERT INTO analysis_runs
-             (run_type, request_id, status, pipeline_version, configuration, started_at, completed_at)
-             VALUES ('data_artifact_generation', $1, 'completed', $2, $3::jsonb, NOW(), NOW())
-             RETURNING id`,
-            [file.request_id, 'task1-artifacts-v1', JSON.stringify({ fileId: file.id })],
-        );
-        const analysisRunId = runResult.rows[0].id as string;
-        const persisted: DataArtifact[] = [];
-
-        for (const artifact of artifacts) {
-            const previous = await client.query(
-                `SELECT id, artifact_version FROM data_artifacts
-                 WHERE file_id=$1 AND artifact_type=$2 AND title=$3
-                 ORDER BY artifact_version DESC LIMIT 1 FOR UPDATE`,
-                [file.id, artifact.artifact_type, artifact.title],
-            );
-            const prior = previous.rows[0];
-            const version = Number(prior?.artifact_version || 0) + 1;
-            const inserted = await client.query(
-                `INSERT INTO data_artifacts
-                 (request_id,file_id,artifact_type,title,payload,confidence,source_span,analysis_run_id,
-                  artifact_version,supersedes_artifact_id,derivation_method,derivation_version,updated_at)
-                 VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,'deterministic_artifact_generator',$11,NOW())
-                 RETURNING id`,
-                [artifact.request_id,artifact.file_id,artifact.artifact_type,artifact.title,
-                 JSON.stringify(artifact.payload),artifact.confidence ?? 1,artifact.source_span || null,
-                 analysisRunId,version,prior?.id || null,'task1-artifacts-v1'],
-            );
-            persisted.push({ ...artifact, id: inserted.rows[0].id, analysis_run_id: analysisRunId,
-                artifact_version: version, supersedes_artifact_id: prior?.id || null,
-                derivation_method: 'deterministic_artifact_generator', derivation_version: 'task1-artifacts-v1' });
-        }
-        await client.query('COMMIT');
-        return persisted;
-    } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-    } finally {
-        client.release();
-    }
-}
-
-export async function getArtifactsForRequest(requestId: string): Promise<DataArtifact[]> {
-    const result = await pool.query(
-        `SELECT id, request_id, file_id, artifact_type, title, payload, confidence, source_span,
-                analysis_run_id, artifact_version, supersedes_artifact_id, derivation_method, derivation_version
-         FROM current_data_artifacts
-         WHERE request_id = $1
-         ORDER BY created_at ASC`,
-        [requestId],
-    );
-
-    return result.rows.map(row => ({
-        ...row,
-        payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload,
-        confidence: Number(row.confidence ?? 1),
-    }));
-}
 
 export function generateArtifacts(file: ArtifactSourceFile, rawContent: string): DataArtifact[] {
     const content = rawContent.slice(0, MAX_TEXT_LENGTH);

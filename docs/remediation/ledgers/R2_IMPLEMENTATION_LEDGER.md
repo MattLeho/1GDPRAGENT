@@ -1,51 +1,51 @@
 # R2 implementation ledger
 
-**Branch / starting commit:** `main` / `67e50b85daa923366d3bec80db6582edcc3ba134`  
-**Start date:** 2026-07-18  
+**Starting point:** `main` at `67e50b85daa923366d3bec80db6582edcc3ba134`
+
+**Implementation period:** 2026-07-18 to 2026-08-13
+
 **Decision owner:** lead agent
 
-## Canonical decisions
+## Acceptance decision
 
-- `requests` is the sole canonical profile-owned GDPR request root. `access_requests` is a temporary read-only compatibility view and canonical application code must not depend on it.
-- `updated_at` is operational metadata maintained by a database trigger. It is never evidence of sending, controller receipt, response receipt, completion, or legal timeliness.
-- No missing legal or lifecycle timestamp is fabricated. Legacy `deadline_date` is retained but is not copied into `deadline_at`; legacy `next_action_date` may be copied to `next_action_at` because it has the same operational meaning.
-- Canonical states are `draft`, `ready_for_review`, `scheduled`, `sent`, `awaiting_response`, `identity_action_required`, `clarification_action_required`, `response_received`, `processing_response`, `completed`, `closed_incomplete`, and `cancelled`.
-- Historical `processing` and `action_required` values are preserved and mapped at the service boundary; they are not bulk rewritten.
-- Every state transition is atomic and creates an append-only event with actor, previous state, next state, timestamp, reason, and optional evidence reference.
-- Deadline screening uses one calendar month from explicit controller receipt evidence. A sent-only result is estimated. Identity and clarification pauses remain distinct. Extensions require both notice and deadline records. Response receipt, not local completion, is used for timeliness screening.
+R2 is accepted. Both final independent audits returned PASS: migration/request-domain SQL and lifecycle/deadline semantics. Migration 031 remains byte-for-byte unchanged and its checksum matches the recorded installation.
 
-## Delegation map
+## Frozen decisions
 
-| Workstream | Bounded owner | Owned paths | Lead-retained decisions |
-|---|---|---|---|
-| Schema drift inventory | `schema_inventory` | read-only repository and live catalogue; evidence report | canonical schema and interpretation |
-| Predecessor audit | `predecessor_audit` | read-only R0/R1 tests/runtime probes | blocking-regression decision and repairs |
-| Request access inventory | `request_surface` | read-only frontend/Python request surfaces | repository boundary and migration order |
-| Ordered migration and fixtures | `schema_inventory` follow-up | migration 031 and R2 migration fixture | migration order, backfill, compatibility, lifecycle semantics |
-| Deadline engine | `request_surface` follow-up | deadline module and focused tests | legal-screening semantics |
-| Request repository core | `request_surface` follow-up | canonical repository/service/types and focused tests | cross-service wiring and call-site acceptance |
-| Dashboard repair | `dashboard_repair` | dashboard action, Home components, focused tests | final dashboard claim review |
-| Clean/upgrade/lifecycle verification | pending bounded assignment | focused fixtures/tests | final acceptance |
-| Independent audits | pending non-implementing agents | evidence reports only | repairs and final judgement |
+- `requests` is the sole canonical, profile-owned request root. `access_requests` is read-only compatibility only.
+- Lifecycle changes go through one guarded transition path and append immutable provenance events.
+- User cancellation retains the request and all evidence; R2 performs no physical request deletion.
+- Missing legal dates are never fabricated. `deadline_at` is an explicit, screened effective deadline; `updated_at` is operational metadata only.
+- Deadline screening uses Europe/London calendar dates, calendar months, end-of-day, weekends, England/Wales bank holidays, identity and SAR-clarification rules, and validated extension evidence.
+- Request-domain SQL, including request children and email drafts, is confined to the TypeScript and Python repositories and is profile scoped.
+- Legacy N8N request workflows are inactive and are not selectable by the runtime registry.
 
-## Predecessor evidence
+## Delivered scope
 
-- R1 frontend authority/session/profile tests: 57 focused checks passed in the lead run; the independent predecessor run reported all 87 frontend tests passing.
-- Focused R1 Python/static integration: 38 passed and 7 database-dependent skips before a database URL was supplied; migration fixtures then reported 6 passed and the expected R2 `updated_at` xfail.
-- Live migration history initially stopped at 029. Ordered migration 030 was applied successfully through `database/migrate.py` before R2 implementation.
-- The existing runtime lacked distinct usable R1 secrets and returned 503 for malformed sessions. Affected local containers were recreated with three distinct generated test secrets; protected probes then returned 401 and cleared the invalid cookie.
-- R0 remains formally unaccepted in its historical acceptance document because managed browser/full-suite evidence is incomplete. The known later-plan static failures remain explicit and are not reclassified as R2 work.
+- Ordered compatibility/preflight and lifecycle hardening migrations: 030a, 032, and 033, without altering applied migration 031.
+- Canonical TypeScript and Python request repositories plus service boundary.
+- Atomic lifecycle/event provenance and atomic request-thread/lifecycle updates.
+- Historical status reconciliation with migration audit events and canonical constraints.
+- Evidence-retaining cancellation, grounded dashboard metrics, live response classification, and deadline detail UI.
+- Recursive static boundary checks for application and workflow SQL.
+- Three-path real-database matrix: clean install, pre-031 historical upgrade, and already-recorded-031 upgrade.
 
-## Evidence ledger
+## Final evidence
 
-| Requirement | Code/migration evidence | Automated evidence | Runtime evidence | Status |
-|---|---|---|---|---|
-| Schema/query inventory | `docs/remediation/evidence/r2-schema-drift-inventory.md` | static recursive inventory | live catalogue compared through migration 029, then 030 applied | COMPLETE |
-| Explicit lifecycle schema and trigger | pending migration 031 | pending clean/upgrade fixtures | pending | IN PROGRESS |
-| Canonical repository and compatibility policy | pending | pending | pending | IN PROGRESS |
-| Immutable transition events | pending | pending | pending | IN PROGRESS |
-| Deterministic deadline engine | `frontend/lib/requests/deadline.ts` | 19 focused Vitest checks; typecheck passed | pure deterministic engine | COMPLETE |
-| Grounded dashboard metrics | pending | pending | pending authenticated Home | IN PROGRESS |
-| Clean install, upgrade and query execution | pending | pending | pending | NOT STARTED |
-| Independent migration/SQL/lifecycle/deadline audits | pending | pending | n/a | NOT STARTED |
+- Independent migration/SQL audit: PASS.
+- Independent lifecycle/deadline audit: PASS; final focused run 48/48.
+- Migration fixtures: 4/4 on disposable PostgreSQL databases.
+- Real-database query matrix: TypeScript 1/1 and Python 1/1 on each of all three paths.
+- Frontend: typecheck passed; full suite 128 passed with the separately executed DB integration intentionally skipped; production build passed.
+- Python: 539 passed and 3 skipped in the full run; its only three failures were a host/container Neo4j hostname mismatch, and all three passed when rerun against the mapped localhost endpoint.
+- Authenticated browser acceptance used a disposable database and throwaway profile. Home and Requests loaded without browser console errors. No real user account was used.
 
+## Evidence locations
+
+- `scripts/r2-query-matrix.py`
+- `tests/migration_fixtures/test_r2_request_lifecycle_migration.py`
+- `tests/test_r2_request_domain_static.py`
+- `frontend/tests/r2-request-repository.integration.test.ts`
+- `frontend/tests/r2-deadline-engine.test.ts`
+- `frontend/tests/r2-dashboard-metrics.test.ts`
+- `docs/remediation/handoffs/R2_PAUSE_HANDOFF_2026-07-18.md`

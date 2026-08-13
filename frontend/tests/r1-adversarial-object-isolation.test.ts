@@ -14,7 +14,12 @@ vi.mock('@/lib/api-session', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/lib/api-session')>();
   return { ...original, requireApiSession: vi.fn(async () => mocks.authority) };
 });
-vi.mock('@/lib/db', () => ({ pool: { query: mocks.query } }));
+vi.mock('@/lib/db', () => ({
+  pool: {
+    query: mocks.query,
+    connect: vi.fn(async () => ({ query: mocks.query, release: vi.fn() })),
+  },
+}));
 vi.mock('@/lib/ingestion/bulk', () => ({ processThroughBulkPipeline: mocks.pipeline }));
 vi.mock('@/lib/rlm-agent', () => ({ getRLMAgent: () => ({ chat: mocks.chat }) }));
 vi.mock('@/lib/graph', () => ({ getDriver: () => ({ session: () => ({ run: mocks.graphRun, close: mocks.graphClose }) }) }));
@@ -38,16 +43,17 @@ function jsonRequest(url: string, method: string, body?: unknown) {
 describe('R1 cross-profile object isolation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.query.mockResolvedValue({ rowCount: 0, rows: [] });
     process.env.INTERNAL_API_KEY = 'r1-object-isolation-internal-key';
   });
 
-  it('does not delete a request when the object is foreign', async () => {
+  it('does not cancel a request when the object is foreign', async () => {
     mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
     const response = await deleteRequest(jsonRequest('https://gdpr.test/api/requests/foreign', 'DELETE'), {
       params: Promise.resolve({ id: 'foreign-request' }),
     });
     expect(response.status).toBe(404);
-    expect(mocks.query).toHaveBeenCalledTimes(1);
+    expect(mocks.query).toHaveBeenCalledOnce();
     expect(mocks.query).toHaveBeenCalledWith(expect.stringMatching(/profile_id = \$2/), ['foreign-request', 'profile-a']);
   });
 
@@ -67,7 +73,7 @@ describe('R1 cross-profile object isolation', () => {
       fileId: 'foreign-file', profileId: 'profile-b',
     }));
     expect(response.status).toBe(404);
-    expect(mocks.query).toHaveBeenCalledWith(expect.stringMatching(/id=\$1 AND profile_id=\$2/), ['foreign-file', 'profile-a']);
+    expect(mocks.query).toHaveBeenCalledWith(expect.stringMatching(/id\s*=\s*\$1[^]*profile_id\s*=\s*\$2/), ['foreign-file', 'profile-a']);
     expect(mocks.pipeline).not.toHaveBeenCalled();
   });
 

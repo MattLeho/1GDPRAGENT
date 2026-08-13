@@ -17,6 +17,7 @@ from migrate import migrate
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "database" / "migrations"
 R2_MIGRATION = MIGRATIONS / "031_r2_request_lifecycle.sql"
+R2_PREFLIGHT = MIGRATIONS / "030a_r2_legacy_request_preflight.sql"
 
 
 def _database_url() -> str:
@@ -50,6 +51,20 @@ def _migrations_before_r2(directory: Path) -> None:
 async def test_r2_clean_install_runner_and_sql_are_idempotent():
     admin, name, url = await _temporary_database("clean")
     try:
+        # Replay the historical migration at its own schema point. Later
+        # migrations deliberately extend objects that 031 created.
+        with tempfile.TemporaryDirectory(prefix="r2-through-031-") as temporary:
+            through_r2 = Path(temporary)
+            for source in sorted(MIGRATIONS.glob("*.sql")):
+                if source.name <= R2_MIGRATION.name:
+                    (through_r2 / source.name).write_bytes(source.read_bytes())
+            await migrate(url, through_r2)
+        connection = await asyncpg.connect(url)
+        try:
+            await connection.execute(R2_MIGRATION.read_text(encoding="utf-8"))
+        finally:
+            await connection.close()
+
         await migrate(url, MIGRATIONS)
         await migrate(url, MIGRATIONS)
         connection = await asyncpg.connect(url)
@@ -66,20 +81,19 @@ async def test_r2_clean_install_runner_and_sql_are_idempotent():
                 "identity_verified_at", "clarification_requested_at", "clarification_resolved_at",
                 "response_received_at", "completed_at", "deadline_at", "deadline_basis",
                 "extension_notified_at", "extension_deadline_at", "next_action_at",
+                "extension_reason",
             }
             assert expected <= set(columns)
             assert columns["updated_at"]["is_nullable"] == "NO"
             assert "now()" in columns["updated_at"]["column_default"].lower()
             assert all(
                 columns[name]["data_type"] == "timestamp with time zone"
-                for name in expected - {"deadline_basis"}
+                for name in expected - {"deadline_basis", "extension_reason"}
             )
             assert await connection.fetchval(
                 "SELECT count(*) FROM gdpr_schema_migrations WHERE version='031'"
             ) == 1
 
-            # The SQL itself is safe if deliberately evaluated a second time.
-            await connection.execute(R2_MIGRATION.read_text(encoding="utf-8"))
             assert await connection.fetchval(
                 "SELECT count(*) FROM pg_trigger WHERE tgrelid='requests'::regclass "
                 "AND tgname IN ('requests_set_updated_at','requests_status_transition_guard') AND NOT tgisinternal"
@@ -133,6 +147,16 @@ async def test_r2_upgrade_preserves_rows_and_does_not_fabricate_legal_dates():
                 "VALUES($1,'legacy','legacy event',$2) RETURNING id",
                 request_id, created_at,
             )
+            legacy_status_ids = {}
+            for legacy_status in (
+                "draft_pending_review", "pending", "verification_needed", "data_available",
+                "data_received", "partial_data", "processing", "data_analyzed", "rejected",
+                "extended", "action_required", "unknown_vendor_state",
+            ):
+                legacy_status_ids[legacy_status] = await connection.fetchval(
+                    "INSERT INTO requests(company_name,status,profile_id) VALUES($1,$2,$3) RETURNING id",
+                    f"Legacy {legacy_status}", legacy_status, profile_id,
+                )
         finally:
             await connection.close()
 
@@ -165,6 +189,58 @@ async def test_r2_upgrade_preserves_rows_and_does_not_fabricate_legal_dates():
             assert event["actor"] == "legacy/unknown"
             assert event["reason"] == "legacy/unknown"
             assert event["previous_state"] is None and event["next_state"] is None
+            expected_statuses = {
+                "draft_pending_review": "ready_for_review", "pending": "awaiting_response",
+                "verification_needed": "identity_action_required", "data_available": "response_received",
+                "data_received": "response_received", "partial_data": "response_received",
+                "processing": "processing_response", "data_analyzed": "processing_response",
+                "rejected": "closed_incomplete", "extended": "awaiting_response",
+                "action_required": "ready_for_review", "unknown_vendor_state": "ready_for_review",
+            }
+            for legacy_status, mapped in expected_statuses.items():
+                legacy_id = legacy_status_ids[legacy_status]
+                assert await connection.fetchval("SELECT status FROM requests WHERE id=$1", legacy_id) == mapped
+                audit = await connection.fetchrow(
+                    "SELECT previous_state,next_state,actor,evidence_reference FROM request_events WHERE request_id=$1",
+                    legacy_id,
+                )
+                assert dict(audit) == {"previous_state": legacy_status, "next_state": mapped,
+                    "actor": "migration:032", "evidence_reference": "migration:032"}
+        finally:
+            await connection.close()
+    finally:
+        await _drop_database(admin, name)
+
+
+@pytest.mark.asyncio
+async def test_r2_preflight_upgrades_a_minimal_historical_requests_table():
+    admin, name, url = await _temporary_database("minimal")
+    try:
+        connection = await asyncpg.connect(url)
+        try:
+            await connection.execute('CREATE EXTENSION IF NOT EXISTS pgcrypto')
+            await connection.execute(
+                "CREATE TABLE requests("
+                "id uuid primary key default gen_random_uuid(), company_name text not null, "
+                "company_url text, domain text, status text default 'draft', "
+                "request_type text default 'access', created_at timestamptz default now())"
+            )
+        finally:
+            await connection.close()
+
+        await migrate(url, MIGRATIONS)
+        connection = await asyncpg.connect(url)
+        try:
+            for column in (
+                "next_action_date", "deadline_date", "data_volume_mb",
+                "data_period_start", "data_period_end", "progress", "notes",
+                "next_action_at", "deadline_at", "updated_at",
+            ):
+                assert await connection.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name='requests' AND column_name=$1)",
+                    column,
+                )
         finally:
             await connection.close()
     finally:
@@ -268,23 +344,11 @@ async def test_r2_view_guards_transitions_events_and_updated_at():
             after = await connection.fetchval("SELECT updated_at FROM requests WHERE id=$1", request_id)
             assert after > before
 
-            for legacy_status, target in (
-                ("processing", "completed"),
-                ("action_required", "clarification_action_required"),
-            ):
-                legacy_id = await connection.fetchval(
-                    "INSERT INTO requests(company_name,status,profile_id) VALUES($1,$2,$3) RETURNING id",
-                    f"Legacy {legacy_status}", legacy_status, profile_id,
+            with pytest.raises(asyncpg.CheckViolationError):
+                await connection.execute(
+                    "INSERT INTO requests(company_name,status,profile_id) VALUES('Legacy blocked','processing',$1)",
+                    profile_id,
                 )
-                transitioned = await connection.fetchval(
-                    "SELECT (transition_request_state($1,$2,$3,'fixture-user','explicit legacy mapping')).status",
-                    legacy_id, profile_id, target,
-                )
-                assert transitioned == target
-                assert await connection.fetchval(
-                    "SELECT previous_state FROM request_events WHERE request_id=$1",
-                    legacy_id,
-                ) == legacy_status
         finally:
             await connection.close()
     finally:

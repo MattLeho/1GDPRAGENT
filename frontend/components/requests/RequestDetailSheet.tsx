@@ -105,8 +105,10 @@ export function RequestDetailSheet({
         toast.success("Request marked as complete", { description: "Status updated to 'completed'" });
     };
 
-    const handleDelete = () => {
-        toast.error("Delete not implemented", { description: "This feature is coming soon" });
+    const handleDelete = async () => {
+        const response = await fetch(`/api/requests/${request.id}`, { method: 'DELETE' });
+        if (response.ok) toast.success('Request cancelled', { description: 'All evidence was retained.' });
+        else toast.error('Unable to cancel request');
     };
 
     const handleExport = () => {
@@ -460,10 +462,10 @@ export function RequestDetailSheet({
                         </Button>
                         <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={handleDelete}>
                             <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
+                            Cancel
                         </Button>
                     </div>
-                    {request.status !== 'completed' && (
+                    {['response_received', 'processing_response'].includes(request.status) && (
                         <Button size="sm" onClick={handleMarkComplete}>
                             <CheckCircle2 className="mr-2 h-4 w-4" />
                             Mark Complete

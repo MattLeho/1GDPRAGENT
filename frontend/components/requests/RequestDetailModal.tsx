@@ -1089,7 +1089,7 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
                     <Button variant="outline" size="sm" onClick={() => toast.info("Export started")}>
                         <Download className="mr-2 h-4 w-4" /> Export All
                     </Button>
-                    {request.status !== 'completed' && (
+                    {['response_received', 'processing_response'].includes(request.status) && (
                         <Button size="sm" onClick={() => toast.success("Marked complete")}>
                             <CheckCircle2 className="mr-2 h-4 w-4" /> Mark Complete
                         </Button>

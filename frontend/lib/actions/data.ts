@@ -1,6 +1,5 @@
 'use server';
 
-import { safeQuery } from '@/lib/db';
 import { requireServerSessionAuthority } from '@/lib/api-session';
 import { RequestService } from '@/lib/requests/service';
 
@@ -37,18 +36,8 @@ export interface ReceivedDataFile {
  */
 export async function getReceivedData(requestId: string): Promise<ReceivedDataFile[]> {
     const {profileId}=await requireServerSessionAuthority();
-    const result = await safeQuery<ReceivedDataFile>(
-        `SELECT received_data.*, file_path AS download_url FROM received_data 
-         WHERE request_id = $1 AND profile_id=$2
-         ORDER BY date_received DESC`,
-        [requestId,profileId]
-    );
-
-    if (result.error) {
-        console.error('Failed to fetch received data:', result.error);
-    }
-
-    return result.rows;
+    const rows=await requests.receivedData(profileId,requestId);
+    return rows.map(row=>({...row,download_url:row.file_path??null})) as unknown as ReceivedDataFile[];
 }
 
 /**
@@ -56,19 +45,7 @@ export async function getReceivedData(requestId: string): Promise<ReceivedDataFi
  */
 export async function getRequestDataVolume(requestId: string): Promise<number> {
     const {profileId}=await requireServerSessionAuthority();
-    const result = await safeQuery<{ total: string }>(
-        `SELECT COALESCE(SUM(file_size_mb), 0) as total
-         FROM received_data 
-         WHERE request_id = $1 AND profile_id=$2`,
-        [requestId,profileId]
-    );
-
-    if (result.error) {
-        console.error('Failed to fetch data volume:', result.error);
-        return 0;
-    }
-
-    return parseFloat(result.rows[0]?.total || '0');
+    return requests.receivedDataVolume(profileId,requestId);
 }
 
 /**

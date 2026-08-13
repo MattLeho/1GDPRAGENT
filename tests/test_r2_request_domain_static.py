@@ -24,8 +24,9 @@ def test_canonical_code_does_not_depend_on_access_requests():
     assert offenders==[]
 
 
-def test_request_root_sql_is_confined_to_canonical_repositories():
-    pattern=re.compile(r'\b(?:FROM|JOIN|UPDATE|INTO|DELETE\s+FROM)\s+requests\b',re.I)
+def test_all_request_domain_sql_is_confined_to_canonical_repositories():
+    tables='requests|request_events|request_details|request_chat_messages|messages|received_data|workflow_logs|request_threads|data_artifacts|outbound_messages|email_transport_drafts'
+    pattern=re.compile(rf'\b(?:FROM|JOIN|UPDATE|INTO|DELETE\s+FROM)\s+(?:{tables})\b',re.I)
     offenders=[str(path.relative_to(ROOT)) for path,text in _sources()
                if path.resolve() not in ALLOWED_REQUEST_SQL and pattern.search(text)]
     assert offenders==[]
@@ -50,3 +51,13 @@ def test_migration_defines_evidence_transition_and_read_only_compatibility():
     for token in ('transition_request_state','previous_state','next_state','evidence_reference',
                   'request_events_append_only','access_requests_read_only','requests_set_updated_at'):
         assert token in migration
+
+
+def test_legacy_n8n_request_sql_is_archived_and_not_selectable():
+    import json
+    for path in (ROOT/'agents').rglob('*.json'):
+        document=json.loads(path.read_text(encoding='utf-8'))
+        assert document.get('active') is False, f'{path.name} must remain archived'
+    registry=(ROOT/'frontend/lib/workflows/registry.ts').read_text(encoding='utf-8')
+    for retired in ("{id:'draftRequest'", "{id:'sendEmail'", "{id:'parseResponse'", "{id:'enhancedRag'"):
+        assert retired not in registry

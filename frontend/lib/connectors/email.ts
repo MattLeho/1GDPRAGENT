@@ -79,46 +79,37 @@ function publicDraft(row:Record<string,unknown>):EmailTransportDraft{return {
 
 export async function createBuiltInEmailDraft(profileId:string,input:{requestId:string;to:string;subject:string;body:string}):Promise<EmailTransportDraft>{
     if(!input.to.trim()||!input.subject.trim()||!input.body)throw new Error('Recipient, subject and body are required');
-    if(!await requests.get(profileId,input.requestId))throw new Error('Request not found');
-    const result=await pool.query(`INSERT INTO email_transport_drafts(request_id,recipient,subject,body_ciphertext)
-        VALUES($1,$2,$3,$4)
-        RETURNING id,request_id,recipient,subject,status,reviewed_by,reviewed_at,transport_message_id,created_at,sent_at`,
-    [input.requestId,cleanHeader(input.to),cleanHeader(input.subject),encryptCredential(input.body)]);
-    if(!result.rows[0])throw new Error('Request not found');
-    return publicDraft(result.rows[0]);
+    const draft=await requests.createEmailDraft(profileId,{requestId:input.requestId,recipient:cleanHeader(input.to),
+        subject:cleanHeader(input.subject),bodyCiphertext:encryptCredential(input.body)});
+    if(!draft)throw new Error('Request not found');
+    return publicDraft(draft);
 }
 
 export async function reviewBuiltInEmailDraft(profileId:string,draftId:string,reviewedBy:string):Promise<EmailTransportDraft>{
     if(!reviewedBy.trim())throw new Error('A reviewer identity is required');
-    const owned=await pool.query('SELECT request_id FROM email_transport_drafts WHERE id=$1',[draftId]);
-    if(!owned.rows[0]||!await requests.get(profileId,String(owned.rows[0].request_id)))throw new Error('Only a draft can be reviewed');
-    const result=await pool.query(`UPDATE email_transport_drafts SET status='reviewed',reviewed_by=$2,reviewed_at=NOW(),error=NULL
-        WHERE id=$1 AND status='draft'
-        RETURNING id,request_id,recipient,subject,status,reviewed_by,reviewed_at,transport_message_id,created_at,sent_at`,[draftId,reviewedBy.trim()]);
-    if(!result.rows[0])throw new Error('Only a draft can be reviewed');
-    return publicDraft(result.rows[0]);
+    const draft=await requests.reviewEmailDraft(profileId,draftId,reviewedBy.trim());
+    if(!draft)throw new Error('Only a draft can be reviewed');
+    return publicDraft(draft);
 }
 
 export async function sendReviewedBuiltInEmail(profileId:string,draftId:string):Promise<{messageId:string;transport:'smtp';draft:EmailTransportDraft}>{
-    const draftResult=await pool.query(`SELECT d.id,d.request_id,d.recipient,d.subject,d.body_ciphertext,d.status FROM email_transport_drafts d
-        WHERE d.id=$1`,[draftId]);
-    const draft=draftResult.rows[0];
-    if(!draft||draft.status!=='reviewed'||!await requests.get(profileId,String(draft.request_id)))throw new Error('Email must be explicitly reviewed before sending');
+    const draft=await requests.getReviewedEmailDraft(profileId,draftId);
+    if(!draft)throw new Error('Email must be explicitly reviewed before sending');
     const settings=await internalConnector(profileId);
     if(settings.paused) throw new Error('Email connector is paused');
     const messageId=`<${crypto.randomUUID()}@${settings.email.split('@')[1]||'gdpr-agent.local'}>`;
     try{
-        await smtpSend(settings,{to:draft.recipient,subject:draft.subject,body:decryptCredential(draft.body_ciphertext),messageId});
+        await smtpSend(settings,{to:String(draft.recipient),subject:String(draft.subject),body:decryptCredential(String(draft.body_ciphertext)),messageId});
         const client=await pool.connect();try{await client.query('BEGIN');
-            await client.query(`INSERT INTO outbound_messages(request_id,transport,transport_message_id,recipient,subject,status,metadata,sent_at)
-                VALUES($1,'smtp',$2,$3,$4,'sent',$5::jsonb,NOW())`,[draft.request_id,messageId,draft.recipient,draft.subject,JSON.stringify({smtp_host:settings.smtp_host,draft_id:draft.id})]);
-            const sent=await client.query(`UPDATE email_transport_drafts SET status='sent',transport_message_id=$2,sent_at=NOW(),error=NULL
-                WHERE id=$1 AND status='reviewed' RETURNING id,request_id,recipient,subject,status,reviewed_by,reviewed_at,transport_message_id,created_at,sent_at`,[draft.id,messageId]);
-            if(!sent.rows[0])throw new Error('Email draft changed before send completion');
-            await client.query('COMMIT');return{messageId,transport:'smtp',draft:publicDraft(sent.rows[0])};
+            if(!await requests.recordOutboundMessage(profileId,{requestId:String(draft.request_id),transport:'smtp',transportMessageId:messageId,
+                recipient:String(draft.recipient),subject:String(draft.subject),metadata:{smtp_host:settings.smtp_host,draft_id:draft.id}},client))
+                throw new Error('Request ownership changed before outbound message recording');
+            const sent=await requests.markEmailDraftSent(profileId,String(draft.id),messageId,client);
+            if(!sent)throw new Error('Email draft changed before send completion');
+            await client.query('COMMIT');return{messageId,transport:'smtp',draft:publicDraft(sent)};
         }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
     }catch(error){
-        await pool.query(`UPDATE email_transport_drafts SET status='failed',error=$2::jsonb WHERE id=$1 AND status='reviewed'`,[draft.id,JSON.stringify({message:error instanceof Error?error.message:String(error)})]);
+        await requests.markEmailDraftFailed(profileId,String(draft.id),{message:error instanceof Error?error.message:String(error)});
         throw error;
     }
 }

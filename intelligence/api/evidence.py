@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from evidence.ledger import EvidenceLedger
@@ -13,10 +13,10 @@ from request_domain import RequestRepository
 from evidence.models import AssertionCreate, AssertionStatus, DataClass, EpistemicBasis
 from graph.ontology import canonical_entity_key
 from graph.projection import GraphProjectionService
-from api.security import require_profile_id
+from api.security import require_internal_request, require_profile_id
 
 
-router=APIRouter(prefix="/evidence",tags=["Evidence"])
+router=APIRouter(prefix="/evidence",tags=["Evidence"],dependencies=[Depends(require_internal_request)])
 
 
 class ManualNodeRequest(BaseModel):

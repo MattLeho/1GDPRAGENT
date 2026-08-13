@@ -53,7 +53,8 @@ run('R2 request repository executes against PostgreSQL', () => {
         const at = (day: number) => `2024-02-${String(day).padStart(2, '0')}T12:00:00.000Z`;
         await service.transition(profileId, { request_id: request.id, next_state: 'ready_for_review', actor: 'integration', reason: 'reviewed', transitioned_at: at(1) });
         await service.transition(profileId, { request_id: request.id, next_state: 'sent', actor: 'integration', reason: 'sent', evidence_reference: 'message:1', transitioned_at: at(2), sent_at: at(2), controller_received_at: at(3), deadline_at: '2024-03-03T12:00:00.000Z', deadline_basis: 'explicit controller receipt' });
-        await service.transition(profileId, { request_id: request.id, next_state: 'awaiting_response', actor: 'integration', reason: 'delivery recorded', transitioned_at: at(3) });
+        await service.transition(profileId, { request_id: request.id, next_state: 'awaiting_response', actor: 'integration', reason: 'delivery recorded', transitioned_at: at(3), extension_notified_at: at(3), extension_deadline_at: '2024-05-03T12:00:00.000Z', extension_reason: 'Complex request requiring additional searches' });
+        expect(await service.get(profileId,request.id)).toMatchObject({deadline_at:new Date('2024-05-03T22:59:59.999Z')});
         await service.transition(profileId, { request_id: request.id, next_state: 'response_received', actor: 'integration', reason: 'response artefact received', evidence_reference: 'received-data:pending', transitioned_at: at(20), response_received_at: at(20) });
         await service.transition(profileId, { request_id: request.id, next_state: 'processing_response', actor: 'integration', reason: 'processing started', transitioned_at: at(21) });
         await service.transition(profileId, { request_id: request.id, next_state: 'completed', actor: 'integration', reason: 'local processing completed', transitioned_at: at(22), completed_at: at(22) });
@@ -70,12 +71,50 @@ run('R2 request repository executes against PostgreSQL', () => {
         expect(await service.receivedData(profileId, request.id)).toHaveLength(1);
         expect(await service.getOwnedReceivedData(profileId, received!.id)).toMatchObject({ id: received!.id });
         expect(await service.getOwnedReceivedData(otherProfileId, received!.id)).toBeNull();
+        const registered = await service.registerReceivedDataBatch(profileId, request.id, [{
+            file_name:'second.json',original_name:'second.json',file_path:'/evidence/second.json',
+            file_size_mb:0.25,file_type:'application/json',category:'data',
+        }]);
+        expect(registered).toHaveLength(1);
+        expect(await service.listReceivedData(profileId,{requestId:request.id})).toHaveLength(2);
+        expect(await service.listReceivedData(otherProfileId,{fileId:registered[0].id})).toHaveLength(0);
+        expect(await service.pendingReceivedData(profileId)).toHaveLength(2);
+        expect(await service.receivedDataVolume(profileId,request.id)).toBe(1.75);
+        expect(await service.receivedDataStatusCounts(profileId,request.id)).toEqual([{status:'pending',count:2}]);
+        expect(await service.searchReceivedData(profileId,request.id,{fileName:'second'})).toHaveLength(1);
+        expect(await service.updateReceivedData(profileId,registered[0].id,{status:'processing',processingProgress:5})).toMatchObject({status:'processing'});
         expect(await service.addRequestDetail(profileId, request.id, 'recipient', 'encrypted')).toBe(true);
         expect(await service.requestDetails(profileId, request.id)).toHaveLength(1);
         expect((await service.reviewItems(profileId)).messages).toHaveLength(1);
-        expect(await service.context(profileId, request.id)).toMatchObject({ id: request.id, received_file_count: 1 });
+        expect(await service.context(profileId, request.id)).toMatchObject({ id: request.id, received_file_count: 2 });
         expect((await service.dashboard(profileId)).counts.total).toBe('2');
-        expect(await service.delete(profileId, disposable.id)).toBe(true);
-        expect(await service.delete(otherProfileId, request.id)).toBe(false);
+        const workflowLogId = await service.startWorkflowLog(profileId,{requestId:request.id,workflowName:'R2 matrix',workflowType:'built_in'});
+        expect(workflowLogId).not.toBeNull();
+        expect(await service.finishWorkflowLog(profileId,workflowLogId!,{status:'completed',details:{verified:true}})).toBe(true);
+        expect(await service.activity(profileId,request.id)).toMatchObject({logs:[{status:'completed'}]});
+        expect(await service.recordOutboundMessage(profileId,{requestId:request.id,transport:'test',transportMessageId:'r2-message',recipient:'dpo@example.test',subject:'R2',metadata:{verified:true}})).toBe(true);
+        const sentDraft=await service.createEmailDraft(profileId,{requestId:request.id,recipient:'dpo@example.test',subject:'Reviewed draft',bodyCiphertext:'ciphertext'});
+        expect(sentDraft).not.toBeNull();
+        expect(await service.reviewEmailDraft(profileId,String(sentDraft!.id),'integration')).toMatchObject({status:'reviewed'});
+        expect(await service.getReviewedEmailDraft(profileId,String(sentDraft!.id))).toMatchObject({status:'reviewed'});
+        const connection=await pool.connect();
+        try {
+            expect(await service.markEmailDraftSent(profileId,String(sentDraft!.id),'transport-1',connection)).toMatchObject({status:'sent'});
+        } finally {
+            connection.release();
+        }
+        const failedDraft=await service.createEmailDraft(profileId,{requestId:request.id,recipient:'dpo@example.test',subject:'Failed draft',bodyCiphertext:'ciphertext'});
+        expect(failedDraft).not.toBeNull();
+        await service.reviewEmailDraft(profileId,String(failedDraft!.id),'integration');
+        expect(await service.markEmailDraftFailed(profileId,String(failedDraft!.id),{message:'simulated'})).toBe(true);
+        expect(await service.getThread(profileId,{company:'Disposable'})).toBeNull();
+        expect(await service.updateThread(profileId,'integration-user',{company:'Disposable',domain:'delete.example',
+            requestId:disposable.id,action:'request_drafted',data:{requestType:'access',subject:'R2 draft',body:'Body'}}))
+            .toMatchObject({status:'drafted',request_id:disposable.id});
+        await expect(service.cancel(profileId, request.id, 'integration')).rejects.toThrow(/invalid request transition/);
+        expect(await service.get(profileId, request.id)).not.toBeNull();
+        expect(await service.cancel(profileId, disposable.id, 'integration')).toMatchObject({ status: 'cancelled' });
+        expect(await service.get(profileId, disposable.id)).toMatchObject({ status: 'cancelled' });
+        expect(await service.cancel(otherProfileId, request.id, 'integration')).toBeNull();
     });
 });

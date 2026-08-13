@@ -11,7 +11,9 @@
  */
 
 import { runCypher } from '@/lib/graph';
-import { pool } from '@/lib/db';
+import { RequestService } from '@/lib/requests/service';
+
+const requests = new RequestService();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -196,56 +198,26 @@ export async function searchDocuments(
         const keywords = query.split(/\s+/).filter(w => w.length > 2);
         if (keywords.length === 0) return results;
 
-        // Build WHERE clause with ILIKE for each keyword across content columns
-        const likeConditions = keywords.map((_, i) =>
-            `(COALESCE(extracted_text, '') ILIKE $${i + 3} OR ` +
-            `COALESCE(ai_summary, '') ILIKE $${i + 3} OR ` +
-            `COALESCE(transcript, '') ILIKE $${i + 3} OR ` +
-            `COALESCE(extracted_entities::text, entities_extracted::text, '') ILIKE $${i + 3})`
-        ).join(' AND ');
-
-        const typeCondition = fileType
-            ? ` AND LOWER(category) = LOWER($${keywords.length + 3})`
-            : '';
-
-        const sql = `
-            SELECT id, file_name, file_size_mb, category, status,
-                   processing_stage, extracted_text, ai_summary, transcript, 
-                   COALESCE(extracted_entities,entities_extracted) AS entities, graph_ingested, error_message
-            FROM received_data
-            WHERE request_id = $1 AND profile_id=$2
-            AND (${likeConditions})${typeCondition}
-            ORDER BY 
-                CASE WHEN ai_summary IS NOT NULL THEN 0 ELSE 1 END,
-                CASE WHEN extracted_text IS NOT NULL THEN 0 ELSE 1 END,
-                date_received DESC
-            LIMIT $${keywords.length + (fileType ? 4 : 3)}
-        `;
-
-        const params: (string | number)[] = [requestId,profileId];
-        keywords.forEach(k => params.push(`%${k}%`));
-        if (fileType) params.push(fileType);
-        params.push(maxResults);
-
-        const { rows } = await pool.query(sql, params);
+        const rows = await requests.searchReceivedData(profileId,requestId,{keywords,category:fileType,limit:maxResults});
 
         for (const row of rows) {
             // Build a content summary from available fields
             const contentParts: string[] = [];
             if (row.ai_summary) contentParts.push(`AI Summary: ${row.ai_summary}`);
-            if (row.entities) {
+            const entities = row.extracted_entities ?? row.entities_extracted;
+            if (entities) {
                 try {
-                    const ents = typeof row.entities === 'string' ? JSON.parse(row.entities) : row.entities;
+                    const ents = typeof entities === 'string' ? JSON.parse(entities) : entities;
                     contentParts.push(`Entities: ${JSON.stringify(ents).substring(0, 500)}`);
-                } catch { contentParts.push(`Entities: ${String(row.entities).substring(0, 500)}`); }
+                } catch { contentParts.push(`Entities: ${String(entities).substring(0, 500)}`); }
             }
             if (row.extracted_text) {
                 // Find the most relevant excerpt
-                const excerpt = findRelevantExcerpt(row.extracted_text, keywords, 500);
+                const excerpt = findRelevantExcerpt(String(row.extracted_text), keywords, 500);
                 contentParts.push(`Extracted Text: ...${excerpt}...`);
             }
             if (row.transcript) {
-                const excerpt = findRelevantExcerpt(row.transcript, keywords, 500);
+                const excerpt = findRelevantExcerpt(String(row.transcript), keywords, 500);
                 contentParts.push(`Transcript: ...${excerpt}...`);
             }
 
@@ -254,8 +226,8 @@ export async function searchDocuments(
 
             results.push({
                 source: 'document',
-                type: row.category || 'document',
-                title: row.file_name,
+                type: String(row.category || 'document'),
+                title: String(row.file_name),
                 content: contentParts.join('\n\n') || 'No extracted content available.',
                 score,
                 metadata: {

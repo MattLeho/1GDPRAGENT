@@ -10,9 +10,11 @@ def source(relative: str) -> str:
 
 def test_ingest_and_validation_persist_signed_profile_authority():
     ingest = source("intelligence/api/ingest.py")
+    request_repository = source("intelligence/request_domain/repository.py")
     validate = source("intelligence/api/validate.py")
     assert ingest.count("Depends(require_profile_id)") >= 2
-    assert "WHERE id=$1::uuid AND profile_id=$2" in ingest
+    assert "RequestRepository().exists(profile_id,body.request_id)" in ingest
+    assert "SELECT 1 FROM requests WHERE id=$1 AND profile_id=$2" in request_repository
     assert '"profile_id": str(profile_id)' in ingest
     assert "profile_id=profile_id" in ingest
     assert validate.count("Depends(require_profile_id)") >= 2
@@ -46,7 +48,7 @@ def test_bulk_worker_revalidates_profile_run_snapshot_and_file_linkage():
     tasks = source("intelligence/tasks.py")
     assert "async def _require_bulk_job_profile" in tasks
     assert "es.analysis_run_id=ar.id AND es.profile_id=ar.profile_id" in tasks
-    assert "rd.id=$4 AND rd.profile_id=$3" in tasks
+    assert "RequestRepository(postgres).received_data_exists(profile_id,received_data_id)" in tasks
     assert "run_async(_require_bulk_job_profile(data))" in tasks
     assert 'data["profile_id"]' in tasks
 

@@ -1,5 +1,6 @@
 {
     "name": "Privacy Policy Scanner (UK GDPR)",
+    "active": false,
     "nodes": [
         {
             "parameters": {

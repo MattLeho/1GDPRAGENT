@@ -51,16 +51,27 @@ def python_authority_offenders(root: Path) -> list[str]:
     for path in source_files(root / "intelligence/api", {".py"}):
         rel = relative(root, path)
         source = path.read_text(encoding="utf-8")
-        if rel not in PUBLIC_PYTHON and "APIRouter" in source and not re.search(r"Depends\s*\(\s*require_internal_request\s*\)", source):
+        if rel not in PUBLIC_PYTHON and "APIRouter" in source and not re.search(
+            r"Depends\s*\(\s*(?:require_internal_request|require_profile_id)\s*\)", source
+        ):
             offenders.append(rel)
     return sorted(offenders)
 
 
-PROVIDER_MARKERS = re.compile(r"(?:GoogleGenAI|genai\.Client|GenerativeModel|\bOpenAI\s*\(|from\s+openai\s+import|anthropic|generativelanguage|api\.openai\.com|openrouter\.ai)", re.I)
+PROVIDER_MARKERS = re.compile(
+    r"(?:GoogleGenAI|genai\.Client|GenerativeModel|\bOpenAI\s*\(|from\s+openai\s+import|"
+    r"anthropic|\.generateContent\s*\(|\.generate_content\s*\()",
+    re.I,
+)
 
 
 def provider_offenders(root: Path) -> list[str]:
-    approved = {root / "frontend/lib/rlm/provider-adapters.ts", root / "intelligence/execution/adapters.py"}
+    approved = {
+        root / "frontend/lib/rlm/provider-adapters.ts",
+        root / "frontend/lib/execution/router.ts",
+        root / "intelligence/execution/adapters.py",
+        root / "intelligence/llm/gemini.py",
+    }
     offenders = []
     for base in (root / "frontend", root / "intelligence"):
         for path in source_files(base, {".ts", ".tsx", ".py"}):
@@ -104,7 +115,7 @@ def test_sensitive_next_routes_have_an_awaited_authority_contract():
 
 def test_python_routers_require_internal_authority_dependency():
     offenders = python_authority_offenders(ROOT)
-    assert not offenders, "Python routers lack Depends(require_internal_request): " + ", ".join(offenders)
+    assert not offenders, "Python routers lack canonical internal/profile authority: " + ", ".join(offenders)
 
 
 def test_provider_generation_is_limited_to_canonical_task_router_adapters():

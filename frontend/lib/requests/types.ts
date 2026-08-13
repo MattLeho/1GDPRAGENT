@@ -25,6 +25,7 @@ export const HISTORICAL_REQUEST_STATE_MAP = {
     action_required: null,
     draft_pending_review: 'ready_for_review',
     pending: 'awaiting_response',
+    verification_needed: 'identity_action_required',
     data_available: 'response_received',
     data_received: 'response_received',
     partial_data: 'response_received',
@@ -63,6 +64,7 @@ export interface Request extends RequestLifecycleDates {
     progress: number;
     notes: string | null;
     deadline_basis: string | null;
+    extension_reason: string | null;
     created_at: RequestDate;
     updated_at: RequestDate;
 }
@@ -80,6 +82,7 @@ export interface CreateRequestInput extends CreateRequestLifecycleDates {
     progress?: number;
     notes?: string | null;
     deadline_basis?: string | null;
+    extension_reason?: string | null;
 }
 
 export interface RequestListOptions {
@@ -103,6 +106,7 @@ export interface TransitionRequestCommand extends Partial<RequestLifecycleDates>
     evidence_reference?: string | null;
     transitioned_at: RequestDate;
     deadline_basis?: string | null;
+    extension_reason?: string | null;
 }
 
 export interface RequestEvent {
@@ -149,6 +153,10 @@ export interface ReceivedDataRecord {
     request_id: string;
     profile_id: string;
     file_name: string;
+    file_path: string;
+    file_size_mb: number | string | null;
+    file_type: string | null;
+    category: string | null;
     status: string | null;
     date_received: RequestDate;
     [key: string]: unknown;
@@ -165,4 +173,3 @@ export function canonicaliseStoredState(state: RequestStoredState): CanonicalReq
     }
     return HISTORICAL_REQUEST_STATE_MAP[state as HistoricalRequestState] ?? null;
 }
-

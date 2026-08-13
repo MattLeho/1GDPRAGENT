@@ -81,11 +81,7 @@ export async function lookupPrivacyPolicy(profileId: string,requestId: string): 
         );
 
         // Fetch file count & status summary
-        const { rows: fileStats } = await pool.query(
-            `SELECT status, COUNT(*)::int as count 
-             FROM received_data WHERE request_id = $1 AND profile_id=$2 GROUP BY status`,
-            [requestId,profileId],
-        );
+        const fileStats = await requests.receivedDataStatusCounts(profileId,requestId);
 
         let output = `## Request Details\n`;
         output += `- **Company**: ${req.company_name}\n`;
@@ -252,17 +248,7 @@ export async function locateFile(
     args: { file_name: string },
 ): Promise<string> {
     try {
-        const { rows } = await pool.query(
-            `SELECT id, file_name, file_type, category, file_size_mb, status, 
-                    processing_stage, date_received, graph_ingested,
-                    ai_summary IS NOT NULL as has_summary,
-                    extracted_text IS NOT NULL as has_text,
-                    transcript IS NOT NULL as has_transcript
-             FROM received_data 
-             WHERE request_id = $1 AND profile_id=$3 AND LOWER(file_name) LIKE LOWER($2)
-             ORDER BY date_received DESC`,
-            [requestId, `%${args.file_name}%`,profileId],
-        );
+        const rows = await requests.searchReceivedData(profileId,requestId,{fileName:args.file_name});
 
         if (rows.length === 0) {
             return `No file matching "${args.file_name}" found for this request. Use list_all_files to see all available files.`;
@@ -305,13 +291,7 @@ export async function findInDocument(
 ): Promise<string> {
     try {
         // Find the document first
-        const { rows } = await pool.query(
-            `SELECT id, file_name, extracted_text, ai_summary, transcript
-             FROM received_data 
-             WHERE request_id = $1 AND profile_id=$3 AND LOWER(file_name) LIKE LOWER($2)
-             ORDER BY date_received DESC LIMIT 5`,
-            [requestId, `%${args.file_name}%`,profileId],
-        );
+        const rows = await requests.searchReceivedData(profileId,requestId,{fileName:args.file_name,limit:5});
 
         if (rows.length === 0) {
             return `No file matching "${args.file_name}" found. Use list_all_files to see available documents.`;
@@ -398,16 +378,7 @@ function escapeRegex(str: string): string {
 
 export async function listAllFiles(profileId:string,requestId: string): Promise<string> {
     try {
-        const { rows } = await pool.query(
-            `SELECT file_name, file_type, category, file_size_mb, status, 
-                    processing_stage, date_received, graph_ingested,
-                    ai_summary IS NOT NULL as has_summary,
-                    extracted_text IS NOT NULL as has_text
-             FROM received_data 
-             WHERE request_id = $1 AND profile_id=$2
-             ORDER BY date_received DESC`,
-            [requestId,profileId],
-        );
+        const rows = await requests.searchReceivedData(profileId,requestId);
 
         if (rows.length === 0) {
             return 'No files have been uploaded for this request yet.';

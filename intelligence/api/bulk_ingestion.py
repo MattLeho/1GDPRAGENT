@@ -52,8 +52,11 @@ async def _require_owned_inputs(
         raise HTTPException(status_code=404, detail="ingestion resource not found")
     pool = await postgres._get_pool()
     async with pool.acquire() as connection:
+        if received_data_id is not None and not await RequestRepository(postgres).received_data_exists(
+            profile_id, received_data_id, connection=connection,
+        ):
+            raise HTTPException(status_code=404, detail="ingestion resource not found")
         checks = (
-            (received_data_id, "SELECT 1 FROM received_data WHERE id=$1 AND profile_id=$2"),
             (analysis_run_id, "SELECT 1 FROM analysis_runs WHERE id=$1 AND profile_id=$2"),
             (export_snapshot_id, "SELECT 1 FROM export_snapshots WHERE id=$1 AND profile_id=$2"),
         )
@@ -180,9 +183,8 @@ async def specialist_result(body: SpecialistResultBody, profile_id: UUID = Depen
         manifest=request["input_manifest"]
         if isinstance(manifest,str): manifest=json.loads(manifest)
         received_id=manifest.get("received_data_id")
-        if received_id is not None and not await connection.fetchval(
-            "SELECT 1 FROM received_data WHERE id=$1 AND profile_id=$2",
-            UUID(received_id),profile_id,
+        if received_id is not None and not await RequestRepository(postgres).received_data_exists(
+            profile_id,UUID(received_id),connection=connection,
         ):
             raise HTTPException(status_code=404,detail="specialist request not found")
         if body.execution_record_id is not None:
@@ -244,9 +246,6 @@ async def _persist_specialist_units(
     received_id=manifest.get("received_data_id")
     if received_id and text:
         column="transcript" if request["task_key"].startswith("speech.") else "extracted_text"
-        await postgres.execute(
-            f"""UPDATE received_data SET {column}=$2,markdown_content=$2,status='completed',
-            processing_stage='completed',processing_progress=100,processing_completed_at=NOW(),
-            derived_content_basis='task2_specialist_router',provenance_status='specialist_candidate'
-            WHERE id=$1 AND profile_id=$3""",UUID(received_id),text,profile_id,
+        await RequestRepository(postgres).record_specialist_text(
+            profile_id,UUID(received_id),field=column,text=text,
         )

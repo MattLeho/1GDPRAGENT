@@ -46,14 +46,16 @@ async def test_email_transport_requires_review_and_keeps_body_ciphertext(migrate
 def test_built_in_transport_is_independent_of_n8n_and_records_state_machine():
     root = Path(__file__).resolve().parents[1]
     source = (root / "frontend/lib/connectors/email.ts").read_text(encoding="utf-8")
+    repository = (root / "frontend/lib/requests/repository.ts").read_text(encoding="utf-8")
     workflow = (root / "frontend/lib/workflows/registry.ts").read_text(encoding="utf-8")
     assert "createBuiltInEmailDraft" in source
     assert "reviewBuiltInEmailDraft" in source
     assert "sendReviewedBuiltInEmail" in source
-    assert "status='reviewed'" in source and "status='sent'" in source
+    assert "reviewEmailDraft" in source and "markEmailDraftSent" in source
+    assert "status='reviewed'" in repository and "status='sent'" in repository
     assert "callN8NWebhook" not in source
     assert "frontend:built-in-email-transport" in workflow
-    assert "sendEmail" in workflow  # optional adapter remains registered separately
+    assert "{id:'sendEmail'" not in workflow  # legacy request SQL adapter is retired
 
 
 def test_built_in_smtp_transport_over_real_local_tls(tmp_path):

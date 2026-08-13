@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { screenRequestDeadline } from '@/lib/requests/deadline';
+import { screenRequestDeadline as screenDeadline, type DeadlineScreeningInput } from '@/lib/requests/deadline';
+
+const screenRequestDeadline = (input: DeadlineScreeningInput) => screenDeadline({ publicHolidays: [], ...input });
 
 const evaluationAt = '2024-01-15T12:00:00.000Z';
 
 describe('R2 deterministic request deadline screening', () => {
     it.each([
-        ['ordinary month boundary', '2024-04-30T12:00:00.000Z', '2024-05-30T12:00:00.000Z', '2024-05-01T00:00:00.000Z'],
-        ['January 31 clamps to leap-year February end', '2024-01-31T12:00:00.000Z', '2024-02-29T12:00:00.000Z', evaluationAt],
-        ['January 31 clamps to non-leap February end', '2023-01-31T12:00:00.000Z', '2023-02-28T12:00:00.000Z', '2023-02-01T00:00:00.000Z'],
-        ['leap day advances to March 29', '2024-02-29T12:00:00.000Z', '2024-03-29T12:00:00.000Z', evaluationAt],
-        ['month end clamps into April', '2024-03-31T12:00:00.000Z', '2024-04-30T12:00:00.000Z', evaluationAt],
+        ['ordinary month boundary', '2024-04-30T12:00:00.000Z', '2024-05-30T22:59:59.999Z', '2024-05-01T00:00:00.000Z'],
+        ['January 31 clamps to leap-year February end', '2024-01-31T12:00:00.000Z', '2024-02-29T23:59:59.999Z', evaluationAt],
+        ['January 31 clamps to non-leap February end', '2023-01-31T12:00:00.000Z', '2023-02-28T23:59:59.999Z', '2023-02-01T00:00:00.000Z'],
+        ['leap day advances to March 29', '2024-02-29T12:00:00.000Z', '2024-03-29T23:59:59.999Z', evaluationAt],
+        ['month end clamps into April', '2024-03-31T12:00:00.000Z', '2024-04-30T22:59:59.999Z', evaluationAt],
     ])('%s', (_label, receivedAt, expectedDeadline, evaluatedAt) => {
         const result = screenRequestDeadline({
             controller_received_at: receivedAt,
@@ -43,9 +45,9 @@ describe('R2 deterministic request deadline screening', () => {
         });
 
         expect(result.deadline_state).toBe('known');
-        expect(result.deadline_at).toBe('2024-02-20T00:00:00.000Z');
-        expect(result.basis).toContain('conservatively moved');
-        expect(result.human_review_required).toBe(true);
+        expect(result.deadline_at).toBe('2024-02-20T23:59:59.999Z');
+        expect(result.basis).toContain('starts when identity_verified_at');
+        expect(result.human_review_required).toBe(false);
     });
 
     it('returns paused_clarification while clarification is unresolved', () => {
@@ -60,7 +62,7 @@ describe('R2 deterministic request deadline screening', () => {
         expect(result.human_review_required).toBe(true);
     });
 
-    it('uses the latest applicable resolved pause date', () => {
+    it('adds only the access-request clarification stopped-clock interval', () => {
         const result = screenRequestDeadline({
             controller_received_at: '2024-01-10T00:00:00.000Z',
             identity_requested_at: '2024-01-12T00:00:00.000Z',
@@ -71,8 +73,8 @@ describe('R2 deterministic request deadline screening', () => {
         });
 
         expect(result.deadline_state).toBe('known');
-        expect(result.deadline_at).toBe('2024-02-29T00:00:00.000Z');
-        expect(result.human_review_required).toBe(true);
+        expect(result.deadline_at).toBe('2024-02-29T23:59:59.999Z');
+        expect(result.human_review_required).toBe(false);
     });
 
     it('uses an extension only when notice and deadline are both recorded', () => {
@@ -80,11 +82,12 @@ describe('R2 deterministic request deadline screening', () => {
             controller_received_at: '2024-01-10T00:00:00.000Z',
             extension_notified_at: '2024-02-01T00:00:00.000Z',
             extension_deadline_at: '2024-04-10T00:00:00.000Z',
+            extension_reason: 'Complex request covering several systems',
             evaluationAt: '2024-03-01T00:00:00.000Z',
         });
 
         expect(result.deadline_state).toBe('extended');
-        expect(result.deadline_at).toBe('2024-04-10T00:00:00.000Z');
+        expect(result.deadline_at).toBe('2024-04-10T22:59:59.999Z');
         expect(result.human_review_required).toBe(false);
     });
 
@@ -99,8 +102,8 @@ describe('R2 deterministic request deadline screening', () => {
         });
 
         expect(result.deadline_state).toBe('known');
-        expect(result.deadline_at).toBe('2024-02-10T00:00:00.000Z');
-        expect(result.uncertainties.join(' ')).toContain('Extension evidence is incomplete');
+        expect(result.deadline_at).toBe('2024-02-12T23:59:59.999Z');
+        expect(result.uncertainties.join(' ')).toContain('Extension evidence is incomplete or invalid');
         expect(result.human_review_required).toBe(true);
     });
 
@@ -119,7 +122,7 @@ describe('R2 deterministic request deadline screening', () => {
         });
 
         expect(result.deadline_state).toBe('estimated');
-        expect(result.deadline_at).toBe('2024-02-29T00:00:00.000Z');
+        expect(result.deadline_at).toBe('2024-02-29T23:59:59.999Z');
         expect(result.uncertainties.join(' ')).toContain('Controller receipt date is unknown');
         expect(result.human_review_required).toBe(true);
     });
@@ -137,8 +140,8 @@ describe('R2 deterministic request deadline screening', () => {
     });
 
     it.each([
-        ['completed_on_time', '2024-02-10T00:00:00.000Z'],
-        ['completed_late', '2024-02-10T00:00:00.001Z'],
+        ['completed_on_time', '2024-02-12T23:59:59.999Z'],
+        ['completed_late', '2024-02-13T00:00:00.000Z'],
     ] as const)('compares response_received_at and yields %s', (state, responseAt) => {
         const result = screenRequestDeadline({
             controller_received_at: '2024-01-10T00:00:00.000Z',
@@ -159,7 +162,7 @@ describe('R2 deterministic request deadline screening', () => {
             disputedFields: ['controller_received_at', 'response_received_at'],
         });
 
-        expect(result.deadline_state).toBe('completed_on_time');
+        expect(result.deadline_state).toBe('unknown');
         expect(result.uncertainties).toEqual(expect.arrayContaining([
             'Disputed date: controller_received_at.',
             'Disputed date: response_received_at.',
@@ -170,16 +173,42 @@ describe('R2 deterministic request deadline screening', () => {
     it('uses explicit evaluationAt deterministically for open deadlines', () => {
         const before = screenRequestDeadline({
             controller_received_at: '2024-01-10T00:00:00.000Z',
-            evaluationAt: '2024-02-10T00:00:00.000Z',
+            evaluationAt: '2024-02-12T23:59:59.999Z',
         });
         const after = screenRequestDeadline({
             controller_received_at: '2024-01-10T00:00:00.000Z',
-            evaluationAt: '2024-02-10T00:00:00.001Z',
+            evaluationAt: '2024-02-13T00:00:00.000Z',
         });
 
         expect(before.deadline_state).toBe('known');
         expect(after.deadline_state).toBe('overdue');
-        expect(before.input_dates.evaluation_at).toBe('2024-02-10T00:00:00.000Z');
-        expect(after.input_dates.evaluation_at).toBe('2024-02-10T00:00:00.001Z');
+        expect(before.input_dates.evaluation_at).toBe('2024-02-12T23:59:59.999Z');
+        expect(after.input_dates.evaluation_at).toBe('2024-02-13T00:00:00.000Z');
+    });
+
+    it('uses UK-local receipt date across the BST midnight boundary', () => {
+        const result=screenRequestDeadline({controller_received_at:'2024-06-01T23:30:00.000Z',evaluationAt:'2024-06-03T00:00:00Z'});
+        expect(result.deadline_at).toBe('2024-07-02T22:59:59.999Z');
+    });
+
+    it('adds clarification calendar days rather than elapsed hours', () => {
+        const result=screenRequestDeadline({request_type:'access',controller_received_at:'2024-05-14T09:00:00Z',
+            clarification_requested_at:'2024-05-15T09:00:00Z',clarification_resolved_at:'2024-05-18T17:00:00Z',evaluationAt:'2024-05-20T00:00:00Z'});
+        expect(result.deadline_at).toBe('2024-06-17T22:59:59.999Z');
+    });
+
+    it('moves an England and Wales bank-holiday deadline to the next working day by default', () => {
+        const result=screenDeadline({controller_received_at:'2024-04-27T12:00:00Z',evaluationAt:'2024-05-01T00:00:00Z'});
+        expect(result.deadline_at).toBe('2024-05-28T22:59:59.999Z');
+    });
+
+    it('includes one-off statutory England and Wales bank holidays', () => {
+        const result=screenDeadline({controller_received_at:'2023-04-08T12:00:00Z',evaluationAt:'2023-05-01T00:00:00Z'});
+        expect(result.deadline_at).toBe('2023-05-09T22:59:59.999Z');
+    });
+
+    it('replaces rather than duplicates the moved 2022 spring bank holiday', () => {
+        const result=screenDeadline({controller_received_at:'2022-04-30T12:00:00Z',evaluationAt:'2022-05-01T00:00:00Z'});
+        expect(result.deadline_at).toBe('2022-05-30T22:59:59.999Z');
     });
 });

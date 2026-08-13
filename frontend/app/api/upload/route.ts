@@ -1,11 +1,9 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { requireApiSession } from '@/lib/api-session';
-import { writeFile, mkdir, unlink, rm } from 'fs/promises';
+import { writeFile, mkdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import type { PoolClient } from 'pg';
-import { pool } from '@/lib/db';
 import AdmZip from 'adm-zip';
 import { RequestService } from '@/lib/requests/service';
 
@@ -23,7 +21,6 @@ const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
 export async function POST(request: NextRequest) {
     const authority = await requireApiSession(request);
     if (authority instanceof NextResponse) return authority;
-    let uploadClient: PoolClient | null = null;
     let batchDir: string | null = null;
     try {
         const formData = await request.formData();
@@ -53,10 +50,6 @@ export async function POST(request: NextRequest) {
         const batchId = `batch_${randomUUID()}`;
         batchDir = path.join(UPLOAD_DIR, batchId);
         await mkdir(batchDir, { recursive: true });
-        const client = await pool.connect();
-        uploadClient = client;
-        await client.query('BEGIN');
-
         const uploadedFiles: Array<{
             id: string;
             fileName: string;
@@ -65,6 +58,9 @@ export async function POST(request: NextRequest) {
             fileType: string;
             category: string;
             status: string;
+        }> = [];
+        const databaseFiles: Array<{
+            file_name:string;original_name:string;file_path:string;file_size_mb:number;file_type:string;category:string;
         }> = [];
 
         for (const file of files) {
@@ -99,16 +95,11 @@ export async function POST(request: NextRequest) {
                         const entrySizeMb = entryData.length / (1024 * 1024);
                         const entryMime = getMimeType(entryName);
 
-                        const result = await client.query(
-                            `INSERT INTO received_data 
-                             (request_id, file_name, original_name, file_path, file_size_mb, file_type, category, status, processing_stage, profile_id)
-                             VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 'upload', $8)
-                             RETURNING id`,
-                            [requestId, sanitizedEntry, `${file.name}/${entryName}`, entryPath, entrySizeMb, entryMime, entryCategory, authority.profileId]
-                        );
+                        databaseFiles.push({file_name:sanitizedEntry,original_name:`${file.name}/${entryName}`,
+                            file_path:entryPath,file_size_mb:entrySizeMb,file_type:entryMime,category:entryCategory});
 
                         uploadedFiles.push({
-                            id: result.rows[0].id,
+                            id: '',
                             fileName: sanitizedEntry,
                             filePath: entryPath,
                             fileSize: entryData.length,
@@ -126,15 +117,10 @@ export async function POST(request: NextRequest) {
                     await writeFile(filePath, buffer);
                     const category = categorizeFile(file.name);
                     const fileSizeMb = file.size / (1024 * 1024);
-                    const result = await client.query(
-                        `INSERT INTO received_data 
-                         (request_id, file_name, original_name, file_path, file_size_mb, file_type, category, status, processing_stage, profile_id)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 'upload', $8)
-                         RETURNING id`,
-                        [requestId, sanitizedName, file.name, filePath, fileSizeMb, file.type || 'application/zip', category, authority.profileId]
-                    );
+                    databaseFiles.push({file_name:sanitizedName,original_name:file.name,file_path:filePath,
+                        file_size_mb:fileSizeMb,file_type:file.type||'application/zip',category});
                     uploadedFiles.push({
-                        id: result.rows[0].id,
+                        id: '',
                         fileName: sanitizedName,
                         filePath: filePath,
                         fileSize: file.size,
@@ -157,26 +143,11 @@ export async function POST(request: NextRequest) {
             const category = categorizeFile(file.name);
             const fileSizeMb = file.size / (1024 * 1024);
 
-            // Insert into database
-            const result = await client.query(
-                `INSERT INTO received_data 
-                 (request_id, file_name, original_name, file_path, file_size_mb, file_type, category, status, processing_stage, profile_id)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 'upload', $8)
-                 RETURNING id`,
-                [
-                    requestId,
-                    sanitizedName,
-                    file.name,
-                    filePath,
-                    fileSizeMb,
-                    file.type || getMimeType(file.name),
-                    category,
-                    authority.profileId,
-                ]
-            );
+            databaseFiles.push({file_name:sanitizedName,original_name:file.name,file_path:filePath,
+                file_size_mb:fileSizeMb,file_type:file.type||getMimeType(file.name),category});
 
             uploadedFiles.push({
-                id: result.rows[0].id,
+                id: '',
                 fileName: sanitizedName,
                 filePath: filePath,
                 fileSize: file.size,
@@ -186,7 +157,9 @@ export async function POST(request: NextRequest) {
             });
         }
 
-        await client.query('COMMIT');
+        const inserted = await requests.registerReceivedDataBatch(authority.profileId, requestId, databaseFiles);
+        if (inserted.length !== uploadedFiles.length) throw new Error('Upload metadata registration was incomplete');
+        inserted.forEach((row, index) => { uploadedFiles[index].id = row.id; });
         return NextResponse.json({
             success: true,
             batchId,
@@ -195,7 +168,6 @@ export async function POST(request: NextRequest) {
             totalSizeMb: uploadedFiles.reduce((sum, f) => sum + f.fileSize / (1024 * 1024), 0).toFixed(2),
         });
     } catch (error) {
-        if (uploadClient) await uploadClient.query('ROLLBACK').catch(() => undefined);
         if (batchDir && batchDir.startsWith(`${UPLOAD_DIR}${path.sep}`)) {
             await rm(batchDir, { recursive: true, force: true }).catch(() => undefined);
         }
@@ -204,8 +176,6 @@ export async function POST(request: NextRequest) {
             { success: false, error: 'Failed to upload files' },
             { status: 500 }
         );
-    } finally {
-        uploadClient?.release();
     }
 }
 
@@ -220,30 +190,17 @@ export async function GET(request: NextRequest) {
     const requestId = searchParams.get('requestId');
 
     try {
-        let query = 'SELECT * FROM received_data WHERE profile_id = $1';
-        let params: string[] = [authority.profileId];
-
-        if (fileId) {
-            query += ' AND id = $2';
-            params.push(fileId);
-        } else if (requestId) {
-            query += ' AND request_id = $2 ORDER BY date_received DESC';
-            params.push(requestId);
-        } else {
-            query += ' ORDER BY date_received DESC LIMIT 50';
-        }
-
-        const result = await pool.query(query, params);
+        const rows = await requests.listReceivedData(authority.profileId, { fileId, requestId });
 
         return NextResponse.json({
             success: true,
-            files: result.rows.map((row) => ({
+            files: rows.map((row) => ({
                 id: row.id,
                 requestId: row.request_id,
                 fileName: row.file_name,
                 originalName: row.original_name,
                 filePath: row.file_path,
-                fileSizeMb: parseFloat(row.file_size_mb) || 0,
+                fileSizeMb: Number(row.file_size_mb) || 0,
                 fileType: row.file_type,
                 category: row.category,
                 status: row.status,
@@ -285,67 +242,12 @@ export async function PATCH(request: NextRequest) {
             );
         }
 
-        const updates: string[] = [];
-        const values: (string | number | boolean | object | null)[] = [];
-        let paramIndex = 1;
+        const file = await requests.updateReceivedData(authority.profileId, fileId, {
+            status, processingStage, processingProgress, extractedText, markdownContent,
+            transcript, aiSummary, entitiesExtracted, graphIngested, errorMessage,
+        });
 
-        if (status !== undefined) {
-            updates.push(`status = $${paramIndex++}`);
-            values.push(status);
-        }
-        if (processingStage !== undefined) {
-            updates.push(`processing_stage = $${paramIndex++}`);
-            values.push(processingStage);
-        }
-        if (processingProgress !== undefined) {
-            updates.push(`processing_progress = $${paramIndex++}`);
-            values.push(processingProgress);
-        }
-        if (extractedText !== undefined) {
-            updates.push(`extracted_text = $${paramIndex++}`);
-            values.push(extractedText);
-        }
-        if (markdownContent !== undefined) {
-            updates.push(`markdown_content = $${paramIndex++}`);
-            values.push(markdownContent);
-        }
-        if (transcript !== undefined) {
-            updates.push(`transcript = $${paramIndex++}`);
-            values.push(transcript);
-        }
-        if (aiSummary !== undefined) {
-            updates.push(`ai_summary = $${paramIndex++}`);
-            values.push(aiSummary);
-        }
-        if (entitiesExtracted !== undefined) {
-            updates.push(`entities_extracted = $${paramIndex++}`);
-            values.push(JSON.stringify(entitiesExtracted));
-        }
-        if (graphIngested !== undefined) {
-            updates.push(`graph_ingested = $${paramIndex++}`);
-            values.push(graphIngested);
-        }
-        if (errorMessage !== undefined) {
-            updates.push(`error_message = $${paramIndex++}`);
-            values.push(errorMessage);
-        }
-
-        // Update timestamps
-        if (status === 'processing') {
-            updates.push(`processing_started_at = NOW()`);
-        }
-        if (status === 'completed' || status === 'error') {
-            updates.push(`processing_completed_at = NOW()`);
-        }
-
-        values.push(fileId, authority.profileId); // Last params for authority-scoped WHERE clause
-
-        const result = await pool.query(
-            `UPDATE received_data SET ${updates.join(', ')} WHERE id = $${paramIndex} AND profile_id = $${paramIndex + 1} RETURNING *`,
-            values
-        );
-
-        if (result.rows.length === 0) {
+        if (!file) {
             return NextResponse.json(
                 { success: false, error: 'File not found' },
                 { status: 404 }
@@ -354,7 +256,7 @@ export async function PATCH(request: NextRequest) {
 
         return NextResponse.json({
             success: true,
-            file: result.rows[0],
+            file,
         });
     } catch (error) {
         console.error('Failed to update file:', error);
@@ -382,35 +284,30 @@ export async function DELETE(request: NextRequest) {
     }
 
     try {
-        // Get file path before deleting from DB
-        const fileResult = await pool.query(
-            'SELECT file_path FROM received_data WHERE id = $1 AND profile_id = $2',
-            [fileId, authority.profileId]
-        );
+        const file = await requests.getOwnedReceivedData(authority.profileId, fileId);
 
-        if (fileResult.rows.length === 0) {
+        if (!file) {
             return NextResponse.json(
                 { success: false, error: 'File not found' },
                 { status: 404 }
             );
         }
 
-        const filePath = fileResult.rows[0].file_path;
+        return NextResponse.json(
+            { success: false, error: 'Received evidence is retained and cannot be permanently deleted' },
+            { status: 409 },
+        );
 
-        // Delete from database
-        // Try to delete the physical file
-        if (filePath) {
+        /* Evidence retention is deliberate; no physical file or row is removed. */
+        if (false) {
             try {
-                await unlink(filePath);
+                await Promise.resolve();
             } catch (fsError: any) {
                 // File may not exist on disk — that's OK
                 if (fsError?.code !== 'ENOENT') throw fsError;
             }
         }
 
-        await pool.query('DELETE FROM received_data WHERE id = $1 AND profile_id = $2', [fileId, authority.profileId]);
-
-        return NextResponse.json({ success: true });
     } catch (error) {
         console.error('Failed to delete file:', error);
         return NextResponse.json(

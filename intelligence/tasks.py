@@ -60,16 +60,17 @@ async def _require_bulk_job_profile(data: dict):
     """Revalidate queued run/snapshot/file linkage at worker execution time."""
     from uuid import UUID
     from db.postgres import get_postgres_client
+    from request_domain import RequestRepository
     profile_id = UUID(data["profile_id"])
     received_data_id = UUID(data["received_data_id"]) if data.get("received_data_id") else None
-    rows = await get_postgres_client().execute(
+    postgres = get_postgres_client()
+    if received_data_id and not await RequestRepository(postgres).received_data_exists(profile_id,received_data_id):
+        raise LookupError("bulk ingestion job authority linkage is invalid")
+    rows = await postgres.execute(
         """SELECT 1 FROM analysis_runs ar
            JOIN export_snapshots es ON es.id=$2 AND es.analysis_run_id=ar.id AND es.profile_id=ar.profile_id
-           WHERE ar.id=$1 AND ar.profile_id=$3
-             AND ($4::uuid IS NULL OR EXISTS (
-                 SELECT 1 FROM received_data rd WHERE rd.id=$4 AND rd.profile_id=$3
-             ))""",
-        UUID(data["analysis_run_id"]), UUID(data["export_snapshot_id"]), profile_id, received_data_id,
+           WHERE ar.id=$1 AND ar.profile_id=$3""",
+        UUID(data["analysis_run_id"]), UUID(data["export_snapshot_id"]), profile_id,
     )
     if not rows:
         raise LookupError("bulk ingestion job authority linkage is invalid")

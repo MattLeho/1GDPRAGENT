@@ -25,12 +25,7 @@ class GraphProjectionService:
     def __init__(self, postgres: PostgresClient | None=None, neo4j: Neo4jClient | None=None):
         self.postgres=postgres or get_postgres_client(); self.neo4j=neo4j or get_neo4j_client()
 
-    async def ensure_schema(self) -> None:
-        await self.neo4j.execute("CREATE CONSTRAINT graph_node_id IF NOT EXISTS FOR (n:GraphNode) REQUIRE n.node_id IS UNIQUE")
-        await self.neo4j.execute("CREATE INDEX assertion_edge_id IF NOT EXISTS FOR ()-[r:RELATES_TO]-() ON (r.assertion_id)")
-
     async def backfill_legacy_node_ids(self) -> int:
-        await self.ensure_schema()
         rows=await self.neo4j.query("MATCH (n) WHERE n.node_id IS NULL RETURN elementId(n) AS element_id, labels(n) AS labels, properties(n) AS props")
         existing=await self.neo4j.query("MATCH (n:GraphNode) WHERE n.node_id IS NOT NULL RETURN n.node_id AS node_id")
         used={row["node_id"] for row in existing}
@@ -51,7 +46,6 @@ class GraphProjectionService:
         return updated
 
     async def project_assertion(self, assertion_id: UUID | str, profile_id: UUID | str) -> dict:
-        await self.ensure_schema()
         rows=await self.postgres.execute(
             """SELECT a.*,ar.profile_id,COALESCE((SELECT array_agg(ae.evidence_locator_id ORDER BY ae.evidence_locator_id)
                  FROM assertion_evidence ae WHERE ae.assertion_id=a.id),'{}'::uuid[]) evidence_locator_ids

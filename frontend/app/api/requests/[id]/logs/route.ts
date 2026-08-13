@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireApiSession } from '@/lib/api-session';
-import { pool } from '@/lib/db';
 import { RequestService } from '@/lib/requests/service';
 
 const requests = new RequestService();
@@ -44,40 +43,13 @@ export async function GET(
     if (authority instanceof NextResponse) return authority;
     try {
         const { id } = await params;
-        if (!await requests.get(authority.profileId, id)) {
+        const activityRows = await requests.activity(authority.profileId, id);
+        if (!activityRows) {
             return NextResponse.json({ success: false, error: 'Request not found' }, { status: 404 });
         }
-        // Get workflow logs
-        const logsResult = await pool.query(
-            `SELECT id, workflow_name, workflow_type, status, details, 
-                    started_at, completed_at, error_message
-             FROM workflow_logs
-             WHERE request_id = $1
-             ORDER BY started_at DESC
-             LIMIT 50`,
-            [id]
-        );
-
-        // Get request events
-        const eventsResult = await pool.query(
-            `SELECT id, event_type, event_description, event_date
-             FROM request_events
-             WHERE request_id = $1
-             ORDER BY event_date DESC
-             LIMIT 50`,
-            [id]
-        );
-
-        // Get file processing status
-        const filesResult = await pool.query(
-            `SELECT id, file_name, status, processing_stage, 
-                    processing_progress, graph_ingested, 
-                    processing_started_at, processing_completed_at, error_message
-             FROM received_data
-             WHERE request_id = $1
-             ORDER BY date_received DESC`,
-            [id]
-        );
+        const logsResult = { rows: activityRows.logs };
+        const eventsResult = { rows: activityRows.events };
+        const filesResult = { rows: activityRows.files };
 
         // Combine into unified activity feed
         const activities: Activity[] = [];

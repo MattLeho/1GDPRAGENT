@@ -1,10 +1,11 @@
 import subprocess
 from typing import Any
-from fastapi import APIRouter,HTTPException
+from fastapi import APIRouter,Depends,HTTPException
 from pydantic import BaseModel,Field
 from execution.adapters import engine_health,invoke_engine
+from api.security import require_internal_request
 
-router=APIRouter(prefix="/execution",tags=["Task Execution"])
+router=APIRouter(prefix="/execution",tags=["Task Execution"],dependencies=[Depends(require_internal_request)])
 class InvokeBody(BaseModel):
     engine_id:str;task_key:str;input:Any;model:str|None=None;configuration:dict[str,Any]=Field(default_factory=dict)
 

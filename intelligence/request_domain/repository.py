@@ -91,3 +91,33 @@ class RequestRepository:
                 max(0, min(100, processing_progress)), error_message,
             )
             return result == "UPDATE 1"
+
+    async def received_data_exists(self, profile_id: UUID, received_data_id: UUID, *, connection=None) -> bool:
+        async with self._connection(connection) as conn:
+            return bool(await conn.fetchval(
+                "SELECT 1 FROM received_data WHERE id=$1 AND profile_id=$2",
+                received_data_id, profile_id,
+            ))
+
+    async def get_received_data(self, profile_id: UUID, received_data_id: UUID, *, connection=None):
+        async with self._connection(connection) as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM received_data WHERE id=$1 AND profile_id=$2",
+                received_data_id, profile_id,
+            )
+            return dict(row) if row else None
+
+    async def record_specialist_text(
+        self, profile_id: UUID, received_data_id: UUID, *, field: str, text: str, connection=None,
+    ) -> bool:
+        if field not in {"transcript", "extracted_text"}:
+            raise ValueError("unsupported specialist text field")
+        async with self._connection(connection) as conn:
+            result = await conn.execute(
+                f"""UPDATE received_data SET {field}=$2,markdown_content=$2,status='completed',
+                    processing_stage='completed',processing_progress=100,processing_completed_at=NOW(),
+                    derived_content_basis='task2_specialist_router',provenance_status='specialist_candidate'
+                    WHERE id=$1 AND profile_id=$3""",
+                received_data_id, text, profile_id,
+            )
+            return result == "UPDATE 1"

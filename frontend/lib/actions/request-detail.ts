@@ -90,15 +90,15 @@ export async function updateRequestNotes(
 }
 
 /**
- * Deletes a request
+ * Cancels a request while retaining its audit record and evidence.
  */
 export async function deleteRequest(id: string): Promise<{ success: boolean }> {
     try {
-        const { profileId } = await requireServerSessionAuthority();
-        if(!await requests.delete(profileId,id))return {success:false};
+        const { profileId, userId } = await requireServerSessionAuthority();
+        if(!await requests.cancel(profileId,id,`user:${userId}`))return {success:false};
         return { success: true };
     } catch (error) {
-        console.error('Failed to delete request:', error);
+        console.error('Failed to cancel request:', error);
         return { success: false };
     }
 }
@@ -109,4 +109,11 @@ export async function deleteRequest(id: string): Promise<{ success: boolean }> {
 export async function getRequestHistory(domain: string, excludeId?: string): Promise<Request[]> {
     const { profileId } = await requireServerSessionAuthority();
     return requests.history(profileId,domain,excludeId);
+}
+
+/** Returns a conservative legal-deadline screening, never a compliance conclusion. */
+export async function getRequestDeadlineScreening(id: string) {
+    const { profileId } = await requireServerSessionAuthority();
+    const request = await requests.get(profileId, id);
+    return request ? requests.screenDeadline(profileId, request, new Date()) : null;
 }

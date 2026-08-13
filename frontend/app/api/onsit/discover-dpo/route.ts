@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireApiSession } from '@/lib/api-session';
-import { getAICredential } from '@/lib/ai-credentials';
+import { executeTask } from '@/lib/execution/router';
 
 export async function POST(request: NextRequest) {
     const authority = await requireApiSession(request);
@@ -23,21 +23,9 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Get API key
-        const apiKey = await getAICredential('google', authority.profileId) ||
-            process.env.GOOGLE_API_KEY ||
-            process.env.GEMINI_API_KEY;
-
-        if (!apiKey) {
-            return NextResponse.json(
-                { success: false, error: 'No Google API key configured' },
-                { status: 500 }
-            );
-        }
-
         // Process each vendor to find DPO email
         const results = await Promise.all(
-            vendors.map(vendor => findDPOForVendor(vendor, apiKey))
+            vendors.map(vendor => findDPOForVendor(vendor, authority.profileId))
         );
 
         return NextResponse.json({
@@ -57,21 +45,27 @@ export async function POST(request: NextRequest) {
 /**
  * Find DPO email for a specific vendor
  */
-async function findDPOForVendor(vendor: string, apiKey: string) {
-    try {
-        const { GoogleGenAI } = await import('@google/genai');
-        const ai = new GoogleGenAI({ apiKey });
+async function generatePolicyText(profileId: string, prompt: string): Promise<string> {
+    const result = await executeTask({
+        taskKey: 'policy.interpretation',
+        workflowKey: 'onsit.dpo-discovery',
+        profileId,
+        input: { text: prompt },
+        configuration: { temperature: 0 },
+    });
+    if (!result.ok) throw new Error(result.error.message);
+    const output = result.output as { text?: unknown };
+    if (typeof output.text !== 'string') throw new Error('Policy task returned no text');
+    return output.text.trim();
+}
 
+async function findDPOForVendor(vendor: string, profileId: string) {
+    try {
         // Step 1: Try to find the privacy policy URL
         const searchPrompt = `Find the URL of the privacy policy page for ${vendor}.
 Return ONLY the URL, nothing else. If you cannot find it, return "NOT_FOUND".`;
 
-        const searchResponse = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: searchPrompt,
-        });
-
-        const policyUrl = (searchResponse.text || '').trim();
+        const policyUrl = await generatePolicyText(profileId, searchPrompt);
 
         if (policyUrl === 'NOT_FOUND' || !policyUrl.startsWith('http')) {
             return {
@@ -109,12 +103,7 @@ ${policyHtml.slice(0, 50000)}
 
 Return ONLY the email address, nothing else. If not found, return "NOT_FOUND".`;
 
-            const extractResponse = await ai.models.generateContent({
-                model: 'gemini-3-flash-preview',
-                contents: extractPrompt,
-            });
-
-            const dpoEmail = (extractResponse.text || '').trim();
+            const dpoEmail = await generatePolicyText(profileId, extractPrompt);
 
             if (dpoEmail === 'NOT_FOUND' || !dpoEmail.includes('@')) {
                 return {

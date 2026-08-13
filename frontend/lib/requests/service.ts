@@ -77,11 +77,48 @@ export class RequestService {
         const actor = requireText(command.actor, 'actor');
         const reason = requireText(command.reason, 'reason');
         requireText(command.request_id, 'request_id');
-        return this.repository.transition(requireText(profileId, 'profileId'), {
+        const scopedProfileId = requireText(profileId, 'profileId');
+        const extensionFields = [command.extension_notified_at, command.extension_deadline_at, command.extension_reason];
+        const hasAnyExtension = extensionFields.some(value => value !== undefined && value !== null && value !== '');
+        const hasCompleteExtension = command.extension_notified_at != null
+            && command.extension_deadline_at != null
+            && Boolean(command.extension_reason?.trim());
+        if (hasAnyExtension && !hasCompleteExtension) {
+            throw new TypeError('Extension notice, deadline, and reason are all required');
+        }
+        const normalised = {
             ...command,
             actor,
             reason,
+            extension_reason: command.extension_reason?.trim(),
+        };
+        return hasCompleteExtension
+            ? this.transitionWithValidatedExtension(scopedProfileId, normalised)
+            : this.repository.transition(scopedProfileId, normalised);
+    }
+
+    private async transitionWithValidatedExtension(profileId: string, command: TransitionRequestCommand) {
+        const current = await this.repository.get(profileId, command.request_id);
+        if (!current) return null;
+        const screening = screenRequestDeadline({
+            request_type: current.request_type,
+            sent_at: current.sent_at,
+            controller_received_at: current.controller_received_at,
+            identity_requested_at: current.identity_requested_at,
+            identity_verified_at: current.identity_verified_at,
+            clarification_requested_at: current.clarification_requested_at,
+            clarification_resolved_at: current.clarification_resolved_at,
+            response_received_at: current.response_received_at,
+            completed_at: current.completed_at,
+            extension_notified_at: command.extension_notified_at,
+            extension_deadline_at: command.extension_deadline_at,
+            extension_reason: command.extension_reason,
+            evaluationAt: command.transitioned_at,
         });
+        if (screening.human_review_required || !screening.deadline_at) {
+            throw new TypeError('Extension evidence is invalid or requires human review');
+        }
+        return this.repository.transition(profileId, { ...command, deadline_at: screening.deadline_at });
     }
 
     events(profileId: string, requestId: string) {
@@ -128,6 +165,34 @@ export class RequestService {
         return this.repository.addReceivedData(requireText(profileId,'profileId'),requireText(requestId,'requestId'),input);
     }
 
+    registerReceivedDataBatch(profileId: string, requestId: string | null, files: Parameters<RequestRepository['registerReceivedDataBatch']>[2]) {
+        return this.repository.registerReceivedDataBatch(requireText(profileId, 'profileId'), requestId, files);
+    }
+
+    listReceivedData(profileId: string, filter: { fileId?: string | null; requestId?: string | null } = {}) {
+        return this.repository.listReceivedData(requireText(profileId, 'profileId'), filter);
+    }
+
+    pendingReceivedData(profileId: string) {
+        return this.repository.pendingReceivedData(requireText(profileId, 'profileId'));
+    }
+
+    receivedDataVolume(profileId: string, requestId: string) {
+        return this.repository.receivedDataVolume(requireText(profileId, 'profileId'), requireText(requestId, 'requestId'));
+    }
+
+    receivedDataStatusCounts(profileId: string, requestId: string) {
+        return this.repository.receivedDataStatusCounts(requireText(profileId, 'profileId'), requireText(requestId, 'requestId'));
+    }
+
+    searchReceivedData(profileId: string, requestId: string, options: Parameters<RequestRepository['searchReceivedData']>[2] = {}) {
+        return this.repository.searchReceivedData(requireText(profileId, 'profileId'), requireText(requestId, 'requestId'), options);
+    }
+
+    updateReceivedData(profileId: string, fileId: string, input: Record<string, unknown>) {
+        return this.repository.updateReceivedData(requireText(profileId, 'profileId'), requireText(fileId, 'fileId'), input);
+    }
+
     requestDetails(profileId:string,requestId:string){
         return this.repository.requestDetails(requireText(profileId,'profileId'),requireText(requestId,'requestId'));
     }
@@ -152,8 +217,44 @@ export class RequestService {
         return this.repository.dashboard(requireText(profileId, 'profileId'));
     }
 
-    delete(profileId: string, requestId: string) {
-        return this.repository.delete(requireText(profileId, 'profileId'), requireText(requestId, 'requestId'));
+    activity(profileId: string, requestId: string) {
+        return this.repository.activity(requireText(profileId, 'profileId'), requireText(requestId, 'requestId'));
+    }
+
+    startWorkflowLog(profileId: string, params: { requestId: string; workflowName: string; workflowType: string; details?: Record<string, unknown> }) {
+        return this.repository.startWorkflowLog(requireText(profileId, 'profileId'), params);
+    }
+
+    finishWorkflowLog(profileId: string, logId: string, input: { status: 'completed' | 'error'; details: Record<string, unknown>; errorMessage?: string | null }) {
+        return this.repository.finishWorkflowLog(requireText(profileId, 'profileId'), requireText(logId, 'logId'), input);
+    }
+
+    recordOutboundMessage(profileId: string, input: Parameters<RequestRepository['recordOutboundMessage']>[1], connection?: Parameters<RequestRepository['recordOutboundMessage']>[2]) {
+        return this.repository.recordOutboundMessage(requireText(profileId, 'profileId'), input, connection);
+    }
+
+    createEmailDraft(profileId:string,input:Parameters<RequestRepository['createEmailDraft']>[1]){return this.repository.createEmailDraft(requireText(profileId,'profileId'),input);}
+    reviewEmailDraft(profileId:string,draftId:string,reviewedBy:string){return this.repository.reviewEmailDraft(requireText(profileId,'profileId'),requireText(draftId,'draftId'),requireText(reviewedBy,'reviewedBy'));}
+    getReviewedEmailDraft(profileId:string,draftId:string){return this.repository.getReviewedEmailDraft(requireText(profileId,'profileId'),requireText(draftId,'draftId'));}
+    markEmailDraftSent(profileId:string,draftId:string,messageId:string,connection:Parameters<RequestRepository['markEmailDraftSent']>[3]){return this.repository.markEmailDraftSent(requireText(profileId,'profileId'),requireText(draftId,'draftId'),requireText(messageId,'messageId'),connection);}
+    markEmailDraftFailed(profileId:string,draftId:string,error:Record<string,unknown>){return this.repository.markEmailDraftFailed(requireText(profileId,'profileId'),requireText(draftId,'draftId'),error);}
+
+    getThread(profileId: string, lookup: { threadId?: string | null; company?: string | null }) {
+        return this.repository.getThread(requireText(profileId, 'profileId'), lookup);
+    }
+
+    updateThread(profileId: string, userId: string, input: Parameters<RequestRepository['updateThread']>[2]) {
+        return this.repository.updateThread(
+            requireText(profileId, 'profileId'), requireText(userId, 'userId'), input,
+        );
+    }
+
+    cancel(profileId: string, requestId: string, actor: string) {
+        return this.repository.cancel(
+            requireText(profileId, 'profileId'),
+            requireText(requestId, 'requestId'),
+            requireText(actor, 'actor'),
+        );
     }
 
     screenDeadline(
@@ -161,12 +262,14 @@ export class RequestService {
         request: Request,
         evaluationAt: Date | string,
         disputedFields: readonly DeadlineInputField[] = [],
+        publicHolidays?: readonly string[],
     ): DeadlineScreeningResult {
         const scopedProfileId = requireText(profileId, 'profileId');
         if (request.profile_id !== scopedProfileId) {
             throw new TypeError('Request does not belong to the canonical profile');
         }
         return screenRequestDeadline({
+            request_type: request.request_type,
             sent_at: request.sent_at,
             controller_received_at: request.controller_received_at,
             identity_requested_at: request.identity_requested_at,
@@ -177,8 +280,10 @@ export class RequestService {
             completed_at: request.completed_at,
             extension_notified_at: request.extension_notified_at,
             extension_deadline_at: request.extension_deadline_at,
+            extension_reason: request.extension_reason,
             evaluationAt,
             disputedFields,
+            publicHolidays,
         });
     }
 }
