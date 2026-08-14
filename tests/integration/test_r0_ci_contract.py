@@ -149,10 +149,12 @@ def test_browser_gate_provisions_an_isolated_authenticated_runtime():
     assert "pnpm run test:browser" in browser
     assert "exec setsid pnpm start" in browser
     assert "kill -KILL" in browser
-    assert "pnpm pkg get scripts.test:browser | grep" not in browser
+    assert "pnpm pkg get" not in browser
+    assert "node -e" in browser
+    assert "scripts?.['test:browser']" in browser
 
 
-def test_browser_preflight_does_not_false_fail_when_pnpm_writes_after_its_value(tmp_path):
+def test_browser_preflight_reads_package_manifest_without_pnpm_property_path_parsing(tmp_path):
     if os.name == "nt":
         import pytest
         pytest.skip("SIGPIPE and Bash pipeline semantics are exercised on Linux")
@@ -165,7 +167,7 @@ def test_browser_preflight_does_not_false_fail_when_pnpm_writes_after_its_value(
     fake_bin.mkdir()
     marker = tmp_path / "browser-ran"
     fake_pnpm = fake_bin / "pnpm"
-    fake_pnpm.write_text(_read("tests/fixtures/r0-ci/fake-pnpm-sigpipe"), encoding="utf-8")
+    fake_pnpm.write_text(_read("tests/fixtures/r0-ci/fake-pnpm-preflight"), encoding="utf-8")
     fake_pnpm.chmod(0o755)
     completed = subprocess.run(
         [bash, str(ROOT / "scripts/r0-browser.sh")],

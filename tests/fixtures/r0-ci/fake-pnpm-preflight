@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+if [[ "$1 $2" == 'run test:browser' ]]; then
+  printf ran > "$R0_FAKE_BROWSER_MARKER"
+  exit 0
+fi
+exit 97

@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/r0-require-command.sh"
 require_command pnpm 'Install pnpm 11.9.0.'
+require_command node 'Install Node.js 22+.'
 require_file "$ROOT/frontend/node_modules/.bin/playwright" 'Add @playwright/test to frontend devDependencies, run pnpm install, then run pnpm exec playwright install --with-deps chromium.'
 require_file "$ROOT/tests/browser/r0-authenticated-baseline.spec.ts" 'Add the R0 authenticated browser baseline specification.'
 require_command python 'Install Python 3.11+ with the migration dependencies.'
@@ -24,8 +25,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-browser_script="$(cd "$ROOT/frontend" && pnpm pkg get scripts.test:browser)"
-if [[ -z "$browser_script" || "$browser_script" == "{}" || "$browser_script" == "null" ]]; then
+if ! (cd "$ROOT/frontend" && node -e "const script=require('./package.json').scripts?.['test:browser']; if(typeof script!=='string'||!script.trim()) process.exit(1)"); then
   printf 'R0 authenticated browser gate is not configured: frontend/package.json needs a test:browser script.\n' >&2
   exit 2
 fi
