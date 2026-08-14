@@ -23,6 +23,8 @@ case "${1:-}" in
       printf 'R0 frontend unit/component gate is not configured: frontend/package.json needs a test script and declared runner.\n' >&2
       exit 2
     fi
+    # The complete unit gate includes tests/r1-adversarial-session-api.test.ts,
+    # which is R0's executed evidence for expired and deleted-binding sessions.
     pnpm run test
     ;;
   *)

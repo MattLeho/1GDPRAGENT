@@ -118,7 +118,18 @@ export function enforceSameOriginMutation(request: NextRequest): NextResponse | 
   const origin = request.headers.get('origin');
   if (origin) {
     try {
-      if (new URL(origin).origin !== request.nextUrl.origin) {
+      const host = request.headers.get('host')?.trim();
+      const forwardedProtocol = request.headers.get('x-forwarded-proto')?.split(',', 1)[0]?.trim();
+      const protocol = forwardedProtocol || request.nextUrl.protocol.replace(/:$/, '');
+      if (!['http', 'https'].includes(protocol)) {
+        return csrfErrorResponse('CSRF_ORIGIN_MISMATCH', 'Mutation request protocol is invalid');
+      }
+      const effectiveOrigin = host ? new URL(`${protocol}://${host}`).origin : request.nextUrl.origin;
+      const allowedOrigins = new Set([effectiveOrigin]);
+      if (process.env.NEXT_PUBLIC_APP_URL) {
+        allowedOrigins.add(new URL(process.env.NEXT_PUBLIC_APP_URL).origin);
+      }
+      if (!allowedOrigins.has(new URL(origin).origin)) {
         return csrfErrorResponse('CSRF_ORIGIN_MISMATCH', 'Mutation origin does not match this application');
       }
     } catch {

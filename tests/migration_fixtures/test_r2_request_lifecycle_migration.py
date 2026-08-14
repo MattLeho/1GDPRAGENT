@@ -12,6 +12,7 @@ import asyncpg
 import pytest
 
 from migrate import migrate
+from tests.migration_fixtures.schema_signature import migrate_twice_with_stable_schema
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,8 +66,7 @@ async def test_r2_clean_install_runner_and_sql_are_idempotent():
         finally:
             await connection.close()
 
-        await migrate(url, MIGRATIONS)
-        await migrate(url, MIGRATIONS)
+        await migrate_twice_with_stable_schema(url, MIGRATIONS)
         connection = await asyncpg.connect(url)
         try:
             columns = {
@@ -160,8 +160,7 @@ async def test_r2_upgrade_preserves_rows_and_does_not_fabricate_legal_dates():
         finally:
             await connection.close()
 
-        await migrate(url, MIGRATIONS)
-        await migrate(url, MIGRATIONS)
+        await migrate_twice_with_stable_schema(url, MIGRATIONS)
         connection = await asyncpg.connect(url)
         try:
             row = await connection.fetchrow("SELECT * FROM requests WHERE id=$1", request_id)
@@ -225,12 +224,28 @@ async def test_r2_preflight_upgrades_a_minimal_historical_requests_table():
                 "company_url text, domain text, status text default 'draft', "
                 "request_type text default 'access', created_at timestamptz default now())"
             )
+            await connection.execute(
+                "CREATE TABLE profiles("
+                "id uuid primary key default gen_random_uuid(), identity_name text not null, "
+                "encrypted_name text, encrypted_email text, encrypted_address text, "
+                "created_at timestamptz not null default now())"
+            )
+            await connection.execute(
+                "INSERT INTO profiles(identity_name) VALUES('Minimal legacy owner')"
+            )
+            request_id = await connection.fetchval(
+                "INSERT INTO requests(company_name,status) VALUES('Minimal legacy controller','draft') RETURNING id"
+            )
         finally:
             await connection.close()
 
-        await migrate(url, MIGRATIONS)
+        await migrate_twice_with_stable_schema(url, MIGRATIONS)
         connection = await asyncpg.connect(url)
         try:
+            assert await connection.fetchval(
+                "SELECT count(*) FROM requests WHERE id=$1 AND company_name='Minimal legacy controller'",
+                request_id,
+            ) == 1
             for column in (
                 "next_action_date", "deadline_date", "data_volume_mb",
                 "data_period_start", "data_period_end", "progress", "notes",
@@ -251,7 +266,7 @@ async def test_r2_preflight_upgrades_a_minimal_historical_requests_table():
 async def test_r2_view_guards_transitions_events_and_updated_at():
     admin, name, url = await _temporary_database("guards")
     try:
-        await migrate(url, MIGRATIONS)
+        await migrate_twice_with_stable_schema(url, MIGRATIONS)
         connection = await asyncpg.connect(url)
         try:
             profile_id = await connection.fetchval(

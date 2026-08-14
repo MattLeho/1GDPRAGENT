@@ -1,0 +1,34 @@
+{
+  "schema_version": "r0-runtime-root-policy-v1",
+  "active_runtime_roots": [
+    "frontend",
+    "intelligence"
+  ],
+  "scanner_roots": {
+    "providers": ["frontend", "intelligence"],
+    "neo4j": ["frontend", "intelligence"],
+    "runtime_ddl": ["frontend", "intelligence"]
+  },
+  "runtime_entrypoints": [
+    "docker-compose.yml:150-302",
+    "frontend/package.json",
+    "intelligence/main.py"
+  ],
+  "inactive_legacy_roots": [
+    {
+      "path": "agents/python",
+      "reason": "No active frontend or intelligence import/loader references this tree; Docker Compose starts only the mounted frontend and intelligence service roots.",
+      "evidence": [
+        "docker-compose.yml:152-192",
+        "docker-compose.yml:262-302",
+        "intelligence/main.py:108-119"
+      ]
+    }
+  ],
+  "approved_provider_adapters": [
+    {
+      "path": "frontend/lib/rlm/provider-adapters.ts",
+      "reason": "Canonical frontend execution router adapter; frontend/lib/execution/router.ts invokes it and persists execution_records."
+    }
+  ]
+}

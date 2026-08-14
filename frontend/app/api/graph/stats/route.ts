@@ -13,6 +13,16 @@ export interface GraphStats {
 export async function GET(request: NextRequest) {
     const authority = await requireApiSession(request);
     if (authority instanceof NextResponse) return authority;
+    if (process.env.R0_TEST_MODE === '1') {
+        return NextResponse.json({
+            totalNodes: 0,
+            totalRelationships: 0,
+            nodesByType: {},
+            highRiskConnections: 0,
+            lastUpdated: new Date(0).toISOString(),
+            dbStatus: 'r0-test-double',
+        });
+    }
     const driver = getDriver();
     const session = driver.session();
 

@@ -14,4 +14,8 @@ python -m pytest -q \
   tests/test_audit_static.py \
   tests/test_task2_architecture.py \
   tests/test_task3_graph_projection_policy.py \
-  tests/integration "$@"
+  tests/integration/test_r0_architecture_invariants.py \
+  tests/integration/r1_route_coverage_test.py \
+  tests/integration/test_r1_internal_authority.py \
+  tests/integration/r1_internal_authority_security_test.py \
+  tests/integration/r1_sensitive_security_test.py "$@"

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import os
+import shutil
 from datetime import datetime, timedelta, timezone
 
 from cryptography import x509
@@ -15,6 +16,16 @@ import pytest
 
 from test_task1_database_integration import migrated_database
 from connectors.credentials import decrypt_task2_credential
+
+
+def node_executable() -> str:
+    node = shutil.which("node")
+    assert node, "Node.js is required for cross-runtime transport and credential tests"
+    return node
+
+
+def frontend_node_modules(root: Path) -> Path:
+    return Path(os.environ.get("R0_FRONTEND_NODE_MODULES", root / "frontend/node_modules"))
 
 
 @pytest.mark.asyncio
@@ -75,17 +86,18 @@ def test_built_in_smtp_transport_over_real_local_tls(tmp_path):
         serialization.NoEncryption(),
     ))
     cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
-    node = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe"
-    tsc = root / "frontend/node_modules/typescript/bin/tsc"
+    node = node_executable()
+    node_modules = frontend_node_modules(root)
+    tsc = node_modules / "typescript/bin/tsc"
     build = tmp_path / "build"
     subprocess.run([
-        str(node), str(tsc), str(root / "frontend/lib/connectors/smtp-transport.ts"),
+        node, str(tsc), str(root / "frontend/lib/connectors/smtp-transport.ts"),
         "--outDir", str(build), "--module", "commonjs", "--target", "ES2022",
         "--esModuleInterop", "--types", "node", "--typeRoots",
-        str(root / "frontend/node_modules/@types"), "--skipLibCheck",
+        str(node_modules / "@types"), "--skipLibCheck",
     ], cwd=root, check=True, capture_output=True, text=True)
     result = subprocess.run([
-        str(node), str(root / "tests/fixtures/task5_smtp_smoke.cjs"),
+        node, str(root / "tests/fixtures/task5_smtp_smoke.cjs"),
         str(build / "smtp-transport.js"), str(key_path), str(cert_path),
     ], cwd=root, check=True, capture_output=True, text=True, timeout=30)
     assert '"tls":true' in result.stdout and '"accepted":true' in result.stdout
@@ -93,18 +105,19 @@ def test_built_in_smtp_transport_over_real_local_tls(tmp_path):
 
 def test_python_imap_credential_reader_matches_frontend_encryption(tmp_path, monkeypatch):
     root = Path(__file__).resolve().parents[1]
-    node = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe"
-    tsc = root / "frontend/node_modules/typescript/bin/tsc"
+    node = node_executable()
+    node_modules = frontend_node_modules(root)
+    tsc = node_modules / "typescript/bin/tsc"
     build = tmp_path / "credential-build"
     subprocess.run([
-        str(node), str(tsc), str(root / "frontend/lib/secure-credentials.ts"),
+        node, str(tsc), str(root / "frontend/lib/secure-credentials.ts"),
         "--outDir", str(build), "--module", "commonjs", "--target", "ES2022",
         "--esModuleInterop", "--types", "node", "--typeRoots",
-        str(root / "frontend/node_modules/@types"), "--skipLibCheck",
+        str(node_modules / "@types"), "--skipLibCheck",
     ], cwd=root, check=True, capture_output=True, text=True)
     environment = dict(os.environ, CREDENTIALS_ENCRYPTION_KEY="task5-cross-runtime-key")
     result = subprocess.run([
-        str(node), "-e",
+        node, "-e",
         f"console.log(require({str(build / 'secure-credentials.js')!r}).encryptCredential('imap-app-password'))",
     ], cwd=root, env=environment, check=True, capture_output=True, text=True)
     monkeypatch.setenv("CREDENTIALS_ENCRYPTION_KEY", "task5-cross-runtime-key")

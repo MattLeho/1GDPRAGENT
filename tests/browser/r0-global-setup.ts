@@ -12,10 +12,18 @@ const username = `r0_browser_${Date.now()}`;
 const password = 'r0-browser-disposable-password';
 
 export default async function globalSetup() {
-  if (process.env.GOOGLE_API_KEY || process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY) {
+  const providerCredentialNames = [
+    'GOOGLE_API_KEY', 'GOOGLE_AI_API_KEY', 'GEMINI_API_KEY',
+    'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'OPEN_ROUTER_API_KEY',
+  ];
+  if (providerCredentialNames.some(name => process.env[name])) {
     throw new Error('R0 browser baseline must run without external provider credentials; chat evidence is intentionally limited to the local unconfigured fallback path.');
   }
-  const api = await request.newContext({ baseURL });
+  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required to seed the disposable R0 browser request.');
+  const api = await request.newContext({
+    baseURL,
+    extraHTTPHeaders: { origin: baseURL, 'x-gdpr-csrf': '1' },
+  });
   try {
     const registration = await api.post('/api/auth/register', { data: { username, password } });
     if (!registration.ok()) {
@@ -24,14 +32,20 @@ export default async function globalSetup() {
   } finally {
     await api.dispose();
   }
-
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required to seed the disposable R0 browser request.');
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    const result = await client.query<{ id: string }>(
-      "INSERT INTO requests(company_name, status) VALUES('R0 browser fixture controller', 'draft') RETURNING id",
+    const result = await client.query<{ id: string; profile_id: string }>(
+      `INSERT INTO requests(company_name, status, profile_id)
+       SELECT 'R0 browser fixture controller', 'draft', default_profile_id
+       FROM user_profiles
+       WHERE username = $1
+       RETURNING id, profile_id`,
+      [username],
     );
+    if (result.rowCount !== 1 || !result.rows[0]?.profile_id) {
+      throw new Error('R0 browser fixture could not resolve the registered user canonical profile binding.');
+    }
     process.env.R0_USERNAME = username;
     process.env.R0_PASSWORD = password;
     process.env.R0_REQUEST_ID = result.rows[0].id;

@@ -1,2 +1,7 @@
 allowBuilds:
+  '@google/genai': false
+  '@vaadin/vaadin-usage-statistics': false
   esbuild: true
+  protobufjs: false
+  sharp: true
+  unrs-resolver: true

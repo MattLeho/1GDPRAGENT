@@ -9,6 +9,7 @@ import asyncpg
 import pytest
 
 from migrate import migrate
+from tests.migration_fixtures.schema_signature import migrate_twice_with_stable_schema
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,7 +41,7 @@ async def _drop_database(admin: asyncpg.Connection, name: str) -> None:
 async def test_r1_profile_roots_are_non_null_and_indexed_on_clean_install():
     admin, name, url = await _temporary_database("clean_ownership")
     try:
-        await migrate(url, MIGRATIONS)
+        await migrate_twice_with_stable_schema(url, MIGRATIONS)
         connection = await asyncpg.connect(url)
         try:
             for table in (

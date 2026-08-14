@@ -1,0 +1,10 @@
+{
+  "schema_version": "r0-expected-static-findings-v1",
+  "provider_offenders": {
+    "MODEL-008": [
+      "intelligence/llm/gemini.py"
+    ]
+  },
+  "neo4j_mutation_offenders": {},
+  "runtime_ddl_offenders": {}
+}

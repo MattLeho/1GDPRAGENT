@@ -78,6 +78,37 @@ describe('R1 adversarial session authority', () => {
 });
 
 describe('R1 adversarial browser mutation protection', () => {
+  it('accepts the browser origin represented by Host when Next rewrites the internal URL port', () => {
+    const rewritten = new NextRequest('http://localhost:3000/api/sensitive', {
+      method: 'POST',
+      headers: {
+        host: '127.0.0.1:3003',
+        origin: 'http://127.0.0.1:3003',
+        'content-type': 'application/json',
+        'x-gdpr-csrf': '1',
+      },
+    });
+    expect(enforceSameOriginMutation(rewritten)).toBeNull();
+  });
+
+  it('accepts the configured public app origin behind a port-mapping proxy', () => {
+    process.env.NEXT_PUBLIC_APP_URL = 'http://127.0.0.1:3003';
+    try {
+      const proxied = new NextRequest('http://localhost:3000/api/sensitive', {
+        method: 'POST',
+        headers: {
+          host: 'localhost:3000',
+          origin: 'http://127.0.0.1:3003',
+          'content-type': 'application/json',
+          'x-gdpr-csrf': '1',
+        },
+      });
+      expect(enforceSameOriginMutation(proxied)).toBeNull();
+    } finally {
+      delete process.env.NEXT_PUBLIC_APP_URL;
+    }
+  });
+
   it('rejects a foreign Origin before route mutation code can run', async () => {
     const response = enforceSameOriginMutation(request('POST', {
       origin: 'https://attacker.invalid',

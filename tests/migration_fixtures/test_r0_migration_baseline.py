@@ -11,6 +11,7 @@ import asyncpg
 import pytest
 
 from migrate import migrate
+from tests.migration_fixtures.schema_signature import migrate_twice_with_stable_schema
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,21 +42,8 @@ async def _drop_database(admin: asyncpg.Connection, name: str) -> None:
     await admin.close()
 
 
-async def _apply_twice(url: str) -> None:
-    await migrate(url, MIGRATIONS)
-    await migrate(url, MIGRATIONS)
-
-
-async def _schema_signature(connection: asyncpg.Connection) -> list[tuple[str, str, str, str]]:
-    rows = await connection.fetch(
-        """
-        SELECT table_name, column_name, data_type, is_nullable
-        FROM information_schema.columns
-        WHERE table_schema='public'
-        ORDER BY table_name, ordinal_position
-        """
-    )
-    return [(row["table_name"], row["column_name"], row["data_type"], row["is_nullable"]) for row in rows]
+async def _apply_twice(url: str):
+    return await migrate_twice_with_stable_schema(url, MIGRATIONS)
 
 
 async def _seed_pre_task1(url: str) -> dict[str, object]:
@@ -124,18 +112,12 @@ async def _seed_pre_task1(url: str) -> dict[str, object]:
 async def test_clean_schema_applies_twice_and_has_complete_history():
     admin, name, url = await _temporary_database("clean")
     try:
-        await _apply_twice(url)
+        first_schema, second_schema = await _apply_twice(url)
+        assert second_schema == first_schema
         connection = await asyncpg.connect(url)
         try:
             assert await connection.fetchval("SELECT count(*) FROM gdpr_schema_migrations") == len(list(MIGRATIONS.glob("*.sql")))
             assert await connection.fetchval("SELECT to_regclass('public.requests')") == "requests"
-            first_schema = await _schema_signature(connection)
-        finally:
-            await connection.close()
-        await migrate(url, MIGRATIONS)
-        connection = await asyncpg.connect(url)
-        try:
-            assert await _schema_signature(connection) == first_schema
         finally:
             await connection.close()
     finally:
@@ -256,6 +238,8 @@ async def test_current_representative_state_survives_idempotent_migrate():
             assert await connection.fetchval("SELECT count(*) FROM requests WHERE id=$1", request_id) == 1
             assert await connection.fetchval("SELECT count(*) FROM request_chat_messages WHERE request_id=$1", request_id) == 1
             assert await connection.fetchval("SELECT count(*) FROM connector_instances WHERE profile_id=$1", profile_id) == 1
+            assert await connection.fetchval("SELECT count(*) FROM source_connector_definitions WHERE connector_key='r0_fixture' AND definition_version='1'") == 1
+            assert await connection.fetchval("SELECT count(*) FROM assertions WHERE id=$1 AND status='accepted' AND object_ref='GraphNode:r0'", assertion_id) == 1
             assert await connection.fetchval("SELECT count(*) FROM assertion_evidence WHERE assertion_id=$1", assertion_id) == 1
             assert await connection.fetchval("SELECT count(*) FROM export_snapshots WHERE id=$1", snapshot_id) == 1
             assert await connection.fetchval("SELECT count(*) FROM source_artifacts WHERE id=$1", artifact_id) == 1

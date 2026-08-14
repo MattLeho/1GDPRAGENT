@@ -28,9 +28,10 @@ if [[ "${R0_MANAGED_BROWSER_STACK:-0}" == "1" ]]; then
     printf 'R0 managed browser stack requires R0_TEST_MODE=1 to fail closed against provider and service dependencies.\n' >&2
     exit 2
   fi
+  require_file "$ROOT/frontend/.next/BUILD_ID" 'Run the R0 production-build gate before managed browser acceptance.'
   mkdir -p "$ROOT/test-results"
   (cd "$ROOT" && python database/migrate.py)
-  (cd "$ROOT/frontend" && setsid pnpm dev > "$ROOT/test-results/r0-nextjs.log" 2>&1) &
+  (cd "$ROOT/frontend" && setsid pnpm start > "$ROOT/test-results/r0-nextjs.log" 2>&1) &
   server_pid="$!"
   for attempt in $(seq 1 60); do
     if curl --fail --silent "$R0_BASE_URL/login" >/dev/null; then break; fi
