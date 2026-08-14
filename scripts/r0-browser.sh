@@ -11,9 +11,24 @@ export R0_BASE_URL="${R0_BASE_URL:-http://127.0.0.1:3000}"
 export R0_EXECUTE_BROWSER="1"
 server_pid=""
 cleanup() {
-  if [[ -n "$server_pid" ]]; then kill -- -"$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; fi
+  if [[ -n "$server_pid" ]]; then
+    kill -TERM -- -"$server_pid" 2>/dev/null || true
+    kill -TERM "$server_pid" 2>/dev/null || true
+    sleep 1
+    if kill -0 "$server_pid" 2>/dev/null; then
+      kill -KILL -- -"$server_pid" 2>/dev/null || true
+      kill -KILL "$server_pid" 2>/dev/null || true
+    fi
+    wait "$server_pid" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
+
+browser_script="$(cd "$ROOT/frontend" && pnpm pkg get scripts.test:browser)"
+if [[ -z "$browser_script" || "$browser_script" == "{}" || "$browser_script" == "null" ]]; then
+  printf 'R0 authenticated browser gate is not configured: frontend/package.json needs a test:browser script.\n' >&2
+  exit 2
+fi
 
 if [[ "${R0_MANAGED_BROWSER_STACK:-0}" == "1" ]]; then
   if [[ "${CI:-}" != "true" ]]; then
@@ -31,7 +46,7 @@ if [[ "${R0_MANAGED_BROWSER_STACK:-0}" == "1" ]]; then
   require_file "$ROOT/frontend/.next/BUILD_ID" 'Run the R0 production-build gate before managed browser acceptance.'
   mkdir -p "$ROOT/test-results"
   (cd "$ROOT" && python database/migrate.py)
-  (cd "$ROOT/frontend" && setsid pnpm start > "$ROOT/test-results/r0-nextjs.log" 2>&1) &
+  (cd "$ROOT/frontend" && exec setsid pnpm start > "$ROOT/test-results/r0-nextjs.log" 2>&1) &
   server_pid="$!"
   for attempt in $(seq 1 60); do
     if curl --fail --silent "$R0_BASE_URL/login" >/dev/null; then break; fi
@@ -43,8 +58,4 @@ if [[ "${R0_MANAGED_BROWSER_STACK:-0}" == "1" ]]; then
   fi
 fi
 cd "$ROOT/frontend"
-if ! pnpm pkg get scripts.test:browser | grep -qv '^{}$'; then
-  printf 'R0 authenticated browser gate is not configured: frontend/package.json needs a test:browser script.\n' >&2
-  exit 2
-fi
 pnpm run test:browser -- "$@"

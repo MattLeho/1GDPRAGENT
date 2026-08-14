@@ -147,6 +147,42 @@ def test_browser_gate_provisions_an_isolated_authenticated_runtime():
     assert "R0_MANAGED_BROWSER_STACK: \"1\"" in workflow
     assert "R0_TEST_MODE: \"1\"" in workflow
     assert "pnpm run test:browser" in browser
+    assert "exec setsid pnpm start" in browser
+    assert "kill -KILL" in browser
+    assert "pnpm pkg get scripts.test:browser | grep" not in browser
+
+
+def test_browser_preflight_does_not_false_fail_when_pnpm_writes_after_its_value(tmp_path):
+    if os.name == "nt":
+        import pytest
+        pytest.skip("SIGPIPE and Bash pipeline semantics are exercised on Linux")
+    bash = shutil.which("bash")
+    if not bash:
+        import pytest
+        pytest.skip("bash execution is verified on the hosted Linux R0 runner")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    marker = tmp_path / "browser-ran"
+    fake_pnpm = fake_bin / "pnpm"
+    fake_pnpm.write_text(_read("tests/fixtures/r0-ci/fake-pnpm-sigpipe"), encoding="utf-8")
+    fake_pnpm.chmod(0o755)
+    completed = subprocess.run(
+        [bash, str(ROOT / "scripts/r0-browser.sh")],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "R0_MANAGED_BROWSER_STACK": "0",
+            "R0_FAKE_BROWSER_MARKER": str(marker),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert marker.read_text(encoding="utf-8") == "ran"
 
 
 def test_browser_fixture_and_journey_contracts_are_fail_closed():

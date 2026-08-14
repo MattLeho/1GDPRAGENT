@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
@@ -45,6 +45,10 @@ describe('R1 cross-profile object isolation', () => {
     vi.clearAllMocks();
     mocks.query.mockResolvedValue({ rowCount: 0, rows: [] });
     process.env.INTERNAL_API_KEY = 'r1-object-isolation-internal-key';
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('does not cancel a request when the object is foreign', async () => {
@@ -99,6 +103,7 @@ describe('R1 cross-profile object isolation', () => {
   });
 
   it('does not let a graph query-string profileId override session authority', async () => {
+    vi.stubEnv('R0_TEST_MODE', '0');
     mocks.graphRun
       .mockResolvedValueOnce({ records: [{ get: () => ({ toNumber: () => 0 }) }] })
       .mockResolvedValueOnce({ records: [] })
