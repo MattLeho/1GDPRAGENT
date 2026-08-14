@@ -3,7 +3,7 @@
 **Base commit:** `0ae187bff5e313ab528b758efc528ebf636c5088`
 **Runtime:** Windows host with application/test phases isolated in existing Docker services and disposable `r0_browser_*` PostgreSQL databases.
 
-This is local worktree evidence. It does not replace the required hosted execution on the final commit.
+This is local worktree evidence. The complementary successful hosted execution and downloaded artifact inspection are recorded in `r0-completion-hosted-evidence-2026-08-14.md`.
 
 ## Executed results
 
@@ -49,9 +49,9 @@ The 86.1% Microsoft Defender event was reproduced during the host `pnpm install`
 
 Subsequent migrations, test phases and browser runs were executed sequentially. The immediate five-second Defender sample after the Docker production build was `13.96%, 3.08%, 3.09%, 1.53%, 3.10%`; no second host-install spike occurred.
 
-## Remaining evidence boundary
+## Evidence boundary
 
 - `MODEL-008` remains an active, exact expected static finding in `intelligence/llm/gemini.py`, assigned to R3.
 - The historical audit commit remains preserved in the issue registry.
 - Four fresh independent read-only audits are recorded beside this file and every valid R0 finding was repaired and retested.
-- Hosted success and inspection of the uploaded gate/browser artifacts are the remaining acceptance boundary.
+- Hosted run 31833659810 subsequently passed all nine gates; its uploaded manifest and browser artifacts were inspected independently of the workflow badge.
