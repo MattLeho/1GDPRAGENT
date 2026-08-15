@@ -220,7 +220,7 @@ test('R0-UI-001: narrow settings layout has no horizontal overflow or clipped co
 });
 
 test('R0-OPS-001: dashboard does not report a literal always-online status', async ({ page }) => {
-  test.fail(true, 'OPS-001 is a registered R5/R7 product defect; R0 must retain its reproduction.');
   await page.goto(`${baseURL}/dashboard/home`);
   await expect(page.getByText('System Online', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Health not checked', { exact: true })).toBeVisible();
 });

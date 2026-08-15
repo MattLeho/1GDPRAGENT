@@ -4,7 +4,7 @@ import { useRequestStore } from "@/lib/stores/request-store"
 import { UrlAnalyzer } from "@/components/wizard/UrlAnalyzer"
 import { IdentityBuilder } from "@/components/wizard/IdentityBuilder"
 import { ScopeSelector } from "@/components/wizard/ScopeSelector"
-import { Check, ChevronLeft, X } from "lucide-react"
+import { ChevronLeft, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -23,15 +23,16 @@ export default function NewRequestPage() {
         <div className="min-h-screen bg-slate-50 dark:bg-zinc-950 pb-20">
 
             {/* Header / Progress Bar */}
-            <div className="bg-white dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800 sticky top-0 z-10 px-4 py-4 md:px-8">
+            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-900 sm:px-4 sm:py-4 md:px-8">
                 <div className="max-w-4xl mx-auto">
 
                     {/* Top Controls */}
-                    <div className="flex items-center justify-between mb-6">
+                    <div className="mb-4 flex items-center justify-between gap-2 sm:mb-6">
                         <Link href="/dashboard/home">
                             <Button variant="ghost" size="sm" className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 -ml-2">
                                 <ChevronLeft className="mr-1 h-4 w-4" />
-                                Back to Dashboard
+                                <span className="hidden sm:inline">Back to Dashboard</span>
+                                <span className="sm:hidden">Dashboard</span>
                             </Button>
                         </Link>
                         <Link href="/dashboard/home">
@@ -41,8 +42,8 @@ export default function NewRequestPage() {
                         </Link>
                     </div>
 
-                    <div className="flex items-center justify-between mb-2">
-                        <h1 className="text-xl font-bold text-slate-800 dark:text-zinc-100">New Privacy Request</h1>
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <h1 className="text-lg font-bold text-slate-800 dark:text-zinc-100 sm:text-xl">New Privacy Request</h1>
                         <span className="text-sm text-slate-500">Step {currentStep} of 3</span>
                     </div>
 
@@ -65,7 +66,8 @@ export default function NewRequestPage() {
                                             "text-xs font-medium mt-2 transition-colors",
                                             isActive ? "text-blue-600" : isCompleted ? "text-green-600" : "text-slate-400"
                                         )}>
-                                            {step.title}
+                                            <span className="hidden sm:inline">{step.title}</span>
+                                            <span className="sm:hidden">Step {step.number}</span>
                                         </span>
                                     </div>
                                 </div>
@@ -76,7 +78,7 @@ export default function NewRequestPage() {
             </div>
 
             {/* Main Content Area */}
-            <main className="max-w-4xl mx-auto px-4 py-8 md:py-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <main className="mx-auto max-w-4xl animate-in px-3 py-6 fade-in slide-in-from-bottom-4 duration-500 sm:px-4 sm:py-8 md:py-12">
 
                 {currentStep === 1 && <UrlAnalyzer />}
 

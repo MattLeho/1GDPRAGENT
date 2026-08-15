@@ -171,9 +171,9 @@ export function IDDocumentsSection() {
                                 Select document type and upload. Sensitive info will be auto-redacted.
                             </p>
                         </div>
-                        <div className="flex items-center gap-2 w-full max-w-md">
+                        <div className="flex w-full max-w-md flex-col gap-2 sm:flex-row sm:items-center">
                             <Select value={selectedType} onValueChange={setSelectedType}>
-                                <SelectTrigger className="flex-1">
+                                <SelectTrigger className="w-full sm:flex-1">
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -188,6 +188,7 @@ export function IDDocumentsSection() {
                                 <Button
                                     type="button"
                                     disabled={isUploading}
+                                    className="w-full sm:w-auto"
                                     onClick={() => document.getElementById('id-upload')?.click()}
                                 >
                                     {isUploading ? (
@@ -224,9 +225,9 @@ export function IDDocumentsSection() {
                                 key={doc.id}
                                 className="rounded-lg border p-4 space-y-3"
                             >
-                                <div className="flex items-start justify-between">
-                                    <div className="flex-1">
-                                        <div className="flex items-center gap-2 mb-1">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="mb-1 flex flex-wrap items-center gap-2">
                                             <h5 className="font-medium text-sm">
                                                 {getDocumentLabel(doc.documentType)}
                                             </h5>
@@ -234,7 +235,7 @@ export function IDDocumentsSection() {
                                                 {viewMode[doc.id] === 'censored' ? 'Censored' : 'Uncensored'}
                                             </Badge>
                                         </div>
-                                        <p className="text-xs text-muted-foreground">
+                                        <p className="truncate text-xs text-muted-foreground">
                                             {doc.fileName} • {new Date(doc.uploadedAt).toLocaleDateString()}
                                         </p>
                                     </div>
@@ -244,6 +245,7 @@ export function IDDocumentsSection() {
                                             variant="ghost"
                                             onClick={() => toggleViewMode(doc.id)}
                                             title={viewMode[doc.id] === 'censored' ? 'Show uncensored' : 'Show censored'}
+                                            aria-label={viewMode[doc.id] === 'censored' ? 'Show uncensored document' : 'Show censored document'}
                                         >
                                             {viewMode[doc.id] === 'censored' ? (
                                                 <Eye className="h-4 w-4" />
@@ -256,6 +258,7 @@ export function IDDocumentsSection() {
                                             variant="ghost"
                                             onClick={() => handleDelete(doc.id)}
                                             className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
+                                            aria-label="Delete identity document"
                                         >
                                             <Trash2 className="h-4 w-4" />
                                         </Button>

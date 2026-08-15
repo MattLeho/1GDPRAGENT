@@ -38,7 +38,7 @@ export function DataVolumeChart({ data }: DataVolumeChartProps) {
     }
 
     return (
-        <div className="h-[300px] w-full relative">
+        <div className="relative h-[300px] min-w-0 w-full">
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="text-center">
                     <p className="text-sm text-gray-500 font-medium">Total</p>
@@ -55,8 +55,6 @@ export function DataVolumeChart({ data }: DataVolumeChartProps) {
                         outerRadius={110}
                         paddingAngle={2}
                         dataKey="value"
-                        onClick={(data) => console.log(`Filter by ${data.name}`)}
-                        className="cursor-pointer outline-none"
                     >
                         {chartData.map((entry, index) => (
                             <Cell key={`cell-${index}`} fill={entry.color} strokeWidth={0} />

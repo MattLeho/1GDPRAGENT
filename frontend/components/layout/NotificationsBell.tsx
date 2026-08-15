@@ -1,9 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Bell, Check, X, Clock } from 'lucide-react';
+import { useState } from 'react';
+import { Bell, X, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
     Popover,
     PopoverContent,
@@ -44,15 +43,7 @@ export function NotificationsBell({ initialNotifications = [] }: NotificationsBe
         setNotifications((prev) => prev.filter((n) => n.id !== id));
     };
 
-    const formatTime = (date: Date) => {
-        const diff = Date.now() - new Date(date).getTime();
-        const mins = Math.floor(diff / 60000);
-        if (mins < 1) return 'Just now';
-        if (mins < 60) return `${mins}m ago`;
-        const hours = Math.floor(mins / 60);
-        if (hours < 24) return `${hours}h ago`;
-        return new Date(date).toLocaleDateString();
-    };
+    const formatTime = (date: Date) => new Date(date).toLocaleString();
 
     const getTypeIcon = (type: string) => {
         switch (type) {
@@ -71,6 +62,7 @@ export function NotificationsBell({ initialNotifications = [] }: NotificationsBe
                     variant="ghost"
                     size="icon"
                     className="relative text-gray-500 hover:text-gray-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                    aria-label={unreadCount ? `Notifications, ${unreadCount} unread` : 'Notifications'}
                 >
                     <Bell className="h-5 w-5" />
                     {unreadCount > 0 && (
@@ -80,7 +72,7 @@ export function NotificationsBell({ initialNotifications = [] }: NotificationsBe
                     )}
                 </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-80 p-0" align="end">
+            <PopoverContent className="w-[min(20rem,calc(100vw-1rem))] p-0" align="end">
                 <div className="flex items-center justify-between p-3 border-b">
                     <h4 className="font-semibold text-sm">Notifications</h4>
                     {unreadCount > 0 && (
@@ -97,12 +89,20 @@ export function NotificationsBell({ initialNotifications = [] }: NotificationsBe
                     ) : (
                         notifications.slice(0, 10).map((notification) => (
                             <div
+                                role="button"
+                                tabIndex={0}
                                 key={notification.id}
                                 className={cn(
-                                    'flex items-start gap-3 p-3 border-b last:border-0 transition-colors cursor-pointer',
+                                    'flex w-full items-start gap-3 border-b p-3 text-left transition-colors last:border-0',
                                     !notification.read ? 'bg-blue-50/50 dark:bg-blue-950/20' : 'hover:bg-muted/50'
                                 )}
                                 onClick={() => markAsRead(notification.id)}
+                                onKeyDown={(event) => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                        event.preventDefault();
+                                        markAsRead(notification.id);
+                                    }
+                                }}
                             >
                                 <span className="text-lg">{getTypeIcon(notification.type)}</span>
                                 <div className="flex-1 min-w-0">
@@ -125,6 +125,7 @@ export function NotificationsBell({ initialNotifications = [] }: NotificationsBe
                                         e.stopPropagation();
                                         dismissNotification(notification.id);
                                     }}
+                                    aria-label={`Dismiss notification from ${notification.companyName || 'System'}`}
                                 >
                                     <X className="h-3 w-3" />
                                 </Button>

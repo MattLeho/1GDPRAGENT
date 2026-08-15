@@ -15,7 +15,9 @@ export default function ImportPage() {
 
             <div className="flex flex-col gap-6">
                 <ZipImporter />
-                <DatabrokerScanner />
+                <div id="broker-scanner" className="scroll-mt-6">
+                    <DatabrokerScanner />
+                </div>
             </div>
         </div>
     );

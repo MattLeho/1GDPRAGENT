@@ -12,8 +12,8 @@ import { ChangesProjectsEras } from './ChangesProjectsEras';
 import { ContextCorrelations } from './ContextCorrelations';
 import { EvidenceInspector } from './EvidenceInspector';
 
-export function PersonalInsightsDashboard() {
-    const { selection, setSelection, data, errors, loading, retry } = useInsightDashboard();
+export function PersonalInsightsDashboard({ initialNow }: { initialNow: string }) {
+    const { selection, setSelection, data, errors, loading, retry } = useInsightDashboard(initialNow);
     const [inspectedInsightId, setInspectedInsightId] = useState<string | null>(null);
     const onInspect = (insightId: string) => setInspectedInsightId(insightId);
     const changes = data.changes;
@@ -22,7 +22,7 @@ export function PersonalInsightsDashboard() {
     return (
         <main className="mx-auto max-w-[1600px] space-y-6 p-4 sm:p-6 lg:p-8">
             <header className="flex flex-wrap items-end justify-between gap-4">
-                <div><p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">Evidence-backed reflection</p><h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">Personal Insights</h1><p className="mt-2 max-w-3xl text-sm text-muted-foreground">How did observed activity, interests, routines, projects, places and engagement change through time?</p></div>
+                <div><p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">Evidence-backed reflection</p><h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Personal Insights</h1><p className="mt-2 max-w-3xl text-sm text-muted-foreground">How did observed activity, interests, routines, projects, places and engagement change through time?</p></div>
                 {loading && <span role="status" className="rounded-full bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">Refreshing all modules…</span>}
             </header>
 

@@ -7,6 +7,7 @@ import { InspectorPanel } from '@/components/graph/InspectorPanel';
 import { ShadowProfileChat } from '@/components/graph/ShadowProfileChat';
 import { PrivacyGraphControls } from '@/components/graph/PrivacyGraphControls';
 import { PrivacyModePanel } from '@/components/graph/PrivacyModePanel';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import type { PrivacyGraphFilters, PrivacyGraphMode } from '@/lib/privacy/types';
 import { toast } from 'sonner';
 
@@ -101,9 +102,9 @@ export default function GraphPage() {
     }, []);
 
     return (
-        <div className="flex flex-col h-[calc(100vh-4rem)] -m-4 md:-m-8 min-h-0">
+        <div className="-m-3 flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col sm:-m-5 lg:-m-6 lg:h-[calc(100dvh-4rem)] xl:-m-8">
             {/* Header */}
-            <div className="flex-shrink-0 flex items-center justify-between px-6 py-4 border-b bg-white dark:bg-zinc-900">
+            <div className="flex shrink-0 items-center justify-between border-b bg-white px-4 py-3 dark:bg-zinc-900 sm:px-5 sm:py-4 lg:px-6">
                 <div>
                     <h1 className="text-xl font-bold">Data Graph</h1>
                     <p className="text-sm text-muted-foreground">
@@ -134,7 +135,7 @@ export default function GraphPage() {
                 </div>
 
                 {/* Inspector Panel - Zone B */}
-                <div className="w-80 flex-shrink-0 border-l bg-white dark:bg-zinc-900 overflow-y-auto">
+                <div className="hidden w-80 shrink-0 overflow-y-auto border-l bg-white dark:bg-zinc-900 xl:block">
                     <PrivacyModePanel mode={mode} filters={privacyFilters}/>
                     <InspectorPanel
                         selectedNode={selectedNode}
@@ -145,6 +146,22 @@ export default function GraphPage() {
                     />
                 </div>
             </div>
+
+            <Sheet open={selectedNode !== null} onOpenChange={open => { if (!open) handleCloseInspector(); }}>
+                <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-md xl:hidden">
+                    <SheetHeader className="border-b p-4 text-left">
+                        <SheetTitle>Graph inspector</SheetTitle>
+                    </SheetHeader>
+                    <PrivacyModePanel mode={mode} filters={privacyFilters}/>
+                    <InspectorPanel
+                        selectedNode={selectedNode}
+                        onClose={handleCloseInspector}
+                        onDelete={handleDeleteNode}
+                        onMerge={handleMergeNode}
+                        onFlag={handleFlagNode}
+                    />
+                </SheetContent>
+            </Sheet>
 
             {/* Shadow Profile Chat - Zone C */}
             <ShadowProfileChat />

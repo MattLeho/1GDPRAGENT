@@ -244,7 +244,7 @@ export function AgentManager() {
                         <div
                             key={agent.id}
                             className={cn(
-                                'flex items-center justify-between p-2 rounded-lg border transition-all duration-300',
+                                'flex items-center justify-between gap-3 p-2 rounded-lg border transition-all duration-300',
                                 agent.status === 'running'
                                     ? 'border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/30 animate-pulse'
                                     : 'border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900',
@@ -276,13 +276,13 @@ export function AgentManager() {
                                     </p>
                                 </div>
                             </div>
-                            <div className="flex items-center gap-1">
+                            <div className="flex shrink-0 items-center gap-2 pl-2">
                                 <Select
                                     value={agent.schedule}
                                     onValueChange={(v) => setSchedule(agent.id, v)}
                                 >
-                                    <SelectTrigger className="h-6 w-[70px] text-[10px] px-1">
-                                        <Calendar className="h-2.5 w-2.5 mr-0.5" />
+                                    <SelectTrigger size="sm" className="w-36 shrink-0 px-2 text-xs">
+                                        <Calendar className="size-3.5" />
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -297,7 +297,7 @@ export function AgentManager() {
                                     size="sm"
                                     variant={agent.status === 'running' ? 'secondary' : 'outline'}
                                     className={cn(
-                                        "h-6 w-6 p-0",
+                                        "h-8 w-8 shrink-0 p-0",
                                         !isEnabled && "cursor-not-allowed opacity-50"
                                     )}
                                     onClick={() => triggerAgent(agent.id)}

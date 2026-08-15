@@ -95,9 +95,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     }, []);
 
     return (
-        <div className="min-h-screen bg-gray-50 dark:bg-zinc-950 flex flex-col md:flex-row font-sans text-gray-900 dark:text-zinc-100">
+        <div className="flex min-h-screen min-w-0 flex-col bg-gray-50 font-sans text-gray-900 dark:bg-zinc-950 dark:text-zinc-100 lg:flex-row">
             {/* Mobile Header */}
-            <div className="md:hidden flex items-center justify-between p-4 bg-white dark:bg-zinc-900 border-b border-gray-200 dark:border-zinc-800">
+            <div className="flex items-center justify-between border-b border-gray-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900 sm:p-4 lg:hidden">
                 <div className="flex items-center gap-2">
                     <ShieldCheck className="h-6 w-6 text-blue-600" />
                     <span className="font-bold text-lg tracking-tight">GDPR Automator</span>
@@ -115,14 +115,14 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             </div>
 
             {/* Desktop Sidebar */}
-            <div className="hidden md:flex flex-col w-64 bg-white dark:bg-zinc-900 border-r border-gray-200 dark:border-zinc-800 h-screen sticky top-0">
+            <div className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-gray-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 lg:flex xl:w-64">
                 <SidebarContent pathname={pathname} />
             </div>
 
             {/* Main Content Area */}
-            <div className="flex-1 flex flex-col h-screen overflow-hidden">
+            <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
                 {/* Top Header */}
-                <header className="hidden md:flex h-16 bg-white dark:bg-zinc-900 border-b border-gray-200 dark:border-zinc-800 items-center justify-between px-6 sticky top-0 z-10">
+                <header className="sticky top-0 z-10 hidden h-16 items-center justify-between border-b border-gray-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900 lg:flex xl:px-6">
                     <h1 className="text-xl font-semibold text-gray-800 dark:text-zinc-100 capitalize">
                         {pathname.split('/').pop()?.replace('-', ' ') || 'Dashboard'}
                     </h1>
@@ -168,7 +168,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 </header>
 
                 {/* Scrollable Page Content */}
-                <main className="flex-1 overflow-y-auto p-4 md:p-8 bg-gray-50 dark:bg-zinc-950">
+                <main className="min-w-0 flex-1 overflow-y-auto bg-gray-50 p-3 dark:bg-zinc-950 sm:p-5 lg:p-6 xl:p-8">
                     {children}
                 </main>
             </div>
@@ -233,8 +233,8 @@ function SidebarContent({
                 <div className="bg-slate-50 dark:bg-zinc-800 p-3 rounded-md border border-slate-100 dark:border-zinc-700">
                     <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400 uppercase mb-1">Status</p>
                     <div className="flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
-                        <span className="text-xs font-medium text-slate-700 dark:text-zinc-300">System Online</span>
+                        <span className="h-2 w-2 rounded-full bg-slate-400"></span>
+                        <span className="text-xs font-medium text-slate-700 dark:text-zinc-300">Health not checked</span>
                     </div>
                 </div>
                 <Button

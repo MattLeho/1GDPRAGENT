@@ -37,6 +37,11 @@ export function ScopeSelector() {
             return
         }
 
+        if (!allData && dateRange.from && dateRange.to && dateRange.from > dateRange.to) {
+            toast.error("The start date must be before the end date")
+            return
+        }
+
         setIsSubmitting(true)
 
         const requestTypes = []
@@ -55,8 +60,8 @@ export function ScopeSelector() {
         const result = await submitRequest(payload)
 
         if (result.success) {
-            toast.success("Request sent successfully!", {
-                description: "We'll notify you when they respond."
+            toast.success(result.emailSent ? "Request sent" : result.draftCreated ? "Draft created for review" : "Request queued", {
+                description: result.message
             })
             reset()
             router.push('/dashboard/requests')
@@ -85,12 +90,12 @@ export function ScopeSelector() {
                     <CardDescription>You are about to send a formal GDPR request.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-zinc-900 rounded-lg border border-slate-200 dark:border-zinc-800">
+                    <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-zinc-800 dark:bg-zinc-900 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                             <p className="text-sm font-medium text-slate-500 dark:text-zinc-400">Target Company</p>
                             <p className="font-semibold text-slate-900 dark:text-zinc-100">{targetUrl || "Unknown Company"}</p>
                         </div>
-                        <div className="text-right">
+                        <div className="sm:text-right">
                             <p className="text-sm font-medium text-slate-500 dark:text-zinc-400">Identity</p>
                             <p className="font-semibold text-slate-900 dark:text-zinc-100">{selectedIdentity?.identity_name || "Anonymous"}</p>
                         </div>
@@ -208,14 +213,14 @@ export function ScopeSelector() {
             </Card>
 
             {/* Actions */}
-            <div className="flex justify-between pt-6 border-t border-slate-200 dark:border-zinc-800">
+            <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-6 dark:border-zinc-800 sm:flex-row sm:justify-between">
                 <Button variant="outline" onClick={prevStep} disabled={isSubmitting}>
                     Back
                 </Button>
                 <Button
                     onClick={handleSubmit}
                     disabled={isSubmitting || (!wantAccess && !wantDeletion)}
-                    className="px-8"
+                    className="w-full px-8 sm:w-auto"
                 >
                     {isSubmitting ? "Sending..." : (
                         <>Send Request <ArrowRight className="ml-2 h-4 w-4" /></>

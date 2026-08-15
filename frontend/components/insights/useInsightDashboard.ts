@@ -16,7 +16,7 @@ export type InsightDashboardData = Partial<{
     [K in InsightModule]: InsightModuleResponseMap[K]
 }>;
 
-export function useInsightDashboard() {
+export function useInsightDashboard(initialNow: string) {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -26,8 +26,8 @@ export function useInsightDashboard() {
     // URL changes, otherwise every completed request produces a new key and
     // immediately starts another seven-module refresh.
     const selection = useMemo(
-        () => parseInsightSelection(new URLSearchParams(searchParamsKey)),
-        [searchParamsKey],
+        () => parseInsightSelection(new URLSearchParams(searchParamsKey), new Date(initialNow)),
+        [initialNow, searchParamsKey],
     );
     const selectionKey = serializeInsightSelection(selection, subjectId).toString();
     const [data, setData] = useState<InsightDashboardData>({});
@@ -38,24 +38,27 @@ export function useInsightDashboard() {
 
     useEffect(() => {
         const controller = new AbortController();
-        Promise.allSettled(MODULES.map(async module => [
-            module,
-            await fetchInsightModule(module, selection, subjectId, controller.signal),
-        ] as const)).then(results => {
-            if (controller.signal.aborted) return;
-            const nextData: InsightDashboardData = {};
-            const nextErrors: Partial<Record<InsightModule, string>> = {};
-            results.forEach((result, index) => {
-                const moduleName = MODULES[index];
-                if (result.status === 'fulfilled') {
-                    Object.assign(nextData, { [result.value[0]]: result.value[1] });
-                } else if (result.reason?.name !== 'AbortError') {
-                    nextErrors[moduleName] = result.reason instanceof Error ? result.reason.message : 'Module unavailable';
-                }
-            });
-            setData(nextData);
-            setErrors(nextErrors);
-            setLoadedKey(requestKey);
+        const tasks = MODULES.map(async module => {
+            try {
+                const moduleData = await fetchInsightModule(module, selection, subjectId, controller.signal);
+                if (controller.signal.aborted) return;
+                setData(current => ({ ...current, [module]: moduleData }));
+                setErrors(current => {
+                    if (!(module in current)) return current;
+                    const next = { ...current };
+                    delete next[module];
+                    return next;
+                });
+            } catch (error) {
+                if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return;
+                setErrors(current => ({
+                    ...current,
+                    [module]: error instanceof Error ? error.message : 'Module unavailable',
+                }));
+            }
+        });
+        Promise.allSettled(tasks).then(() => {
+            if (!controller.signal.aborted) setLoadedKey(requestKey);
         });
         return () => controller.abort();
         // selectionKey is the canonical serialization of the whole selection.

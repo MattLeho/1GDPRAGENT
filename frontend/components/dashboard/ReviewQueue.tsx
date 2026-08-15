@@ -99,7 +99,7 @@ export function ReviewQueue({ items }: ReviewQueueProps) {
         <>
             <Card>
                 <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium flex items-center justify-between">
+                    <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm font-medium">
                         <span className="flex items-center gap-2">
                             Review Queue
                             {unreadItems.length > 0 && (
@@ -138,7 +138,7 @@ export function ReviewQueue({ items }: ReviewQueueProps) {
                                 return (
                                     <div
                                         key={item.id}
-                                        className="flex items-start gap-3 p-3 rounded-lg border bg-zinc-50 dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                                        className="flex flex-col items-stretch gap-3 rounded-lg border bg-zinc-50 p-3 transition-colors hover:bg-zinc-100 dark:bg-zinc-900 dark:hover:bg-zinc-800 sm:flex-row sm:items-start"
                                     >
                                         <div className={`p-2 rounded-lg shrink-0 ${config.color}`}>
                                             <Icon className="h-4 w-4" />
@@ -159,7 +159,7 @@ export function ReviewQueue({ items }: ReviewQueueProps) {
                                             </p>
                                         </div>
 
-                                        <div className="flex shrink-0 items-center gap-2">
+                                        <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
                                             <Button
                                                 variant="outline"
                                                 size="sm"

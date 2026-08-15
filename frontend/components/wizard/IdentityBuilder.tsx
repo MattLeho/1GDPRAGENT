@@ -105,7 +105,7 @@ export function IdentityBuilder() {
         // 3. Sync with Neo4j Graph
         const loadingToast = toast.loading("Updating Knowledge Graph...")
         try {
-            await fetch('/api/identities/account', {
+            const response = await fetch('/api/identities/account', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -114,6 +114,10 @@ export function IdentityBuilder() {
                     attributes: attributes
                 })
             })
+            if (!response.ok) {
+                const result = await response.json().catch(() => null)
+                throw new Error(result?.error || result?.message || "The identity could not be linked")
+            }
             toast.dismiss(loadingToast)
             toast.success("Graph Updated & Link Created")
 
@@ -140,7 +144,7 @@ export function IdentityBuilder() {
     return (
         <Card className="w-full max-w-5xl mx-auto shadow-xl border-slate-200">
             <CardHeader className="border-b bg-slate-50/50">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                         <CardTitle className="flex items-center gap-2 text-xl">
                             <Network className="h-6 w-6 text-indigo-600" />
@@ -153,7 +157,7 @@ export function IdentityBuilder() {
                 </div>
             </CardHeader>
 
-            <CardContent className="p-8 space-y-8">
+            <CardContent className="space-y-8 p-4 sm:p-6 lg:p-8">
                 <Form {...form}>
                     <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
 
@@ -233,7 +237,7 @@ export function IdentityBuilder() {
 
                         {/* ROW 3: Flexible Account Details */}
                         <div className="space-y-4">
-                            <div className="flex items-center justify-between">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
                                 <label className="text-sm font-medium text-slate-700">3. Account Details (Key-Value Store)</label>
                                 <Button
                                     type="button"
@@ -248,8 +252,8 @@ export function IdentityBuilder() {
 
                             <div className="space-y-3">
                                 {/* Default Username Field */}
-                                <div className="flex gap-3 items-end">
-                                    <div className="w-[180px] pt-2">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                                    <div className="w-full pt-2 sm:w-[180px]">
                                         <span className="text-sm font-medium text-slate-500">Username</span>
                                     </div>
                                     <FormField
@@ -271,7 +275,7 @@ export function IdentityBuilder() {
                                             control={form.control}
                                             name={`details.${index}.key`}
                                             render={({ field }) => (
-                                                <div className="w-[180px]">
+                                                <div className="w-full sm:w-[180px]">
                                                     <Input placeholder="Key (e.g. Clan Tag)" {...field} />
                                                 </div>
                                             )}
@@ -314,7 +318,7 @@ export function IdentityBuilder() {
 
             </CardContent>
 
-            <CardFooter className="flex justify-between border-t p-6 bg-slate-50/50">
+            <CardFooter className="flex flex-col-reverse gap-3 border-t bg-slate-50/50 p-4 sm:flex-row sm:justify-between sm:p-6">
                 <Button variant="ghost" onClick={prevStep}>Back</Button>
                 <Button onClick={form.handleSubmit(onSubmit)} className="min-w-[150px] bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-200">
                     <Save className="mr-2 h-4 w-4" />

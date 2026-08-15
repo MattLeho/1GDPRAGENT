@@ -201,12 +201,13 @@ def test_browser_fixture_and_journey_contracts_are_fail_closed():
     assert "r1-adversarial-session-api.test.ts" in _read("scripts/r0-frontend.sh")
 
 
-def test_browser_test_mode_covers_graph_stats_and_later_ops_defect_remains_expected():
+def test_browser_test_mode_covers_graph_stats_and_health_wording_is_truthful():
     stats = _read("frontend/app/api/graph/stats/route.ts")
     layout = _read("frontend/components/layout/DashboardLayout.tsx")
 
     assert "process.env.R0_TEST_MODE === '1'" in stats
     assert "dbStatus: 'r0-test-double'" in stats
-    assert "System Online" in layout
+    assert "System Online" not in layout
+    assert "Health not checked" in layout
     assert "OPS-001" in _read("tests/browser/r0-authenticated-baseline.spec.ts")
-    assert "test.fail(true" in _read("tests/browser/r0-authenticated-baseline.spec.ts")
+    assert "test.fail(true" not in _read("tests/browser/r0-authenticated-baseline.spec.ts")

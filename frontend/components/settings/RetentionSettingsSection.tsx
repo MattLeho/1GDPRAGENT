@@ -98,7 +98,7 @@ export function RetentionSettingsSection() {
             saved.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-4">
+        <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Field label="Policy name">
             <Input
               value={name}
@@ -317,7 +317,7 @@ export function RetentionSettingsSection() {
                     <Input
                       value={confirmation}
                       onChange={(event) => setConfirmation(event.target.value)}
-                      className="min-w-72"
+                      className="w-full min-w-0 sm:min-w-72"
                     />
                   </Field>
                   <Button

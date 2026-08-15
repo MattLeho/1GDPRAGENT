@@ -44,16 +44,16 @@ export default async function DashboardHome() {
     const nonZeroVolumeByCompany = stats.volumeByCompany.filter(item => item.value > 0);
 
     return (
-        <div className="space-y-8 pb-8">
+        <div className="space-y-5 pb-6 sm:space-y-6 sm:pb-8 xl:space-y-8">
             {/* Hero Section */}
-            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 p-8 text-white">
+            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 p-5 text-white sm:p-6 xl:p-8">
                 {/* Background Pattern */}
                 <div className="absolute inset-0 opacity-10">
                     <div className="absolute top-0 left-0 w-40 h-40 bg-white rounded-full blur-3xl" />
                     <div className="absolute bottom-0 right-0 w-60 h-60 bg-white rounded-full blur-3xl" />
                 </div>
 
-                <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+                <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
                     <div>
                         <div className="flex items-center gap-2 mb-2">
                             <Badge variant="secondary" className="bg-white/20 text-white border-none">
@@ -61,7 +61,7 @@ export default async function DashboardHome() {
                                 GDPR Agent Active
                             </Badge>
                         </div>
-                        <h1 className="text-3xl md:text-4xl font-bold">{greeting}!</h1>
+                        <h1 className="text-2xl font-bold sm:text-3xl xl:text-4xl">{greeting}!</h1>
                         <p className="text-white/80 mt-2 max-w-md">
                             Your privacy dashboard is ready. You have{' '}
                             <span className="font-semibold text-white">{stats.pendingActions} pending actions</span> and{' '}
@@ -85,7 +85,7 @@ export default async function DashboardHome() {
                     </div>
 
                     {/* Explicit lifecycle evidence preview */}
-                    <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 min-w-[200px]">
+                    <div className="w-full rounded-xl bg-white/10 p-4 backdrop-blur-sm sm:p-6 lg:w-auto lg:min-w-[200px]">
                         <div className="flex items-center gap-3">
                             <div className="p-3 rounded-full bg-white/20">
                                 <Inbox className="h-6 w-6" />

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { protectedFetch as fetch, shouldSuppressProtectedRequestError } from '@/lib/api-client';
 import { Button } from "@/components/ui/button";
 import {
@@ -28,7 +29,6 @@ import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
 
 interface PolicyData {
     url: string;
@@ -44,6 +44,7 @@ interface AddManualRequestDialogProps {
 }
 
 export function AddManualRequestDialog({ onRequestCreated }: AddManualRequestDialogProps) {
+    const router = useRouter();
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
 
@@ -95,7 +96,8 @@ export function AddManualRequestDialog({ onRequestCreated }: AddManualRequestDia
                 toast.success(`Request for ${companyName} added successfully`);
                 resetForm();
                 setOpen(false);
-                onRequestCreated?.();
+                if (onRequestCreated) onRequestCreated();
+                else router.refresh();
             } else {
                 toast.error(result.error || "Failed to create request");
             }
@@ -165,7 +167,7 @@ export function AddManualRequestDialog({ onRequestCreated }: AddManualRequestDia
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-                <Button variant="outline" className="gap-2">
+                <Button variant="outline" className="w-full gap-2 xl:w-auto">
                     <Plus className="h-4 w-4" />
                     Add Manual Request
                 </Button>
@@ -206,7 +208,7 @@ export function AddManualRequestDialog({ onRequestCreated }: AddManualRequestDia
                         {/* Privacy Policy Scanner */}
                         <div className="grid gap-2">
                             <Label>Privacy Policy (Optional)</Label>
-                            <div className="flex gap-2">
+                            <div className="flex flex-col gap-2 sm:flex-row">
                                 <Input
                                     value={policyUrl}
                                     onChange={(e) => setPolicyUrl(e.target.value)}
@@ -250,7 +252,7 @@ export function AddManualRequestDialog({ onRequestCreated }: AddManualRequestDia
                         </div>
 
                         {/* Status & Request Type Row */}
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div className="grid gap-2">
                                 <Label>Status</Label>
                                 <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>

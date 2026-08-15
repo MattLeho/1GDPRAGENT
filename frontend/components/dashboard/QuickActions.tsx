@@ -2,13 +2,12 @@
 
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import {
     PlusCircle,
     Search,
     FileText,
     Share2,
-    Settings,
     Sparkles
 } from 'lucide-react';
 
@@ -57,20 +56,18 @@ export function QuickActions() {
                     return (
                         <Link key={action.title} href={action.href}>
                             <div
-                                className={`
-                                    group relative p-4 rounded-xl border transition-all
-                                    hover:shadow-md hover:-translate-y-0.5
-                                    ${action.primary
-                                        ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-transparent'
-                                        : 'bg-white dark:bg-zinc-900 hover:border-zinc-300 dark:hover:border-zinc-700'
-                                    }
-                                `}
+                                className={cn(
+                                    'group relative rounded-xl border p-4 transition-all hover:-translate-y-0.5 hover:shadow-md',
+                                    action.primary
+                                        ? 'border-transparent bg-gradient-to-br from-indigo-500 to-purple-600 text-white'
+                                        : 'bg-white hover:border-zinc-300 dark:bg-zinc-900 dark:hover:border-zinc-700'
+                                )}
                             >
-                                <Icon className={`h-5 w-5 mb-2 ${action.primary ? 'text-white' : 'text-muted-foreground group-hover:text-foreground'}`} />
-                                <h4 className={`text-sm font-medium ${action.primary ? 'text-white' : ''}`}>
+                                <Icon className={cn('mb-2 h-5 w-5', action.primary ? 'text-white' : 'text-muted-foreground group-hover:text-foreground')} />
+                                <h4 className={cn('text-sm font-medium', action.primary && 'text-white')}>
                                     {action.title}
                                 </h4>
-                                <p className={`text-xs mt-0.5 ${action.primary ? 'text-white/80' : 'text-muted-foreground'}`}>
+                                <p className={cn('mt-0.5 text-xs', action.primary ? 'text-white/80' : 'text-muted-foreground')}>
                                     {action.description}
                                 </p>
 

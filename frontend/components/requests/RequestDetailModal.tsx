@@ -23,7 +23,7 @@ import { getRequestAnalysis, PolicyAnalysis } from "@/lib/actions/policy-analysi
 import { getReceivedData } from "@/lib/actions/data";
 import {
     Mail, FileText, Clock, Bot, User, Building2,
-    AlertTriangle, Database, Loader2, CheckCircle2, Download,
+    AlertTriangle, Database, Loader2, CheckCircle2,
     MessageSquare, File, Image, FileSpreadsheet, FileAudio,
     Eye, Upload, Sparkles, X, Bell, Workflow, FileCheck,
     Activity, RefreshCw, ChevronRight, Send, Trash2, Search
@@ -291,7 +291,8 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
         if (!chatInput.trim() || chatLoading || !request) return;
 
         const message = chatInput.trim();
-        setChatMessages(prev => [...prev, { role: 'user', content: message, timestamp: new Date().toISOString() }]);
+        const optimisticMessage = { role: 'user', content: message, timestamp: new Date().toISOString() };
+        setChatMessages(prev => [...prev, optimisticMessage]);
         setChatInput('');
         setChatLoading(true);
 
@@ -302,6 +303,9 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
                 body: JSON.stringify({ message }),
             });
             const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || data.message || 'Message was not accepted');
+            }
             if (data.response) {
                 setChatMessages(prev => [...prev, {
                     role: 'assistant',
@@ -311,7 +315,11 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
             }
         } catch (error) {
             if (shouldSuppressProtectedRequestError(error)) return;
-            toast.error('Failed to send message');
+            setChatMessages(prev => prev.filter(item => item !== optimisticMessage));
+            setChatInput(message);
+            toast.error('Message was not sent', {
+                description: error instanceof Error ? error.message : 'Please retry',
+            });
         } finally {
             setChatLoading(false);
         }
@@ -459,9 +467,9 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent data-full-width="true" className="w-[calc(100vw-256px)] flex flex-col p-0 gap-0">
+            <DialogContent data-full-width="true" className="flex w-[calc(100vw-1rem)] max-w-none flex-col gap-0 p-0 lg:w-[calc(100vw-16rem)]">
                 {/* Header */}
-                <DialogHeader className="flex flex-row items-center gap-4 p-6 pb-4 border-b shrink-0">
+                <DialogHeader className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:p-6 sm:pb-4">
                     <Avatar className="h-14 w-14 rounded-lg border">
                         <AvatarImage src={`https://logo.clearbit.com/${request.domain || request.company_name}.com`} />
                         <AvatarFallback className="rounded-lg text-lg">{request.company_name.substring(0, 2).toUpperCase()}</AvatarFallback>
@@ -473,7 +481,7 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
                             <Badge variant="secondary">{request.request_type}</Badge>
                         </div>
                     </div>
-                    <div className="text-right">
+                    <div className="w-full text-left sm:w-auto sm:text-right">
                         <p className={`text-sm font-medium ${timelineStatus.color}`}>{timelineStatus.label}</p>
                         <div className="flex items-center gap-2 mt-1">
                             <Progress value={progress} className="w-32 h-2" />
@@ -483,9 +491,9 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
                 </DialogHeader>
 
                 {/* Main Content */}
-                <div className="flex-1 flex overflow-hidden min-h-0">
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
                     {/* Left Panel - Activity Log */}
-                    <div className="w-2/5 border-r flex flex-col overflow-hidden min-h-0">
+                    <div className="flex min-h-0 max-h-[35vh] w-full flex-col overflow-hidden border-b lg:max-h-none lg:w-2/5 lg:border-b-0 lg:border-r">
                         <div className="p-4 border-b bg-muted/30 flex items-center justify-between">
                             <h3 className="text-sm font-semibold flex items-center gap-2">
                                 <Bell className="h-4 w-4" /> Notifications
@@ -575,7 +583,7 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
                     </div>
 
                     {/* Right Panel - Tabs */}
-                    <div className="w-3/5 flex flex-col">
+                    <div className="flex min-h-0 w-full flex-col lg:w-3/5">
                         <Tabs defaultValue="files" className="flex-1 flex flex-col">
                             <TabsList className="mx-4 mt-4 shrink-0">
                                 <TabsTrigger value="files">Files & Data</TabsTrigger>
@@ -1021,12 +1029,16 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
                                                             method: 'POST',
                                                             headers: { 'Content-Type': 'application/json' },
                                                             body: JSON.stringify({
-                                                                company_name: request.company_name,
-                                                                domain: request.domain || request.company_name,
-                                                                request_id: request.id,
+                                                                url: /^https?:\/\//i.test(request.domain || '')
+                                                                    ? request.domain
+                                                                    : `https://${request.domain || request.company_name}`,
+                                                                company: request.company_name,
                                                             }),
                                                         });
                                                         const data = await res.json();
+                                                        if (!res.ok) {
+                                                            throw new Error(data.error || 'Policy analysis failed');
+                                                        }
                                                         if (data.analysis) {
                                                             setAnalysis(data.analysis);
                                                             toast.success('Policy analysis complete');
@@ -1085,15 +1097,8 @@ export function RequestDetailModal({ request, open, onOpenChange }: RequestDetai
                 </div>
 
                 {/* Footer */}
-                <div className="p-4 border-t flex justify-between bg-muted/30 shrink-0">
-                    <Button variant="outline" size="sm" onClick={() => toast.info("Export started")}>
-                        <Download className="mr-2 h-4 w-4" /> Export All
-                    </Button>
-                    {['response_received', 'processing_response'].includes(request.status) && (
-                        <Button size="sm" onClick={() => toast.success("Marked complete")}>
-                            <CheckCircle2 className="mr-2 h-4 w-4" /> Mark Complete
-                        </Button>
-                    )}
+                <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t bg-muted/30 p-4">
+                    <p className="text-xs text-muted-foreground">Export and completion actions will appear when their server workflows are available.</p>
                 </div>
             </DialogContent>
         </Dialog >

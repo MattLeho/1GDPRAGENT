@@ -143,7 +143,7 @@ export function RequestDetailSheet({
 
     return (
         <Sheet open={open} onOpenChange={onOpenChange}>
-            <SheetContent className="w-full max-w-[calc(100vw-200px)] flex flex-col h-full bg-white dark:bg-zinc-950 p-0" side="right">
+            <SheetContent className="flex h-full w-full max-w-full flex-col bg-white p-0 dark:bg-zinc-950 sm:max-w-xl lg:max-w-[calc(100vw-16rem)]" side="right">
                 {/* Header */}
                 <SheetHeader className="flex flex-row items-center space-x-4 space-y-0 p-6 pb-4 border-b">
                     <Avatar className="h-14 w-14 rounded-lg border">
@@ -173,7 +173,7 @@ export function RequestDetailSheet({
 
                 {/* Tabs Content */}
                 <Tabs defaultValue="activity" className="flex-1 flex flex-col overflow-hidden">
-                    <TabsList className="grid w-full grid-cols-6 px-6 pt-2">
+                    <TabsList className="mx-4 mt-2 flex w-auto justify-start overflow-x-auto px-0 sm:mx-6">
                         <TabsTrigger value="activity">Activity</TabsTrigger>
                         <TabsTrigger value="documents">Documents</TabsTrigger>
                         <TabsTrigger value="files">Files</TabsTrigger>
