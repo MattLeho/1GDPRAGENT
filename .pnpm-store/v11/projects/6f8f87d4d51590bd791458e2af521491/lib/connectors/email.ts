@@ -1,0 +1,155 @@
+import tls from 'tls';
+import type { Socket } from 'net';
+import crypto from 'crypto';
+import { pool } from '@/lib/db';
+import { decryptCredential, encryptCredential } from '@/lib/secure-credentials';
+import { sendSmtpMessage } from '@/lib/connectors/smtp-transport';
+import { RequestService } from '@/lib/requests/service';
+
+const requests=new RequestService();
+
+export interface EmailConnectorSettings {
+    id:string; email:string; imap_host:string; imap_port:number; smtp_host:string;
+    smtp_port:number; smtp_secure:boolean; connection_verified:boolean; credential_status:'active'|'missing'|'needs_reentry';
+    paused:boolean; last_sync_at:string|null; next_sync_at:string|null; updated_at:string;
+}
+
+export async function saveEmailConnector(profileId:string,input:{email:string;password:string;imap_host:string;imap_port:number;smtp_host?:string;smtp_port?:number;smtp_secure?:boolean}):Promise<EmailConnectorSettings>{
+    if(!input.password) throw new Error('Enter the connector password to save or rotate credentials');
+    const accountKey=input.email.trim().toLowerCase(); const ciphertext=encryptCredential(input.password);
+    const client=await pool.connect();
+    try{
+        await client.query('BEGIN');
+        const credential=await client.query(`INSERT INTO connector_credentials(profile_id,connector_key,account_key,secret_ciphertext,encryption_version,credential_version,needs_reentry,rotated_at,updated_at)
+            VALUES($1,'email',$2,$3,'aes-256-gcm-v1',1,false,NOW(),NOW()) ON CONFLICT(profile_id,connector_key,account_key) DO UPDATE SET
+            secret_ciphertext=EXCLUDED.secret_ciphertext,encryption_version=EXCLUDED.encryption_version,
+            credential_version=connector_credentials.credential_version+1,needs_reentry=false,rotated_at=NOW(),updated_at=NOW() RETURNING id`,[profileId,accountKey,ciphertext]);
+        const existing=await client.query('SELECT id FROM email_settings WHERE profile_id=$1',[profileId]);
+        const values=[accountKey,input.imap_host,Number(input.imap_port),input.smtp_host||smtpFromImap(input.imap_host),Number(input.smtp_port||465),input.smtp_secure!==false,credential.rows[0].id];
+        if(existing.rows[0]) await client.query(`UPDATE email_settings SET email=$1,imap_host=$2,imap_port=$3,smtp_host=$4,smtp_port=$5,smtp_secure=$6,
+            credential_id=$7,credential_status='active',connection_verified=false,password_encrypted='',updated_at=NOW() WHERE id=$8 AND profile_id=$9`,[...values,existing.rows[0].id,profileId]);
+        else await client.query(`INSERT INTO email_settings(profile_id,email,password_encrypted,imap_host,imap_port,smtp_host,smtp_port,smtp_secure,credential_id,credential_status,connection_verified)
+            VALUES($8,$1,'',$2,$3,$4,$5,$6,$7,'active',false)`,[...values,profileId]);
+        await client.query('COMMIT');
+    }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+    return (await getEmailConnector(profileId))!;
+}
+
+export async function getEmailConnector(profileId:string):Promise<EmailConnectorSettings|null>{
+    const result=await pool.query(`SELECT id,email,imap_host,imap_port,COALESCE(smtp_host,'') smtp_host,COALESCE(smtp_port,465) smtp_port,
+        COALESCE(smtp_secure,true) smtp_secure,connection_verified,credential_status,paused,last_sync_at,next_sync_at,updated_at FROM email_settings WHERE profile_id=$1`,[profileId]);
+    return result.rows[0]||null;
+}
+
+async function internalConnector(profileId:string):Promise<EmailConnectorSettings&{password:string}>{
+    const result=await pool.query(`SELECT es.id,es.email,es.imap_host,es.imap_port,COALESCE(es.smtp_host,'') smtp_host,COALESCE(es.smtp_port,465) smtp_port,
+        COALESCE(es.smtp_secure,true) smtp_secure,es.connection_verified,es.credential_status,es.paused,es.last_sync_at,es.next_sync_at,es.updated_at,cc.secret_ciphertext
+        FROM email_settings es LEFT JOIN connector_credentials cc ON cc.id=es.credential_id AND cc.profile_id=es.profile_id
+        WHERE es.profile_id=$1`,[profileId]);
+    const row=result.rows[0];
+    if(!row||row.credential_status!=='active'||!row.secret_ciphertext) throw new Error('Email credential is missing or requires re-entry');
+    return {...row,password:decryptCredential(row.secret_ciphertext)};
+}
+
+export async function deleteEmailCredential(profileId:string):Promise<void>{
+    const client=await pool.connect(); try{await client.query('BEGIN');
+        await client.query("DELETE FROM connector_credentials WHERE profile_id=$1 AND id IN (SELECT credential_id FROM email_settings WHERE profile_id=$1)",[profileId]);
+        await client.query("UPDATE email_settings SET credential_id=NULL,credential_status='missing',connection_verified=false,password_encrypted='',updated_at=NOW() WHERE profile_id=$1",[profileId]);
+        await client.query('COMMIT');
+    }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+
+export async function testEmailConnector(profileId:string):Promise<{success:boolean;message:string}>{
+    const settings=await internalConnector(profileId);
+    try{await imapCommand(settings,['a1 CAPABILITY','a2 LOGOUT']);await pool.query('UPDATE email_settings SET connection_verified=true,updated_at=NOW() WHERE id=$1',[settings.id]);return{success:true,message:'Built-in IMAP connector verified'};}
+    catch(error){await pool.query('UPDATE email_settings SET connection_verified=false,updated_at=NOW() WHERE id=$1',[settings.id]);return{success:false,message:error instanceof Error?error.message:String(error)};}
+}
+
+export interface EmailTransportDraft {
+    id:string;request_id:string|null;recipient:string;subject:string;status:'draft'|'reviewed'|'sent'|'failed';
+    reviewed_by:string|null;reviewed_at:string|null;transport_message_id:string|null;created_at:string;sent_at:string|null;
+}
+
+function publicDraft(row:Record<string,unknown>):EmailTransportDraft{return {
+    id:String(row.id),request_id:row.request_id?String(row.request_id):null,recipient:String(row.recipient),subject:String(row.subject),
+    status:row.status as EmailTransportDraft['status'],reviewed_by:row.reviewed_by?String(row.reviewed_by):null,
+    reviewed_at:row.reviewed_at?String(row.reviewed_at):null,transport_message_id:row.transport_message_id?String(row.transport_message_id):null,
+    created_at:String(row.created_at),sent_at:row.sent_at?String(row.sent_at):null,
+};}
+
+export async function createBuiltInEmailDraft(profileId:string,input:{requestId:string;to:string;subject:string;body:string}):Promise<EmailTransportDraft>{
+    if(!input.to.trim()||!input.subject.trim()||!input.body)throw new Error('Recipient, subject and body are required');
+    const draft=await requests.createEmailDraft(profileId,{requestId:input.requestId,recipient:cleanHeader(input.to),
+        subject:cleanHeader(input.subject),bodyCiphertext:encryptCredential(input.body)});
+    if(!draft)throw new Error('Request not found');
+    return publicDraft(draft);
+}
+
+export async function reviewBuiltInEmailDraft(profileId:string,draftId:string,reviewedBy:string):Promise<EmailTransportDraft>{
+    if(!reviewedBy.trim())throw new Error('A reviewer identity is required');
+    const draft=await requests.reviewEmailDraft(profileId,draftId,reviewedBy.trim());
+    if(!draft)throw new Error('Only a draft can be reviewed');
+    return publicDraft(draft);
+}
+
+export async function sendReviewedBuiltInEmail(profileId:string,draftId:string):Promise<{messageId:string;transport:'smtp';draft:EmailTransportDraft}>{
+    const draft=await requests.getReviewedEmailDraft(profileId,draftId);
+    if(!draft)throw new Error('Email must be explicitly reviewed before sending');
+    const settings=await internalConnector(profileId);
+    if(settings.paused) throw new Error('Email connector is paused');
+    const messageId=`<${crypto.randomUUID()}@${settings.email.split('@')[1]||'gdpr-agent.local'}>`;
+    try{
+        await smtpSend(settings,{to:String(draft.recipient),subject:String(draft.subject),body:decryptCredential(String(draft.body_ciphertext)),messageId});
+        const client=await pool.connect();try{await client.query('BEGIN');
+            if(!await requests.recordOutboundMessage(profileId,{requestId:String(draft.request_id),transport:'smtp',transportMessageId:messageId,
+                recipient:String(draft.recipient),subject:String(draft.subject),metadata:{smtp_host:settings.smtp_host,draft_id:draft.id}},client))
+                throw new Error('Request ownership changed before outbound message recording');
+            const sent=await requests.markEmailDraftSent(profileId,String(draft.id),messageId,client);
+            if(!sent)throw new Error('Email draft changed before send completion');
+            await client.query('COMMIT');return{messageId,transport:'smtp',draft:publicDraft(sent)};
+        }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+    }catch(error){
+        await requests.markEmailDraftFailed(profileId,String(draft.id),{message:error instanceof Error?error.message:String(error)});
+        throw error;
+    }
+}
+
+export async function sendBuiltInEmail(profileId:string,input:{requestId:string;to:string;subject:string;body:string}):Promise<{messageId:string;transport:'smtp'}>{
+    // Request submission is an explicit user send action; preserve a durable
+    // draft/review audit rather than bypassing the transport state machine.
+    const draft=await createBuiltInEmailDraft(profileId,input);
+    await reviewBuiltInEmailDraft(profileId,draft.id,'request-submit');
+    const result=await sendReviewedBuiltInEmail(profileId,draft.id);
+    return{messageId:result.messageId,transport:result.transport};
+}
+
+export async function monitorInboxBuiltIn():Promise<{checked:number;unseen:number;matched:number;status:string}>{
+    // The pre-Task-5 monitor acknowledged UIDs before durable provenance and
+    // wrote protocol output straight into compatibility tables.  Fail closed
+    // until inbox monitoring is backed by the canonical SourceConnector
+    // queue/cursor and SourceArtifact/EvidenceLocator/ActivityEvent bridge.
+    throw new Error('Inbox monitoring requires the canonical email source connector; the legacy IMAP monitor is disabled');
+}
+
+function smtpFromImap(host:string):string{return host.replace(/^imap\./i,'smtp.');}
+function cleanHeader(value:string):string{return value.replace(/[\r\n]+/g,' ');}
+
+async function smtpSend(settings:EmailConnectorSettings&{password:string},message:{to:string;subject:string;body:string;messageId:string}):Promise<void>{
+    await sendSmtpMessage(
+        {host:settings.smtp_host,port:settings.smtp_port,secure:settings.smtp_secure,username:settings.email,password:settings.password},
+        {from:settings.email,...message},
+    );
+}
+
+async function imapCommand(settings:EmailConnectorSettings&{password:string},commands:string[]):Promise<string>{
+    const socket=tls.connect({host:settings.imap_host,port:settings.imap_port,servername:settings.imap_host,rejectUnauthorized:true});
+    const escapedUser=settings.email.replace(/(["\\])/g,'\\$1'); const escapedPassword=settings.password.replace(/(["\\])/g,'\\$1');
+    return protocol(socket,[{expect:/^\* OK/im,send:`a0 LOGIN "${escapedUser}" "${escapedPassword}"\r\n`},{expect:/^a0 OK/im,send:`${commands.join('\r\n')}\r\n`},{expect:new RegExp(`^${commands.at(-1)?.split(' ')[0]} OK`,'im'),send:null}]).finally(()=>socket.destroy());
+}
+
+function protocol(socket:Socket|tls.TLSSocket,steps:Array<{expect:RegExp;send:string|null}>):Promise<string>{return new Promise((resolve,reject)=>{
+    let all='';let pending='';let index=0;const timeout=setTimeout(()=>{socket.destroy();reject(new Error('Email connector timed out'));},20_000);
+    socket.setEncoding('utf8');socket.on('error',(error:Error)=>{clearTimeout(timeout);reject(error);});socket.on('data',(chunk:string)=>{all+=chunk;
+        pending+=chunk;while(index<steps.length&&steps[index].expect.test(pending)){const step=steps[index++];pending='';if(step.send)socket.write(step.send);if(index===steps.length){clearTimeout(timeout);resolve(all);}}
+    });
+  });}

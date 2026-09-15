@@ -43,6 +43,33 @@ class UpdatePermissions(BaseModel):
     actor: str = Field(min_length=1, max_length=200)
 
 
+class BrowserConnectorConfiguration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    browser_profile_connector_id: str | None = Field(default=None, min_length=1)
+    queue_limit: int = Field(default=1000, ge=1, le=5000)
+    page_content_capture: bool = False
+
+
+def validate_connector_configuration(definition_key: str, configuration: dict) -> dict:
+    """Validate public runtime configuration before persisting a connector."""
+    if definition_key == "email.imap":
+        from connectors.imap import IMAPConfiguration
+        validated = IMAPConfiguration.model_validate(configuration)
+    elif definition_key == "ai.conversation.snapshot":
+        from connectors.ai_conversations import AIExportConfiguration
+        validated = AIExportConfiguration.model_validate(configuration)
+    elif definition_key in {"filesystem.scoped", "media.photo.folder"}:
+        from connectors.filesystem import FolderConfiguration
+        validated = FolderConfiguration.model_validate(configuration)
+    elif definition_key == "browser.chromium.history":
+        validated = BrowserConnectorConfiguration.model_validate(configuration)
+        if validated.page_content_capture:
+            raise ValueError("browser page-content capture is not supported")
+    else:
+        raise ValueError("connector configuration type is not supported")
+    return validated.model_dump(mode="json", exclude_none=True)
+
+
 @router.get("")
 async def list_connectors(profile_id: UUID = Depends(require_profile_id)):
     app = ConnectorApplication()
@@ -60,6 +87,7 @@ async def create_connector(body: CreateConnectorInstance, profile_id: UUID = Dep
     await app.declare_definitions()
     try:
         definition = app.registry.get_definition(body.definition_key, body.definition_version)
+        configuration = validate_connector_configuration(body.definition_key, body.configuration)
         credential_id = body.credential_id
         if body.definition_key == "email.imap" and credential_id is None:
             rows = await app.postgres.execute(
@@ -78,7 +106,7 @@ async def create_connector(body: CreateConnectorInstance, profile_id: UUID = Dep
         return await app.repository.create_instance(
             definition, display_name=body.display_name,
             enabled_permissions=body.enabled_permissions, profile_id=profile_id,
-            account_key=body.account_key, configuration=body.configuration,
+            account_key=body.account_key, configuration=configuration,
             credential_id=credential_id,
             status=initial_status,
         )
@@ -147,8 +175,8 @@ async def connector_instance_health(instance_id: UUID, profile_id: UUID = Depend
 def _pairing_origin_allowed(request: Request) -> bool:
     origin = request.headers.get("origin")
     return origin is None or origin in {
-        "http://localhost:3000", "http://localhost:3001",
-        "http://127.0.0.1:3000", "http://127.0.0.1:3001",
+        "http://localhost:3000", "http://localhost:3001", "http://localhost:3002",
+        "http://127.0.0.1:3000", "http://127.0.0.1:3001", "http://127.0.0.1:3002",
     }
 
 

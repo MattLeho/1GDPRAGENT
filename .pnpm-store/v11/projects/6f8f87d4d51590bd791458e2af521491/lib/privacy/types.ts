@@ -1,0 +1,11 @@
+export type CapabilityExposureStatus='evidenced_from_export'|'documented'|'legally_authorised'|'technically_possible'|'speculative'|'human_confirmed';
+export type GraphEpistemicState='currently_observed'|'potentially_enabled'|'alleged_unverified';
+export type ProfileLayer='self_declared'|'observed_behaviour'|'controller_profile'|'system_hypotheses';
+export type PrivacyGraphMode='now'|'through_time'|'compare'|'controller_profile'|'capabilities'|'linkability'|'purpose'|'access';
+export type HypothesisStatus='open'|'request_drafted'|'request_sent'|'confirmed'|'rejected'|'unresolved'|'superseded';
+export type DeletionVerificationStatus='EXPECTED_REMOVED'|'CONFIRMED_REMOVED_FROM_OBSERVED_EXPORT'|'STILL_OBSERVED'|'UNVERIFIABLE';
+export interface PrivacyQueryCitation{assertion_id:string;evidence_locator_ids:string[];source_artifact_ids:string[];excerpt?:string|null}
+export interface PrivacyQueryResult{tool:string;data:Record<string,unknown>;citations:PrivacyQueryCitation[];unknowns:string[];evidence_bearing:boolean;explanation?:string|null}
+export interface PrivacyGraphNode{id:string;label:string;type:string;profileLayer?:ProfileLayer;properties:Record<string,unknown>}
+export interface PrivacyGraphLink{source:string;target:string;type:string;assertionId:string;epistemicState:GraphEpistemicState;assertionStatus:string;validFrom?:string|null;validTo?:string|null;controllerObservedFrom?:string|null;controllerObservedTo?:string|null;exportedAt?:string|null;ingestedAt?:string|null;derivationMethod?:string|null;derivationVersion?:string|null;evidenceLocatorIds:string[]}
+export interface PrivacyGraphFilters{asOf?:string;compareTo?:string;profileLayer?:ProfileLayer;epistemicBasis?:GraphEpistemicState;assertionStatus?:string;capabilityStatus?:CapabilityExposureStatus;purpose?:string;sourceArtifact?:string;controller?:string;dataDomain?:string}

@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .definitions import AI_CONVERSATION_DEFINITION
 from .models import ConnectorInstance, ConnectorRawRecord
@@ -17,9 +17,16 @@ from .signatures import canonical_json, connector_record_signature
 
 class AIExportConfiguration(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    paths: tuple[str, ...]
+    paths: tuple[str, ...] = Field(min_length=1)
     service: str = "auto"
     max_file_bytes: int = Field(default=128 * 1024 * 1024, ge=1, le=512 * 1024 * 1024)
+
+    @model_validator(mode="after")
+    def absolute_export_paths(self):
+        for value in self.paths:
+            if not Path(value).expanduser().is_absolute():
+                raise ValueError("AI conversation export paths must be absolute")
+        return self
 
 
 class AIConversationSnapshotConnector:
