@@ -71,7 +71,7 @@ Local execution used Python 3.11.16 in `.venv`, Node 24 with pnpm 11.9.0 through
 | Frontend production build | `scripts/r0-frontend.sh build` | pass (exit 0) |
 | Authenticated browser | `scripts/r0-browser.sh` | pass, 8 passed, 4 skipped (R1 hermetic specs skip by design without `R1_HERMETIC_BROWSER`) |
 
-**Hosted evidence:** the hosted R0 run for this repaired head is recorded in the follow-up commit that closes this ledger (the acceptance protocol requires hosted, not local, evidence).
+**Hosted evidence:** repaired head `54dc370596aed0713d624b9d38205c86d57310e0` passed hosted run [34983024742](https://github.com/MattLeho/1GDPRAGENT/actions/runs/34983024742) (workflow `r0-baseline.yml`, job `r0-baseline`, conclusion `success`). The `r0-baseline-artefacts` artefact contains `test-results/r0-gates.json` recording exit status 0 for all nine gates in the table above, in CI order. This is the acceptance evidence; the local column is preflight only.
 
 ## Explicit boundaries
 
