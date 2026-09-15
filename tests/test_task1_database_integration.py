@@ -94,9 +94,16 @@ async def test_task2_routes_audit_and_per_workflow_preferences_extend_task1(migr
     await connection.execute("UPDATE workflow_preferences SET execution_mode='built_in',fallback_order='[\"built_in\"]' WHERE workflow_key='email.sending'")
     rows=await connection.fetch("SELECT workflow_key,execution_mode FROM workflow_preferences WHERE workflow_key IN ('request.drafting','email.sending') ORDER BY workflow_key")
     assert {row["workflow_key"]:row["execution_mode"] for row in rows}=={"email.sending":"built_in","request.drafting":"n8n"}
-    run_id=await connection.fetchval("INSERT INTO analysis_runs(run_type,status,pipeline_version) VALUES('task2-test','running','task2-router-v1') RETURNING id")
-    record_id=await connection.fetchval("INSERT INTO execution_records(analysis_run_id,task_key,engine_id,provider,model,execution_location,status) VALUES($1,'request.drafting','openai_generation','openai','fixture','external','completed') RETURNING id",run_id)
+    # R1/SETTINGS-002 canonical ownership: resolve the profile bound to the
+    # legacy fixture user via user_profiles.default_profile_id (the R1
+    # authority contract) rather than inferring it from a single-row profiles
+    # table, and thread it through both inserts explicitly.
+    profile_id=await connection.fetchval("SELECT default_profile_id FROM user_profiles WHERE username='legacy-user'")
+    assert profile_id is not None
+    run_id=await connection.fetchval("INSERT INTO analysis_runs(run_type,status,pipeline_version,profile_id) VALUES('task2-test','running','task2-router-v1',$1) RETURNING id",profile_id)
+    record_id=await connection.fetchval("INSERT INTO execution_records(analysis_run_id,task_key,engine_id,provider,model,execution_location,status,profile_id) VALUES($1,'request.drafting','openai_generation','openai','fixture','external','completed',$2) RETURNING id",run_id,profile_id)
     assert await connection.fetchval("SELECT analysis_run_id=$2 AND execution_location='external' FROM execution_records WHERE id=$1",record_id,run_id)
+    assert await connection.fetchval("SELECT profile_id=$2 FROM execution_records WHERE id=$1",record_id,profile_id)
     await connection.close()
 
 

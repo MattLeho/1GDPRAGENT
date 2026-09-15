@@ -17,6 +17,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests/fixtures/r0_architecture_invariants"
 IGNORED_PARTS = frozenset({"node_modules", ".next", "__pycache__"})
+# Test-only sources are not runtime code: they assert *about* migration and
+# schema text (and must be free to quote DDL literally to do so), they never
+# execute it.  The classification is reviewed policy, recorded under
+# `non_runtime_source_patterns` in r0-runtime-root-policy.json and asserted in
+# test_runtime_root_policy_is_reviewed_and_excludes_only_evidenced_legacy_code.
+TEST_ONLY_PARTS = frozenset({"tests", "__tests__", "test-results", "e2e"})
+TEST_ONLY_FILENAME = re.compile(r"\.(?:test|spec)\.[^.]+$", re.I)
 SENSITIVE_ROOTS = ("settings", "requests", "request-threads", "upload", "execution", "identities", "graph", "insights", "onsit")
 PUBLIC_NEXT = frozenset({"frontend/app/api/auth/check-setup/route.ts", "frontend/app/api/auth/login/route.ts", "frontend/app/api/auth/logout/route.ts", "frontend/app/api/auth/register/route.ts"})
 PUBLIC_PYTHON = frozenset({"intelligence/api/health.py", "intelligence/api/security.py"})
@@ -25,12 +32,29 @@ RUNTIME_POLICY = ROOT / "docs/remediation/evidence/r0-runtime-root-policy.json"
 EXPECTED_FINDINGS = ROOT / "docs/remediation/evidence/r0-expected-static-findings.json"
 
 
+def is_test_only_source(root: Path, path: Path) -> bool:
+    """True when `path`, read relative to the scanned `root`, is test-only source.
+
+    Judged relative to the scan root so that fixture trees living under the
+    repository's own `tests/` directory are still classified like real runtime
+    trees (only their *internal* layout decides).
+    """
+    directories = Path(path).relative_to(root).parts[:-1]
+    if any(part in TEST_ONLY_PARTS for part in directories):
+        return True
+    return bool(TEST_ONLY_FILENAME.search(Path(path).name))
+
+
 def source_files(root: Path, suffixes: set[str]):
     for directory, children, filenames in os.walk(root):
-        children[:] = [child for child in children if child not in IGNORED_PARTS]
+        children[:] = [
+            child
+            for child in children
+            if child not in IGNORED_PARTS and child not in TEST_ONLY_PARTS
+        ]
         for filename in filenames:
             path = Path(directory) / filename
-            if path.suffix in suffixes:
+            if path.suffix in suffixes and not is_test_only_source(root, path):
                 yield path
 
 
@@ -226,7 +250,21 @@ def test_verifiers_reject_synthetic_negative_controls():
         "intelligence/graph/variable_writer.py",
         "intelligence/graph/writer.py",
     ]
-    assert runtime_ddl_offenders(FIXTURES) == ["intelligence/graph/writer.py"]
+    # frontend/lib/runtime-ddl.ts is runtime code that owns schema DDL and must
+    # stay reported; the byte-identical DDL quoted by the two test-only fixtures
+    # (frontend/tests/schema-shape.test.ts, frontend/lib/__tests__/ddl.test.ts)
+    # must not be, and must not leak into any other scanner's offenders either.
+    assert runtime_ddl_offenders(FIXTURES) == [
+        "frontend/lib/runtime-ddl.ts",
+        "intelligence/graph/writer.py",
+    ]
+    for candidate in (
+        FIXTURES / "frontend/tests/schema-shape.test.ts",
+        FIXTURES / "frontend/lib/__tests__/ddl.test.ts",
+    ):
+        assert candidate.exists()
+        assert is_test_only_source(FIXTURES / "frontend", candidate)
+        assert relative(FIXTURES, candidate) not in runtime_ddl_offenders(FIXTURES)
 
 
 def test_runtime_root_policy_is_reviewed_and_excludes_only_evidenced_legacy_code():
@@ -241,6 +279,24 @@ def test_runtime_root_policy_is_reviewed_and_excludes_only_evidenced_legacy_code
     main = (ROOT / "intelligence/main.py").read_text(encoding="utf-8")
     assert "./agents/python" not in compose
     assert "agents.python" not in main and "gdpr_agent" not in main
+
+    # The test-only classification used by source_files() is reviewed policy,
+    # not an implicit scanner shortcut: it is declared here and must match the
+    # constants the scanners actually apply.
+    non_runtime = policy["non_runtime_source_patterns"]
+    assert non_runtime["reason"]
+    assert sorted(non_runtime["path_parts"]) == sorted(TEST_ONLY_PARTS)
+    assert non_runtime["filename_regex"] == TEST_ONLY_FILENAME.pattern
+    # No registered expected finding may hide behind that classification.
+    expected = json.loads(EXPECTED_FINDINGS.read_text(encoding="utf-8"))
+    for category_name, category in expected.items():
+        if category_name == "schema_version":
+            continue
+        for paths in category.values():
+            for path in paths:
+                assert not is_test_only_source(ROOT, ROOT / path), (
+                    f"{path} is a registered expected finding but is classified as test-only"
+                )
 
 
 def test_expected_findings_have_stable_registry_owners_and_paths():

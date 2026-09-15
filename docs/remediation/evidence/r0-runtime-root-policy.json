@@ -25,6 +25,22 @@
       ]
     }
   ],
+  "non_runtime_source_patterns": {
+    "reason": "Test-only sources assert about migration and schema text and must quote DDL literally to do so; they execute no SQL and ship in no runtime image, so every R0 static scanner classifies them as non-runtime rather than as schema owners.",
+    "path_parts": [
+      "__tests__",
+      "e2e",
+      "test-results",
+      "tests"
+    ],
+    "filename_regex": "\\.(?:test|spec)\\.[^.]+$",
+    "evidence": [
+      "frontend/tests/policy-analysis-migration.test.ts",
+      "tests/fixtures/r0_architecture_invariants/frontend/lib/runtime-ddl.ts",
+      "tests/fixtures/r0_architecture_invariants/frontend/tests/schema-shape.test.ts",
+      "tests/fixtures/r0_architecture_invariants/frontend/lib/__tests__/ddl.test.ts"
+    ]
+  },
   "approved_provider_adapters": [
     {
       "path": "frontend/lib/rlm/provider-adapters.ts",

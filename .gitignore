@@ -51,3 +51,6 @@ frontend/lint_log*.txt
 Thumbs.db
 .vscode/
 *.code-workspace
+
+# pnpm content-addressable store must never be committed
+.pnpm-store/

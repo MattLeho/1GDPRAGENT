@@ -1,8 +1,17 @@
 from pathlib import Path
+import importlib.util
 import re
 
 
 ROOT = Path('/workspace') if Path('/workspace/docker-compose.yml').exists() else Path(__file__).resolve().parents[1]
+
+# Both R0 runtime-DDL scanners must agree on what counts as runtime source, so
+# this module loads the single shared definition rather than restating it.
+_R0_INVARIANTS = Path(__file__).resolve().parent / 'integration' / 'test_r0_architecture_invariants.py'
+_r0_spec = importlib.util.spec_from_file_location('_r0_architecture_invariants_shared', _R0_INVARIANTS)
+_r0 = importlib.util.module_from_spec(_r0_spec)
+_r0_spec.loader.exec_module(_r0)
+source_files = _r0.source_files  # prunes node_modules/.next/__pycache__ and test-only sources
 
 
 def read(relative_path: str) -> str:
@@ -100,16 +109,30 @@ def test_chat_route_matches_canonical_chat_message_schema():
     )
 
 
-def test_application_code_contains_no_runtime_ddl():
-    roots=[ROOT/'frontend',ROOT/'intelligence']
-    pattern=re.compile(r'CREATE TABLE|ALTER TABLE|DROP TABLE|DROP VIEW',re.I)
+APPLICATION_DDL=re.compile(r'CREATE TABLE|ALTER TABLE|DROP TABLE|DROP VIEW',re.I)
+
+
+def application_ddl_offenders(root:Path)->list[str]:
     offenders=[]
-    for root in roots:
-        for path in root.rglob('*'):
-            if 'node_modules' in path.parts or '.next' in path.parts:
-                continue
-            if path.suffix in {'.ts','.tsx','.py'} and pattern.search(path.read_text(encoding='utf-8',errors='ignore')):
-                offenders.append(str(path.relative_to(ROOT)))
+    for base_name in ('frontend','intelligence'):
+        base=root/base_name
+        if not base.exists():
+            continue
+        for path in source_files(base,{'.ts','.tsx','.py'}):
+            if APPLICATION_DDL.search(path.read_text(encoding='utf-8',errors='ignore')):
+                offenders.append(str(path.relative_to(root)).replace('\\','/'))
+    return sorted(offenders)
+
+
+def test_application_code_contains_no_runtime_ddl():
+    # Negative controls first: runtime code owning DDL is still caught, and the
+    # byte-identical DDL quoted by test-only sources is not.
+    fixtures=ROOT/'tests/fixtures/r0_architecture_invariants'
+    assert application_ddl_offenders(fixtures)==['frontend/lib/runtime-ddl.ts'],(
+        'Runtime-DDL detection regressed against the synthetic controls in '
+        f'{fixtures}'
+    )
+    offenders=application_ddl_offenders(ROOT)
     assert not offenders,f'Runtime DDL must be owned by database/migrations: {offenders}'
 
 
